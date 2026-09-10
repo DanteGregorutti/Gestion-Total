@@ -273,6 +273,13 @@ service cloud.firestore {
       allow update, delete: if isAuthenticated() && (isAdmin() || isDocOwner());
     }
 
+    // Work Orders (Taller de Reparaciones y Órdenes de Trabajo)
+    match /work_orders/{orderId} {
+      // Allow public read for tracking with order ID, and full read for authenticated staff
+      allow read: if true;
+      allow create, update, delete: if isAuthenticated();
+    }
+
     // Users
     match /users/{userId} {
       // Allow reading own profile or any profile if admin

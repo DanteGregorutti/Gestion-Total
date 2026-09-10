@@ -18,6 +18,10 @@ import Catalog from './pages/Catalog';
 import Finances from './pages/Finances';
 import Login from './pages/Login';
 import StockUpdate from './pages/StockUpdate';
+import PublicCatalog from './pages/PublicCatalog';
+import WorkOrders from './pages/WorkOrders';
+import LabelsCenter from './pages/LabelsCenter';
+import WorkOrderTracking from './pages/WorkOrderTracking';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SettingsProvider, useSettings } from './contexts/SettingsContext';
 import { ProductsProvider } from './contexts/ProductsContext';
@@ -44,7 +48,10 @@ function AppContent() {
   if (!user) {
     return (
       <Routes>
+        <Route path="/catalogo-online" element={<PublicCatalog />} />
         <Route path="/stock-update/:productId" element={<StockUpdate />} />
+        <Route path="/seguimiento/:orderId" element={<WorkOrderTracking />} />
+        <Route path="/seguimiento" element={<WorkOrderTracking />} />
         <Route path="*" element={<Login />} />
       </Routes>
     );
@@ -54,16 +61,22 @@ function AppContent() {
     <Layout user={{ email: user.email!, displayName: user.displayName! }} onLogout={logout}>
       <Routes>
         <Route path="/" element={<Dashboard />} />
+        <Route path="/taller" element={<WorkOrders />} />
+        <Route path="/ordenes" element={<WorkOrders />} />
         <Route path="/inventario" element={<Inventory />} />
         <Route path="/ventas" element={<Sales />} />
+        <Route path="/etiquetas" element={<LabelsCenter />} />
         <Route path="/compras" element={<Purchases />} />
         <Route path="/clientes" element={<Clients />} />
         <Route path="/proveedores" element={<Suppliers />} />
         <Route path="/almacenes" element={<Warehouses />} />
         <Route path="/cuentas" element={<Finances />} />
         <Route path="/catalogo" element={<Catalog />} />
+        <Route path="/catalogo-online" element={<PublicCatalog />} />
         <Route path="/configuracion" element={<Settings />} />
         <Route path="/stock-update/:productId" element={<StockUpdate />} />
+        <Route path="/seguimiento/:orderId" element={<WorkOrderTracking />} />
+        <Route path="/seguimiento" element={<WorkOrderTracking />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>

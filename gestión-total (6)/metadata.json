@@ -1,6 +1,6 @@
 {
   "name": "Gestión Total",
-  "description": "Sistema moderno de gestión de inventario, ventas y compras para empresas SaaS.",
+  "description": "Sistema integral de gestión de inventario, taller mecánico con órdenes de trabajo, seguimiento por QR y finanzas.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

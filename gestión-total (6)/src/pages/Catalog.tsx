@@ -308,7 +308,16 @@ export default function Catalog() {
           <h1 className="text-2xl font-bold">{t('catalog')}</h1>
           <p className="text-gray-500 dark:text-gray-400">Genera vistas representativas de tu stock para compartir</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <a
+            href="/catalogo-online"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center px-4 py-2 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition-all shadow-md shadow-emerald-600/20 font-bold text-sm"
+          >
+            <ShoppingBag className="w-4 h-4 mr-2" />
+            Abrir Catálogo Web de Clientes
+          </a>
           <button
             onClick={copyToClipboard}
             className="flex items-center px-4 py-2 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-xl hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-all font-medium text-sm"

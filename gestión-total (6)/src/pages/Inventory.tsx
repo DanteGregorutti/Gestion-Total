@@ -35,7 +35,8 @@ import {
   Upload,
   Image as ImageIcon,
   CheckSquare,
-  Square
+  Square,
+  Sparkles
 } from 'lucide-react';
 import { Button, Input } from '../components/ui';
 import Modal from '../components/Modal';
@@ -43,7 +44,8 @@ import ConfirmationModal from '../components/ConfirmationModal';
 import ProductSearch from '../components/ProductSearch';
 import BulkUpload from '../components/BulkUpload';
 import ImageCropperModal from '../components/ImageCropperModal';
-import { Product, Warehouse, Movement } from '../types';
+import { StockIntelligence } from '../components/StockIntelligence';
+import { Product, Warehouse, Movement, Sale } from '../types';
 import { cn } from '../utils/cn';
 import { inventoryService } from '../services/inventoryService';
 import { toast } from 'sonner';
@@ -79,6 +81,8 @@ export default function Inventory() {
   const [duplicateProducts, setDuplicateProducts] = useState<Product[]>([]);
   const [isCheckingCode, setIsCheckingCode] = useState(false);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [sales, setSales] = useState<Sale[]>([]);
+  const [inventoryTab, setInventoryTab] = useState<'stock' | 'inteligencia'>('stock');
   const [showFilters, setShowFilters] = useState(false);
   const [imageToCrop, setImageToCrop] = useState<string | null>(null);
   const [filters, setFilters] = useState({
@@ -117,8 +121,12 @@ export default function Inventory() {
   useEffect(() => {
     const fetchInitialData = async () => {
       try {
-        const warehousesData = await inventoryService.getWarehouses();
+        const [warehousesData, salesData] = await Promise.all([
+          inventoryService.getWarehouses(),
+          inventoryService.getSales()
+        ]);
         setWarehouses(warehousesData);
+        setSales(salesData);
         if (warehousesData.length > 0 && !formData.almacenId) {
           setFormData(prev => ({ ...prev, almacenId: warehousesData[0].id }));
         }
@@ -628,6 +636,21 @@ export default function Inventory() {
           </Button>
           <Button 
             variant="outline" 
+            onClick={() => setInventoryTab(inventoryTab === 'stock' ? 'inteligencia' : 'stock')}
+            className={cn(
+              "h-12 px-4 sm:px-5 rounded-xl font-bold transition-all",
+              inventoryTab === 'inteligencia' 
+                ? "bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-600/20"
+                : "border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/20"
+            )}
+            title="Inteligencia de Stock ABC & Sugerencias de Reposición"
+          >
+            <Sparkles className="w-4 h-4 sm:mr-2 text-amber-400" />
+            <span className="hidden md:inline">Inteligencia ABC & Reposición</span>
+            <span className="md:hidden">ABC</span>
+          </Button>
+          <Button 
+            variant="outline" 
             onClick={() => navigate('/catalogo')}
             className="h-12 px-4 sm:px-5 rounded-xl border-emerald-100 dark:border-emerald-900/50 text-emerald-600 dark:text-emerald-400 font-bold hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-all"
             title={t('catalog')}
@@ -710,7 +733,11 @@ export default function Inventory() {
         )}
       </AnimatePresence>
 
-      {/* Table Section (Desktop) / Card Section (Mobile) */}
+      {inventoryTab === 'inteligencia' ? (
+        <StockIntelligence products={allProducts} sales={sales} />
+      ) : (
+        <>
+          {/* Table Section (Desktop) / Card Section (Mobile) */}
       <div className={cn("bg-white dark:bg-gray-900 rounded-[2.5rem] border border-gray-100 dark:border-gray-800 shadow-xl shadow-gray-200/50 dark:shadow-none overflow-hidden", mobileCompactMode ? "hidden" : "block")}>
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
@@ -1093,6 +1120,8 @@ export default function Inventory() {
             </span>
           </Button>
         </div>
+      )}
+        </>
       )}
 
       {/* Floating Selection Bar */}

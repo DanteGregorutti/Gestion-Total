@@ -26,7 +26,8 @@ import {
   Calculator,
   Sparkles,
   RotateCcw,
-  Bot
+  Bot,
+  MessageCircle
 } from 'lucide-react';
 import { Button } from '../components/ui';
 import ConfirmationModal from '../components/ConfirmationModal';
@@ -34,9 +35,10 @@ import { TransactionModal } from '../components/finances/TransactionModal';
 import { TelegramBotModal } from '../components/telegram/TelegramBotModal';
 import { CashCalculator } from '../components/finances/CashCalculator';
 import { PriceProfitCalculator } from '../components/finances/PriceProfitCalculator';
+import { DailyReportModal } from '../components/finances/DailyReportModal';
 import { inventoryService } from '../services/inventoryService';
 import { useSettings } from '../contexts/SettingsContext';
-import { FinanceTransaction, FinanceType, Sale, Purchase } from '../types';
+import { FinanceTransaction, FinanceType, Sale, Purchase, Client, Supplier } from '../types';
 import { toast } from 'sonner';
 
 type DateFilter = 'today' | 'week' | 'month' | 'all';
@@ -49,6 +51,8 @@ export default function Finances() {
   const [finances, setFinances] = useState<FinanceTransaction[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
   // Filters
@@ -61,6 +65,7 @@ export default function Finances() {
   const [modalOpen, setModalOpen] = useState<boolean>(false);
   const [modalType, setModalType] = useState<FinanceType>('egreso');
   const [telegramModalOpen, setTelegramModalOpen] = useState<boolean>(false);
+  const [isDailyReportOpen, setIsDailyReportOpen] = useState<boolean>(false);
 
   // Secondary tools (collapsible)
   const [showAdvancedTools, setShowAdvancedTools] = useState<boolean>(false);
@@ -104,6 +109,21 @@ export default function Finances() {
     };
 
     setupSubscriptions();
+
+    // Load clients & suppliers for accounts ledger
+    const loadClientsAndSuppliers = async () => {
+      try {
+        const [cList, sList] = await Promise.all([
+          inventoryService.getClients(),
+          inventoryService.getSuppliers()
+        ]);
+        setClients(cList);
+        setSuppliers(sList);
+      } catch (e) {
+        console.error('Error loading clients or suppliers:', e);
+      }
+    };
+    loadClientsAndSuppliers();
 
     return () => {
       unsubscribeFinances();
@@ -357,10 +377,18 @@ export default function Finances() {
               <Wallet className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-xl sm:text-2xl font-black text-gray-900 dark:text-white tracking-tight">
                   Mi Dinero & Gastos
                 </h1>
+                <button
+                  onClick={() => setIsDailyReportOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-300 text-xs font-black hover:bg-emerald-100 transition-colors shadow-sm"
+                  title="Generar balance del día para enviar por WhatsApp"
+                >
+                  <MessageCircle className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>Cierre WhatsApp</span>
+                </button>
                 <button
                   onClick={() => setTelegramModalOpen(true)}
                   className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800/50 text-sky-700 dark:text-sky-400 text-xs font-bold hover:bg-sky-100 transition-colors"
@@ -378,7 +406,7 @@ export default function Finances() {
         </div>
 
         {/* Action and Date Filter */}
-        <div className="flex items-center gap-2 self-start sm:self-center">
+        <div className="flex items-center gap-2 self-start sm:self-center flex-wrap">
           <button
             onClick={() => setTelegramModalOpen(true)}
             className="sm:hidden inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800/50 text-sky-700 dark:text-sky-400 text-xs font-bold"
@@ -869,6 +897,12 @@ export default function Finances() {
         cancelLabel="Cancelar"
         variant="danger"
         isLoading={isBulkDeleting}
+      />
+
+      {/* Daily Report Modal */}
+      <DailyReportModal
+        isOpen={isDailyReportOpen}
+        onClose={() => setIsDailyReportOpen(false)}
       />
 
     </div>

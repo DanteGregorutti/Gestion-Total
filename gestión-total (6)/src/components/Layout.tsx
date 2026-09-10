@@ -24,7 +24,9 @@ import {
   Smartphone,
   Monitor,
   Wallet,
-  Bot
+  Bot,
+  Wrench,
+  Tag
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../utils/cn';
@@ -58,8 +60,11 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
 
   const navItems = [
     { name: t('dashboard'), path: '/', icon: LayoutDashboard },
+    { name: 'Taller', path: '/taller', icon: Wrench },
     { name: t('inventory'), path: '/inventario', icon: Package },
     { name: t('sales'), path: '/ventas', icon: TrendingUp },
+    { name: 'Etiquetas', path: '/etiquetas', icon: Tag },
+    { name: t('clients') || 'Clientes', path: '/clientes', icon: Users },
     { name: t('purchases'), path: '/compras', icon: ShoppingCart },
     { name: t('finances'), path: '/cuentas', icon: Wallet },
     { name: t('warehouses'), path: '/almacenes', icon: Warehouse },

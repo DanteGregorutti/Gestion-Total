@@ -43,8 +43,11 @@ import {
   X, 
   Plus,
   Loader2,
-  Wallet
+  Wallet,
+  Wrench,
+  MessageCircle
 } from 'lucide-react';
+import { DailyReportModal } from '../components/finances/DailyReportModal';
 import { 
   ResponsiveContainer,
   AreaChart,
@@ -87,6 +90,7 @@ export default function Dashboard() {
   const [isEditMode, setIsEditMode] = React.useState(false);
   const [isValuationModalOpen, setIsValuationModalOpen] = React.useState(false);
   const [valuationInitialTab, setValuationInitialTab] = React.useState<'all' | 'missing-cost' | 'top-profit'>('all');
+  const [isDailyReportOpen, setIsDailyReportOpen] = React.useState(false);
 
   const getInitialWidgets = () => {
     const saved = localStorage.getItem('dashboard_widgets');
@@ -666,6 +670,21 @@ export default function Dashboard() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Button 
+            onClick={() => setIsDailyReportOpen(true)}
+            className="rounded-xl font-black flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm py-2 text-xs"
+            title="Generar resumen del día para compartir por WhatsApp"
+          >
+            <MessageCircle size={16} />
+            <span>Cierre WhatsApp</span>
+          </Button>
+          <Button 
+            onClick={() => navigate('/taller')}
+            className="rounded-xl font-bold flex items-center gap-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 dark:hover:bg-indigo-900/50 border border-indigo-200 dark:border-indigo-800 shadow-sm py-2 text-xs"
+          >
+            <Wrench size={16} />
+            <span>Taller</span>
+          </Button>
+          <Button 
             onClick={() => navigate('/cuentas')}
             className="rounded-xl font-bold flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm py-2"
           >
@@ -1135,6 +1154,11 @@ export default function Dashboard() {
           products={products}
           purchases={purchases}
           initialTab={valuationInitialTab}
+        />
+
+        <DailyReportModal
+          isOpen={isDailyReportOpen}
+          onClose={() => setIsDailyReportOpen(false)}
         />
       </div>
     </div>

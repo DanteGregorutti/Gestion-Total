@@ -45,7 +45,6 @@ import { QuickMode } from '../components/QuickMode';
 import { ReceiptModal } from '../components/ReceiptModal';
 import { NewQuoteModal } from '../components/NewQuoteModal';
 import { QuotesView } from '../components/QuotesView';
-import { SalesClientsView } from '../components/SalesClientsView';
 
 export default function Sales() {
   const { t, loading: settingsLoading, mobileCompactMode } = useSettings();
@@ -105,7 +104,7 @@ export default function Sales() {
   const [saleTotalOverride, setSaleTotalOverride] = React.useState<number | null>(null);
 
   // Quotes & Non-Fiscal Receipts State
-  const [activeTab, setActiveTab] = React.useState<'ventas' | 'cotizaciones' | 'clientes'>('ventas');
+  const [activeTab, setActiveTab] = React.useState<'ventas' | 'cotizaciones'>('ventas');
   const [quotes, setQuotes] = React.useState<Quote[]>([]);
   const [quoteStatusFilter, setQuoteStatusFilter] = React.useState<'todas' | 'pendiente' | 'aceptada' | 'rechazada'>('todas');
   const [quoteSearchTerm, setQuoteSearchTerm] = React.useState('');
@@ -639,26 +638,10 @@ export default function Sales() {
               </span>
             )}
           </button>
-
-          <button
-            onClick={() => setActiveTab('clientes')}
-            className={cn(
-              "flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all",
-              activeTab === 'clientes'
-                ? "bg-white dark:bg-gray-900 text-gray-900 dark:text-white shadow-sm"
-                : "text-gray-500 hover:text-gray-900 dark:hover:text-white"
-            )}
-          >
-            <Users size={16} className={activeTab === 'clientes' ? 'text-indigo-600 dark:text-indigo-400' : ''} />
-            <span>Clientes & Compras</span>
-            <span className="px-2 py-0.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-full text-xs font-black">
-              {clients.length}
-            </span>
-          </button>
         </div>
 
         {/* Action Buttons */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Button
             onClick={() => setIsNewQuoteModalOpen(true)}
             variant="outline"
@@ -703,21 +686,6 @@ export default function Sales() {
           onDeleteQuote={(quoteId) => {
             setQuoteToDelete(quoteId);
             setIsDeleteQuoteModalOpen(true);
-          }}
-          onRefresh={refreshData}
-        />
-      ) : activeTab === 'clientes' ? (
-        <SalesClientsView
-          clients={clients}
-          sales={sales}
-          onSelectClientForSale={(client) => {
-            setSelectedClient({ id: client.id, nombre: client.nombre });
-            setActiveTab('ventas');
-            if (mobileCompactMode) {
-              setIsLocalQuickModeOpen(true);
-            } else {
-              setIsAddModalOpen(true);
-            }
           }}
           onRefresh={refreshData}
         />

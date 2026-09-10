@@ -237,4 +237,89 @@ export interface Quote {
   saleId?: string;
 }
 
+// Cash Shift Session (Apertura y Cierre de Caja)
+export interface CashShift {
+  id: string;
+  fechaApertura: string;
+  fechaCierre?: string;
+  montoInicial: number;
+  estado: 'abierta' | 'cerrada';
+  totalVentasEfectivo?: number;
+  totalVentasDigital?: number;
+  totalIngresosExtra?: number;
+  totalRetirosGastos?: number;
+  efectivoEsperado?: number;
+  efectivoReal?: number;
+  diferencia?: number;
+  notas?: string;
+  createdBy: string;
+}
+
+// Payment for Client or Supplier Accounts
+export interface AccountPayment {
+  id: string;
+  entityId: string; // clientId or supplierId
+  entityType: 'client' | 'supplier';
+  monto: number;
+  metodo: PaymentMethod;
+  fecha: string;
+  concepto: string;
+  notas?: string;
+  createdBy: string;
+}
+
+// Work Order / Taller Types
+export type WorkOrderStatus = 
+  | 'ingresado' 
+  | 'en_diagnostico' 
+  | 'en_reparacion' 
+  | 'esperando_repuestos' 
+  | 'listo' 
+  | 'entregado' 
+  | 'cancelado';
+
+export type WorkOrderPriority = 'baja' | 'normal' | 'urgente';
+
+export interface WorkOrderItem {
+  id: string;
+  productId?: string;
+  descripcion: string;
+  cantidad: number;
+  precioUnitario: number;
+  costoUnitario?: number;
+  subtotal: number;
+}
+
+export interface WorkOrder {
+  id: string;
+  numero: string; // OT-0001
+  clientId?: string;
+  clientNombre: string;
+  clientTelefono?: string;
+  clientEmail?: string;
+  equipo: string; // Ej: Vehículo, Máquina, Motor, Herramienta, etc.
+  marcaModelo?: string;
+  serieOPatente?: string;
+  fallaReportada: string;
+  diagnostico?: string;
+  trabajoRealizado?: string;
+  repuestos: WorkOrderItem[];
+  costoManoObra: number;
+  costoRepuestos: number;
+  total: number;
+  anticipo: number;
+  saldoPendiente: number;
+  estado: WorkOrderStatus;
+  prioridad: WorkOrderPriority;
+  fechaIngreso: string;
+  fechaPrometida?: string;
+  fechaEntrega?: string;
+  notasInternas?: string;
+  createdBy: string;
+  saleId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+
 
