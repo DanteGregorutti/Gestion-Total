@@ -36,6 +36,7 @@ import { ChatAI } from './ChatAI';
 import { QuickMode } from './QuickMode';
 import { TelegramBotModal } from './telegram/TelegramBotModal';
 import { telegramBot } from '../services/telegramBotManager';
+import { APP_VERSION } from '../config/version';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -192,6 +193,23 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
             <LogOut className={cn("w-5 h-5 shrink-0", (isSidebarOpen || isMobileMenuOpen) && "mr-3")} />
             {(isSidebarOpen || isMobileMenuOpen) && <span className="font-medium">{t('logout')}</span>}
           </button>
+
+          {(isSidebarOpen || isMobileMenuOpen) && (
+            <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between px-1">
+              <NavLink 
+                to="/settings"
+                onClick={closeMobileMenu}
+                className="text-[11px] font-medium text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors flex items-center gap-1.5"
+                title="Ver versión y novedades en Configuración"
+              >
+                <span>Sistema</span>
+                <span className="font-mono font-bold px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 text-[10px]">
+                  v{APP_VERSION}
+                </span>
+              </NavLink>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" title="En línea" />
+            </div>
+          )}
         </div>
       </motion.aside>
 

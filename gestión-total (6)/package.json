@@ -1,7 +1,7 @@
 {
   "name": "react-example",
   "private": true,
-  "version": "0.0.0",
+  "version": "2.1.0",
   "main": "electron/main.cjs",
   "description": "Sistema de Gestión de Inventario Desktop",
   "author": "Gestión Total",
