@@ -273,7 +273,7 @@ export default function WorkOrderTracking() {
             {/* Direct WhatsApp button to workshop */}
             <div className="pt-2">
               <a
-                href={`https://wa.me/5493435123456?text=${encodeURIComponent(`Hola Taller Gregorutti, te consulto por mi orden ${order.numero} (${order.equipo})`)}`}
+                href={`https://wa.me/5491160255767?text=${encodeURIComponent(`Hola, te consulto por mi orden de taller ${order.numero} (${order.equipo})`)}`}
                 target="_blank"
                 rel="noreferrer"
                 className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all"

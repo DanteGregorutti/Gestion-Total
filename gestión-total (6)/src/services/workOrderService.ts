@@ -15,10 +15,11 @@ import {
   onSnapshot 
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
-import { WorkOrder, WorkOrderStatus, WorkOrderItem } from '../types';
+import { WorkOrder, WorkOrderStatus, WorkOrderItem, RepairQuote } from '../types';
 import { inventoryService } from './inventoryService';
 
 const STORAGE_KEY = 'taller_work_orders';
+const REPAIR_QUOTES_KEY = 'taller_repair_quotes';
 
 const getLocalOrders = (): WorkOrder[] => {
   try {
@@ -38,6 +39,65 @@ const setLocalOrders = (orders: WorkOrder[]) => {
     console.error('Error saving work orders to localStorage:', e);
   }
 };
+
+const getLocalRepairQuotes = (): RepairQuote[] => {
+  try {
+    const raw = localStorage.getItem(REPAIR_QUOTES_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error('Error reading repair quotes from localStorage:', e);
+    return [];
+  }
+};
+
+const setLocalRepairQuotes = (quotes: RepairQuote[]) => {
+  try {
+    localStorage.setItem(REPAIR_QUOTES_KEY, JSON.stringify(quotes));
+  } catch (e) {
+    console.error('Error saving repair quotes to localStorage:', e);
+  }
+};
+
+// Initial sample data for repair quotes
+const sampleRepairQuotes: RepairQuote[] = [
+  {
+    id: 'cot-101',
+    numero: 'COT-0001',
+    clientNombre: 'Mariano Albornoz',
+    clientTelefono: '1160255767',
+    clientEmail: 'mariano@ejemplo.com',
+    equipo: 'Hidrolavadora Industrial 180 Bar',
+    marcaModelo: 'Kärcher HD 5/11',
+    serieOPatente: 'KH-8821',
+    fallaReportada: 'Pérdida de presión intermitente y bote de agua por la parte inferior del cabezal.',
+    diagnosticoPrevio: 'Válvulas by-pass trabadas con sarro y retén de pistón de cerámica desgastado.',
+    repuestos: [
+      {
+        id: 'rep-cot-1',
+        descripcion: 'Kit retenes de agua y aceite Kärcher HD',
+        cantidad: 1,
+        precioUnitario: 18500,
+        subtotal: 18500
+      },
+      {
+        id: 'rep-cot-2',
+        descripcion: 'Válvula reguladora By-Pass reforzada',
+        cantidad: 1,
+        precioUnitario: 24000,
+        subtotal: 24000
+      }
+    ],
+    costoManoObra: 32000,
+    costoRepuestos: 42500,
+    total: 74500,
+    validezDias: 10,
+    estado: 'pendiente',
+    notas: 'Presupuesto válido por 10 días corridos. Sujeto a disponibilidad de piezas.',
+    fecha: new Date().toISOString(),
+    createdBy: 'admin'
+  }
+];
 
 // Initial sample data for demonstration if empty
 const sampleWorkOrders: WorkOrder[] = [
@@ -443,5 +503,217 @@ export const workOrderService = {
     }
 
     return phone ? `https://wa.me/${phone}?text=${encodeURIComponent(text)}` : `https://wa.me/?text=${encodeURIComponent(text)}`;
+  },
+
+  /**
+   * REPAIR QUOTES (PRESUPUESTOS DE TALLER)
+   */
+  async getRepairQuotes(): Promise<RepairQuote[]> {
+    let local = getLocalRepairQuotes();
+    if (local.length === 0) {
+      local = sampleRepairQuotes;
+      setLocalRepairQuotes(local);
+    }
+    try {
+      const q = query(collection(db, 'repair_quotes'), orderBy('createdAt', 'desc'));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const firestoreQuotes: RepairQuote[] = snap.docs.map(doc => ({
+          ...(doc.data() as RepairQuote),
+          id: doc.id
+        }));
+        setLocalRepairQuotes(firestoreQuotes);
+        return firestoreQuotes;
+      }
+    } catch (e) {
+      console.warn('Firestore repair quotes fallback to local:', e);
+    }
+    return local;
+  },
+
+  subscribeToRepairQuotes(callback: (quotes: RepairQuote[]) => void) {
+    let local = getLocalRepairQuotes();
+    if (local.length === 0) {
+      local = sampleRepairQuotes;
+      setLocalRepairQuotes(local);
+    }
+    callback(local);
+
+    try {
+      const q = query(collection(db, 'repair_quotes'), orderBy('createdAt', 'desc'));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        if (!snapshot.empty) {
+          const quotes: RepairQuote[] = snapshot.docs.map(doc => ({
+            ...(doc.data() as RepairQuote),
+            id: doc.id
+          }));
+          setLocalRepairQuotes(quotes);
+          callback(quotes);
+        }
+      }, (error) => {
+        console.warn('Repair quotes snapshot error, using local:', error);
+      });
+      return unsubscribe;
+    } catch (e) {
+      console.warn('Could not subscribe to repair quotes:', e);
+      return () => {};
+    }
+  },
+
+  getNextRepairQuoteNumber(quotes: RepairQuote[]): string {
+    if (!quotes.length) return 'COT-0001';
+    const numbers = quotes
+      .map(q => {
+        const m = q.numero?.match(/(\d+)/);
+        return m ? parseInt(m[1], 10) : 0;
+      })
+      .filter(n => !isNaN(n));
+    const max = numbers.length ? Math.max(...numbers) : 0;
+    return `COT-${String(max + 1).padStart(4, '0')}`;
+  },
+
+  async createRepairQuote(data: Partial<RepairQuote>): Promise<RepairQuote> {
+    const current = await this.getRepairQuotes();
+    const numero = data.numero || this.getNextRepairQuoteNumber(current);
+    const now = new Date().toISOString();
+    const id = `cot_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
+    const costoRepuestos = Number(data.costoRepuestos) || (data.repuestos?.reduce((a, b) => a + (b.subtotal || 0), 0) || 0);
+    const costoManoObra = Number(data.costoManoObra) || 0;
+    const total = (Number(data.total) || 0) > 0 ? Number(data.total) : (costoManoObra + costoRepuestos);
+
+    const newQuote: RepairQuote = {
+      id,
+      numero,
+      clientNombre: data.clientNombre || 'Cliente Particular',
+      clientTelefono: data.clientTelefono || '',
+      clientEmail: data.clientEmail || '',
+      equipo: data.equipo || 'Equipo sin especificar',
+      marcaModelo: data.marcaModelo || '',
+      serieOPatente: data.serieOPatente || '',
+      fallaReportada: data.fallaReportada || '',
+      diagnosticoPrevio: data.diagnosticoPrevio || '',
+      repuestos: data.repuestos || [],
+      costoManoObra,
+      costoRepuestos,
+      total,
+      validezDias: Number(data.validezDias) || 10,
+      estado: data.estado || 'pendiente',
+      notas: data.notas || '',
+      fecha: data.fecha || now,
+      createdBy: auth.currentUser?.uid || 'admin',
+      createdAt: now,
+      updatedAt: now
+    };
+
+    const updated = [newQuote, ...current];
+    setLocalRepairQuotes(updated);
+
+    try {
+      await addDoc(collection(db, 'repair_quotes'), newQuote);
+    } catch (e) {
+      console.warn('Firestore createRepairQuote fallback:', e);
+    }
+
+    return newQuote;
+  },
+
+  async updateRepairQuote(id: string, updates: Partial<RepairQuote>): Promise<RepairQuote> {
+    const current = await this.getRepairQuotes();
+    const idx = current.findIndex(q => q.id === id);
+    if (idx === -1) throw new Error('Cotización no encontrada');
+
+    const existing = current[idx];
+    const costoRepuestos = updates.costoRepuestos !== undefined ? Number(updates.costoRepuestos) : existing.costoRepuestos;
+    const costoManoObra = updates.costoManoObra !== undefined ? Number(updates.costoManoObra) : existing.costoManoObra;
+    const total = updates.total !== undefined ? Number(updates.total) : (costoManoObra + costoRepuestos);
+
+    const updatedQuote: RepairQuote = {
+      ...existing,
+      ...updates,
+      costoRepuestos,
+      costoManoObra,
+      total,
+      updatedAt: new Date().toISOString()
+    };
+
+    current[idx] = updatedQuote;
+    setLocalRepairQuotes([...current]);
+
+    try {
+      const docRef = doc(db, 'repair_quotes', id);
+      await updateDoc(docRef, updatedQuote as any);
+    } catch (e) {
+      console.warn('Firestore updateRepairQuote fallback:', e);
+    }
+
+    return updatedQuote;
+  },
+
+  async deleteRepairQuote(id: string): Promise<void> {
+    const current = await this.getRepairQuotes();
+    const filtered = current.filter(q => q.id !== id);
+    setLocalRepairQuotes(filtered);
+
+    try {
+      await deleteDoc(doc(db, 'repair_quotes', id));
+    } catch (e) {
+      console.warn('Firestore deleteRepairQuote fallback:', e);
+    }
+  },
+
+  async convertRepairQuoteToWorkOrder(quote: RepairQuote): Promise<WorkOrder> {
+    const orderData: Partial<WorkOrder> = {
+      clientNombre: quote.clientNombre,
+      clientTelefono: quote.clientTelefono,
+      clientEmail: quote.clientEmail,
+      equipo: quote.equipo,
+      marcaModelo: quote.marcaModelo,
+      serieOPatente: quote.serieOPatente,
+      fallaReportada: quote.fallaReportada,
+      diagnostico: quote.diagnosticoPrevio || 'Presupuesto aprobado por el cliente.',
+      repuestos: quote.repuestos,
+      costoManoObra: quote.costoManoObra,
+      costoRepuestos: quote.costoRepuestos,
+      total: quote.total,
+      anticipo: 0,
+      saldoPendiente: quote.total,
+      estado: 'en_reparacion',
+      prioridad: 'normal',
+      notasInternas: `Originado de Cotización ${quote.numero}. ${quote.notas || ''}`
+    };
+
+    const newOrder = await this.createWorkOrder(orderData);
+
+    await this.updateRepairQuote(quote.id, {
+      estado: 'aprobado',
+      workOrderId: newOrder.id
+    });
+
+    return newOrder;
+  },
+
+  getRepairQuoteWhatsAppMessage(quote: RepairQuote): string {
+    const phone = quote.clientTelefono?.replace(/\D/g, '') || '';
+    const itemsList = quote.repuestos.length > 0
+      ? `⚙️ *Repuestos cotizados:*\n` + quote.repuestos.map(r => `  • ${r.cantidad}x ${r.descripcion}: $${(r.subtotal || 0).toLocaleString('es-AR')}`).join('\n') + `\n`
+      : '';
+
+    const text = `📋 *PRESUPUESTO DE REPARACIÓN - ${quote.numero}*\n\n` +
+                 `¡Hola *${quote.clientNombre}*! Te enviamos la cotización solicitada para tu equipo:\n\n` +
+                 `🛠️ *Equipo:* ${quote.equipo} ${quote.marcaModelo ? `(${quote.marcaModelo})` : ''}\n` +
+                 `⚠️ *Falla Detectada / Reportada:* ${quote.fallaReportada}\n` +
+                 (quote.diagnosticoPrevio ? `🔍 *Diagnóstico técnico:* ${quote.diagnosticoPrevio}\n\n` : '\n') +
+                 itemsList +
+                 `👨‍🔧 *Mano de Obra especializada:* $${quote.costoManoObra.toLocaleString('es-AR')}\n` +
+                 (quote.costoRepuestos > 0 ? `🔩 *Total Repuestos:* $${quote.costoRepuestos.toLocaleString('es-AR')}\n` : '') +
+                 `💰 *TOTAL COTIZACIÓN:* $${quote.total.toLocaleString('es-AR')}\n\n` +
+                 `⏱️ *Validez:* ${quote.validezDias} días corridos.\n` +
+                 (quote.notas ? `📝 *Nota:* ${quote.notas}\n\n` : '\n') +
+                 `Por favor respondenos a este mensaje si deseas autorizar el inicio del trabajo. ¡Muchas gracias!`;
+
+    return phone 
+      ? `https://wa.me/${phone}?text=${encodeURIComponent(text)}`
+      : `https://wa.me/?text=${encodeURIComponent(text)}`;
   }
 };

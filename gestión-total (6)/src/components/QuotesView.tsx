@@ -21,7 +21,8 @@ import {
   User, 
   Phone,
   Filter,
-  DollarSign
+  DollarSign,
+  Edit
 } from 'lucide-react';
 import { Quote } from '../types';
 import { Button, Input } from './ui';
@@ -34,6 +35,7 @@ interface QuotesViewProps {
   statusFilter: 'todas' | 'pendiente' | 'aceptada' | 'rechazada';
   onStatusFilterChange: (val: 'todas' | 'pendiente' | 'aceptada' | 'rechazada') => void;
   onOpenNewQuote: () => void;
+  onEditQuote: (quote: Quote) => void;
   onOpenReceipt: (quote: Quote) => void;
   onConvertToSale: (quote: Quote) => void;
   onDeleteQuote: (quoteId: string) => void;
@@ -47,6 +49,7 @@ export function QuotesView({
   statusFilter,
   onStatusFilterChange,
   onOpenNewQuote,
+  onEditQuote,
   onOpenReceipt,
   onConvertToSale,
   onDeleteQuote,
@@ -367,6 +370,18 @@ export function QuotesView({
                     <td className="py-4 px-6 text-right">
                       <div className="flex items-center justify-end gap-1.5">
                         
+                        {/* Editar */}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onEditQuote(quote)}
+                          className="h-8 px-2 text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30 rounded-xl font-bold text-xs"
+                          title="Modificar cotización"
+                        >
+                          <Edit size={14} className="mr-1" />
+                          Editar
+                        </Button>
+
                         {/* Ver Comprobante */}
                         <Button
                           variant="ghost"
@@ -520,6 +535,16 @@ export function QuotesView({
                   </div>
 
                   <div className="flex items-center gap-1.5 ml-auto">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onEditQuote(quote)}
+                      className="h-8 px-2 rounded-xl text-xs font-bold text-amber-600 dark:text-amber-400"
+                    >
+                      <Edit size={14} className="mr-1" />
+                      Editar
+                    </Button>
+
                     <Button
                       variant="outline"
                       size="sm"

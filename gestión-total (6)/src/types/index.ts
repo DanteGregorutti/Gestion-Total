@@ -321,5 +321,30 @@ export interface WorkOrder {
   updatedAt?: string;
 }
 
+export interface RepairQuote {
+  id: string;
+  numero: string; // Ej: COT-0001
+  clientNombre: string;
+  clientTelefono?: string;
+  clientEmail?: string;
+  equipo: string;
+  marcaModelo?: string;
+  serieOPatente?: string;
+  fallaReportada: string;
+  diagnosticoPrevio?: string;
+  repuestos: WorkOrderItem[];
+  costoManoObra: number;
+  costoRepuestos: number;
+  total: number;
+  validezDias: number;
+  estado: 'pendiente' | 'aprobado' | 'rechazado';
+  workOrderId?: string;
+  notas?: string;
+  fecha: string;
+  createdBy: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 
 

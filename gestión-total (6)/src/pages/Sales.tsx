@@ -109,6 +109,7 @@ export default function Sales() {
   const [quoteStatusFilter, setQuoteStatusFilter] = React.useState<'todas' | 'pendiente' | 'aceptada' | 'rechazada'>('todas');
   const [quoteSearchTerm, setQuoteSearchTerm] = React.useState('');
   const [isNewQuoteModalOpen, setIsNewQuoteModalOpen] = React.useState(false);
+  const [editingQuote, setEditingQuote] = React.useState<Quote | null>(null);
   const [isReceiptModalOpen, setIsReceiptModalOpen] = React.useState(false);
   const [selectedReceiptQuote, setSelectedReceiptQuote] = React.useState<Quote | null>(null);
   const [selectedReceiptSale, setSelectedReceiptSale] = React.useState<Sale | null>(null);
@@ -238,6 +239,20 @@ export default function Sales() {
       return created;
     } catch (e) {
       console.error('Error saving quote:', e);
+      throw e;
+    }
+  };
+
+  const handleUpdateQuote = async (quoteId: string, quoteData: Partial<Quote>) => {
+    try {
+      await inventoryService.updateQuote(quoteId, quoteData);
+      setQuotes(prev => prev.map(q => q.id === quoteId ? { ...q, ...quoteData } as Quote : q));
+      setEditingQuote(null);
+      refreshData();
+      toast.success('¡Cotización actualizada con éxito!');
+    } catch (e) {
+      console.error('Error updating quote:', e);
+      toast.error('Error al actualizar la cotización');
       throw e;
     }
   };
@@ -676,7 +691,14 @@ export default function Sales() {
           onSearchTermChange={setQuoteSearchTerm}
           statusFilter={quoteStatusFilter}
           onStatusFilterChange={setQuoteStatusFilter}
-          onOpenNewQuote={() => setIsNewQuoteModalOpen(true)}
+          onOpenNewQuote={() => {
+            setEditingQuote(null);
+            setIsNewQuoteModalOpen(true);
+          }}
+          onEditQuote={(quote) => {
+            setEditingQuote(quote);
+            setIsNewQuoteModalOpen(true);
+          }}
           onOpenReceipt={(quote) => {
             setSelectedReceiptQuote(quote);
             setSelectedReceiptSale(null);
@@ -1713,13 +1735,18 @@ export default function Sales() {
         onConvertToSale={handleConvertToSale}
       />
 
-      {/* New Quote Modal */}
+      {/* New / Edit Quote Modal */}
       <NewQuoteModal
         isOpen={isNewQuoteModalOpen}
-        onClose={() => setIsNewQuoteModalOpen(false)}
+        onClose={() => {
+          setIsNewQuoteModalOpen(false);
+          setEditingQuote(null);
+        }}
         products={products}
         clients={clients}
+        quoteToEdit={editingQuote}
         onSaveQuote={handleSaveQuote}
+        onUpdateQuote={handleUpdateQuote}
         onSaveAndOpenReceipt={(q) => {
           setSelectedReceiptQuote(q);
           setSelectedReceiptSale(null);

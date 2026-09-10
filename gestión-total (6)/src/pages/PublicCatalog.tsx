@@ -142,9 +142,9 @@ export default function PublicCatalog() {
 
     message += `\n¿Tienen disponibilidad para coordinar la entrega? ¡Muchas gracias!`;
 
-    // WhatsApp send intent
+    // WhatsApp send intent to official PulseStore number: 1160255767 (5491160255767)
     const encoded = encodeURIComponent(message);
-    window.open(`https://wa.me/?text=${encoded}`, '_blank');
+    window.open(`https://wa.me/5491160255767?text=${encoded}`, '_blank');
   };
 
   return (

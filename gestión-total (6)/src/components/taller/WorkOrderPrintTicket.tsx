@@ -56,7 +56,7 @@ export function WorkOrderPrintTicket({ order, onClose }: WorkOrderPrintTicketPro
             <div>
               <h1 className="text-2xl font-black tracking-tight text-black">TALLER GREGORUTTI</h1>
               <p className="text-xs text-gray-600 font-semibold">Reparaciones, Mantenimiento & Servicios Técnicos</p>
-              <p className="text-xs text-gray-500">WhatsApp: 3435-123456 • Parana, Entre Rios</p>
+              <p className="text-xs text-gray-500 font-medium">WhatsApp Oficial: 11-6025-5767 • Taller & Reparaciones</p>
             </div>
             <div className="text-right">
               <span className="inline-block px-3 py-1 bg-black text-white font-black text-sm rounded-lg">

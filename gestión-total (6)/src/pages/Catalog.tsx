@@ -17,7 +17,9 @@ import {
   EyeOff,
   ShoppingBag,
   Grid,
-  List as ListIcon
+  List as ListIcon,
+  MessageCircle,
+  ExternalLink
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useProducts } from '../contexts/ProductsContext';
@@ -332,6 +334,36 @@ export default function Catalog() {
             <Share2 className="w-4 h-4 mr-2" />
             Vista de Publicación
           </button>
+        </div>
+      </div>
+
+      {/* Direct WhatsApp Ordering Hero Banner */}
+      <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 text-white p-6 sm:p-7 rounded-3xl shadow-xl space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="max-w-2xl">
+            <span className="px-3 py-1 bg-white/20 rounded-full text-xs font-black uppercase tracking-widest inline-flex items-center gap-1.5 mb-2">
+              <MessageCircle size={14} />
+              Pedidos Directos a tu WhatsApp Oficial 11-6025-5767
+            </span>
+            <h2 className="text-xl sm:text-2xl font-black leading-tight">
+              Tus Clientes Pueden Comprar y Pedirte Directo por WhatsApp
+            </h2>
+            <p className="text-xs sm:text-sm opacity-90 mt-1 leading-relaxed">
+              Comparte el enlace web del Catálogo Online en tus redes sociales o estados de WhatsApp. Tus clientes eligen productos, talles y envían su pedido armado directamente a tu WhatsApp oficial con 1 clic.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <a
+              href="/catalogo-online"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-4 py-2.5 bg-white text-gray-900 hover:bg-gray-100 rounded-2xl font-black text-xs transition-all shadow-md flex items-center gap-2"
+            >
+              <ExternalLink size={14} />
+              <span>Probar Catálogo en Vivo</span>
+            </a>
+          </div>
         </div>
       </div>
 

@@ -25,8 +25,7 @@ import {
   Monitor,
   Wallet,
   Bot,
-  Wrench,
-  Tag
+  Wrench
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../utils/cn';
@@ -63,7 +62,6 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
     { name: 'Taller', path: '/taller', icon: Wrench },
     { name: t('inventory'), path: '/inventario', icon: Package },
     { name: t('sales'), path: '/ventas', icon: TrendingUp },
-    { name: 'Etiquetas', path: '/etiquetas', icon: Tag },
     { name: t('clients') || 'Clientes', path: '/clientes', icon: Users },
     { name: t('purchases'), path: '/compras', icon: ShoppingCart },
     { name: t('finances'), path: '/cuentas', icon: Wallet },

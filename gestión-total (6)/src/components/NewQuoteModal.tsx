@@ -28,7 +28,9 @@ interface NewQuoteModalProps {
   onClose: () => void;
   products: Product[];
   clients?: any[]; // Kept optional for backward compatibility
+  quoteToEdit?: Quote | null;
   onSaveQuote: (quoteData: Omit<Quote, 'id' | 'fecha' | 'createdBy' | 'numero'> & { numero?: string }) => Promise<Quote | void>;
+  onUpdateQuote?: (quoteId: string, quoteData: Partial<Quote>) => Promise<void>;
   onSaveAndOpenReceipt: (quote: Quote) => void;
 }
 
@@ -36,7 +38,9 @@ export function NewQuoteModal({
   isOpen,
   onClose,
   products,
+  quoteToEdit,
   onSaveQuote,
+  onUpdateQuote,
   onSaveAndOpenReceipt
 }: NewQuoteModalProps) {
   // Client & metadata - simple optional reference
@@ -141,6 +145,25 @@ export function NewQuoteModal({
       total: 0
     });
   };
+
+  React.useEffect(() => {
+    if (isOpen) {
+      if (quoteToEdit) {
+        setClientReference(
+          quoteToEdit.clientTelefono
+            ? `${quoteToEdit.clientNombre} (${quoteToEdit.clientTelefono})`
+            : quoteToEdit.clientNombre
+        );
+        setValidityDays(quoteToEdit.validezDias || 7);
+        setNotes(quoteToEdit.notas || '');
+        setDiscountAmount(quoteToEdit.descuento || 0);
+        setItems(quoteToEdit.items || []);
+        setSelectedBaseProduct(null);
+      } else {
+        resetForm();
+      }
+    }
+  }, [isOpen, quoteToEdit]);
 
   // Synchronized price handlers
   const handleQuantityChange = (newQty: number) => {
@@ -256,6 +279,22 @@ export function NewQuoteModal({
 
     setIsSubmitting(true);
     try {
+      if (quoteToEdit && onUpdateQuote) {
+        await onUpdateQuote(quoteToEdit.id, {
+          clientNombre: payload.clientNombre,
+          items: payload.items,
+          subtotal: payload.subtotal,
+          descuento: payload.descuento,
+          total: payload.total,
+          validezDias: payload.validezDias,
+          notas: payload.notas
+        });
+        toast.success(`Cotización ${quoteToEdit.numero} actualizada con éxito`);
+        resetForm();
+        onClose();
+        return;
+      }
+
       const savedQuote = await onSaveQuote(payload);
       const quoteNum = savedQuote && typeof savedQuote === 'object' && 'numero' in savedQuote ? (savedQuote as Quote).numero : 'emitido';
       toast.success(`Comprobante ${quoteNum} guardado con éxito`);
@@ -275,6 +314,27 @@ export function NewQuoteModal({
 
     setIsSubmitting(true);
     try {
+      if (quoteToEdit && onUpdateQuote) {
+        await onUpdateQuote(quoteToEdit.id, {
+          clientNombre: payload.clientNombre,
+          items: payload.items,
+          subtotal: payload.subtotal,
+          descuento: payload.descuento,
+          total: payload.total,
+          validezDias: payload.validezDias,
+          notas: payload.notas
+        });
+        toast.success(`Cotización ${quoteToEdit.numero} actualizada con éxito`);
+        const updatedQuote: Quote = {
+          ...quoteToEdit,
+          ...payload
+        };
+        onSaveAndOpenReceipt(updatedQuote);
+        resetForm();
+        onClose();
+        return;
+      }
+
       const savedQuote = await onSaveQuote(payload);
       if (savedQuote && typeof savedQuote === 'object' && 'numero' in savedQuote) {
         toast.success(`Comprobante ${(savedQuote as Quote).numero} guardado con éxito`);
@@ -294,7 +354,7 @@ export function NewQuoteModal({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Nueva Cotización / Presupuesto"
+      title={quoteToEdit ? `Modificar Cotización (${quoteToEdit.numero})` : "Nueva Cotización / Presupuesto"}
       className="max-w-4xl"
     >
       <div className="space-y-5 pb-2">
@@ -653,7 +713,7 @@ export function NewQuoteModal({
               disabled={items.length === 0 || isSubmitting}
               className="rounded-xl font-bold text-xs bg-gray-900 text-white hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900"
             >
-              {isSubmitting ? 'Guardando...' : 'Guardar Comprobante'}
+              {isSubmitting ? 'Guardando...' : (quoteToEdit ? 'Guardar Cambios' : 'Guardar Comprobante')}
             </Button>
             <Button
               type="button"
@@ -662,7 +722,7 @@ export function NewQuoteModal({
               className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black text-xs shadow-md shadow-emerald-200 dark:shadow-none"
             >
               <Send size={14} className="mr-1.5" />
-              {isSubmitting ? 'Guardando...' : 'Guardar y Ver Comprobante'}
+              {isSubmitting ? 'Guardando...' : (quoteToEdit ? 'Guardar y Ver' : 'Guardar y Ver Comprobante')}
             </Button>
           </div>
         </div>

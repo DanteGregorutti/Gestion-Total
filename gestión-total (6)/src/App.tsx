@@ -20,7 +20,6 @@ import Login from './pages/Login';
 import StockUpdate from './pages/StockUpdate';
 import PublicCatalog from './pages/PublicCatalog';
 import WorkOrders from './pages/WorkOrders';
-import LabelsCenter from './pages/LabelsCenter';
 import WorkOrderTracking from './pages/WorkOrderTracking';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SettingsProvider, useSettings } from './contexts/SettingsContext';
@@ -65,7 +64,6 @@ function AppContent() {
         <Route path="/ordenes" element={<WorkOrders />} />
         <Route path="/inventario" element={<Inventory />} />
         <Route path="/ventas" element={<Sales />} />
-        <Route path="/etiquetas" element={<LabelsCenter />} />
         <Route path="/compras" element={<Purchases />} />
         <Route path="/clientes" element={<Clients />} />
         <Route path="/proveedores" element={<Suppliers />} />
