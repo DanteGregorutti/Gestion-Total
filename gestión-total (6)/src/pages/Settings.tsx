@@ -38,6 +38,7 @@ import { SUPABASE_SCHEMA_SQL } from '../data/supabaseSchemaSql';
 import { toast } from 'sonner';
 import { useSettings } from '../contexts/SettingsContext';
 import { SystemVersionSection } from '../components/settings/SystemVersionSection';
+import { CompanyBrandingSection } from '../components/settings/CompanyBrandingSection';
 
 export default function Settings() {
   const { 
@@ -183,6 +184,9 @@ export default function Settings() {
 
       {/* System Version & History */}
       <SystemVersionSection />
+
+      {/* Company Profile & Branding (PulseStore) */}
+      <CompanyBrandingSection />
 
       {/* Appearance */}
       <section className="bg-white dark:bg-gray-800 rounded-[32px] p-8 shadow-sm border border-gray-100 dark:border-gray-700">

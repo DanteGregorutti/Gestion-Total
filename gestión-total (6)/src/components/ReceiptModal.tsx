@@ -27,12 +27,15 @@ import {
   ShieldCheck,
   Wrench,
   Building2,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Store
 } from 'lucide-react';
 import { Quote, Sale } from '../types';
 import { Button } from './ui';
 import { toast } from 'sonner';
 import { cn } from '../utils/cn';
+import { useSettings } from '../contexts/SettingsContext';
+import { CompanyBrandingModal } from './CompanyBrandingModal';
 import { 
   printReceipt, 
   downloadReceiptPdf, 
@@ -59,11 +62,13 @@ export function ReceiptModal({
   salesGroup,
   onConvertToSale 
 }: ReceiptModalProps) {
+  const { companyProfile } = useSettings();
   const [copied, setCopied] = useState(false);
   const [isConverting, setIsConverting] = useState(false);
   const [selectedStyle, setSelectedStyle] = useState<QuoteStyle>('modern');
   const [isPrinting, setIsPrinting] = useState(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [showBrandingModal, setShowBrandingModal] = useState(false);
 
   if (!isOpen || (!quote && !sale && (!salesGroup || salesGroup.length === 0))) {
     return null;
@@ -150,7 +155,15 @@ export function ReceiptModal({
     total: finalTotal,
     validUntilText,
     notas: isQuote ? quote.notas : undefined,
-    storeName: 'Gestión Total'
+    storeName: companyProfile.name || 'PulseStore',
+    storeLogo: companyProfile.logoUrl,
+    storeSlogan: companyProfile.slogan,
+    storePhone: companyProfile.phone,
+    storeEmail: companyProfile.email,
+    storeAddress: companyProfile.address,
+    storeTaxId: companyProfile.taxId,
+    bankAlias: companyProfile.bankAlias || 'PULSESTORE.PAGO',
+    bankCbu: companyProfile.bankCbu
   };
 
   const generateMessageText = () => {
@@ -278,20 +291,41 @@ export function ReceiptModal({
           </button>
         </div>
 
-        {/* Style Selector Toolbar (Screen Only) */}
-        <div className="px-4 sm:px-6 py-2.5 bg-gray-50 dark:bg-gray-800/40 border-b border-gray-100 dark:border-gray-800 shrink-0">
-          <div className="flex items-center justify-between gap-2 mb-2">
-            <span className="text-xs font-black uppercase text-gray-500 dark:text-gray-400 tracking-wider flex items-center gap-1.5">
-              <Palette size={14} className="text-indigo-600 dark:text-indigo-400" />
-              Estilo Visual de Cotización ({QUOTE_STYLE_OPTIONS.length})
-            </span>
-            <span className="text-[11px] text-gray-400">
-              Selecciona el diseño con el que se imprimirá y descargará en PDF
-            </span>
+        {/* Style Selector Toolbar & Company Branding (Screen Only) */}
+        <div className="px-4 sm:px-6 py-3 bg-gradient-to-r from-gray-50 via-indigo-50/20 to-gray-50 dark:from-gray-800/40 dark:via-indigo-950/20 dark:to-gray-800/40 border-b border-gray-100 dark:border-gray-800 shrink-0 space-y-2.5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-black uppercase text-gray-700 dark:text-gray-300 tracking-wider flex items-center gap-1.5">
+                <Palette size={15} className="text-indigo-600 dark:text-indigo-400" />
+                Diseño Visual de Cotización
+              </span>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300">
+                {QUOTE_STYLE_OPTIONS.find(o => o.id === selectedStyle)?.label}
+              </span>
+            </div>
+
+            {/* Quick-Edit Branding Button */}
+            <button
+              type="button"
+              onClick={() => setShowBrandingModal(true)}
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold bg-white dark:bg-gray-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 shadow-xs hover:border-indigo-400 transition-all group"
+              title="Personalizar nombre comercial (PulseStore), logo e información bancaria"
+            >
+              {companyProfile.logoUrl ? (
+                <img src={companyProfile.logoUrl} alt="Logo" className="w-4 h-4 object-contain rounded" />
+              ) : (
+                <Building2 size={14} className="text-indigo-600 dark:text-indigo-400 group-hover:scale-110 transition-transform" />
+              )}
+              <span>{companyProfile.name || 'PulseStore'}</span>
+              <span className="text-[10px] text-gray-400 dark:text-gray-500 font-normal">
+                ({companyProfile.logoUrl ? 'Logo Activo' : 'Cargar Logo'})
+              </span>
+              <Sparkles size={12} className="text-amber-500 animate-pulse" />
+            </button>
           </div>
 
-          {/* Style pills */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
+          {/* Style cards grid (2 cols mobile, 4 cols desktop for comfortable spacious cards) */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {QUOTE_STYLE_OPTIONS.map(opt => {
               const isSelected = selectedStyle === opt.id;
               return (
@@ -300,31 +334,38 @@ export function ReceiptModal({
                   type="button"
                   onClick={() => setSelectedStyle(opt.id)}
                   className={cn(
-                    "p-2 rounded-xl text-left border transition-all flex flex-col justify-between relative group",
+                    "p-2.5 rounded-2xl text-left border transition-all flex flex-col justify-between relative group cursor-pointer",
                     isSelected
-                      ? "bg-white dark:bg-gray-800 border-indigo-600 dark:border-indigo-400 shadow-sm ring-2 ring-indigo-600/20"
-                      : "bg-white/60 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700/80 hover:border-gray-300 dark:hover:border-gray-600 opacity-80 hover:opacity-100"
+                      ? "bg-white dark:bg-gray-800 border-indigo-600 dark:border-indigo-400 shadow-md ring-2 ring-indigo-600/20"
+                      : "bg-white/80 dark:bg-gray-800/60 border-gray-200/80 dark:border-gray-700/80 hover:border-indigo-300 dark:hover:border-indigo-700 hover:bg-white dark:hover:bg-gray-800 hover:shadow-xs"
                   )}
                 >
                   <div className="flex items-center justify-between w-full mb-1">
-                    <span className="text-base">{opt.icon}</span>
-                    <span className={cn(
-                      "text-[9px] font-black uppercase px-1.5 py-0.2 rounded",
-                      isSelected
-                        ? "bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300"
-                        : "bg-gray-100 dark:bg-gray-700 text-gray-500"
-                    )}>
-                      {opt.badge}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-base">{opt.icon}</span>
+                      <span className={cn(
+                        "text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md whitespace-nowrap",
+                        isSelected
+                          ? "bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300"
+                          : "bg-gray-100 dark:bg-gray-700/80 text-gray-600 dark:text-gray-400"
+                      )}>
+                        {opt.badge}
+                      </span>
+                    </div>
+                    {isSelected && (
+                      <span className="w-4 h-4 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[10px] shrink-0 shadow-xs">
+                        <Check size={10} strokeWidth={3} />
+                      </span>
+                    )}
                   </div>
                   <div>
                     <p className={cn(
                       "text-xs font-bold leading-tight",
-                      isSelected ? "text-indigo-900 dark:text-white" : "text-gray-700 dark:text-gray-300"
+                      isSelected ? "text-indigo-950 dark:text-white" : "text-gray-800 dark:text-gray-200"
                     )}>
                       {opt.label}
                     </p>
-                    <p className="text-[10px] text-gray-400 line-clamp-1 mt-0.5">
+                    <p className="text-[10px] text-gray-400 dark:text-gray-500 line-clamp-1 mt-0.5">
                       {opt.description}
                     </p>
                   </div>
@@ -407,8 +448,14 @@ export function ReceiptModal({
             /* ================= TICKET 80MM PREVIEW ================= */
             <div className="max-w-[340px] mx-auto p-4 bg-white border border-gray-300 rounded-xl shadow-sm font-mono text-xs text-gray-900 space-y-3">
               <div className="text-center space-y-1">
-                <p className="text-base font-black tracking-wider uppercase">GESTIÓN TOTAL</p>
-                <p className="text-[10px] text-gray-500">Gestión Comercial & Stock</p>
+                {receiptData.storeLogo && (
+                  <img src={receiptData.storeLogo} alt={receiptData.storeName} className="h-10 max-w-[120px] object-contain mx-auto mb-1" />
+                )}
+                <p className="text-base font-black tracking-wider uppercase">{receiptData.storeName}</p>
+                <p className="text-[10px] text-gray-500">{receiptData.storeSlogan || 'Gestión Comercial & Stock'}</p>
+                {(receiptData.storePhone || receiptData.storeAddress) && (
+                  <p className="text-[9.5px] text-gray-500">{[receiptData.storePhone, receiptData.storeAddress].filter(Boolean).join(' • ')}</p>
+                )}
                 <div className="border-t border-dashed border-gray-400 my-2" />
                 <p className="text-xs font-black uppercase">{title}</p>
                 <p className="text-[11px] font-bold">N°: {docNumber}</p>
@@ -484,10 +531,19 @@ export function ReceiptModal({
             /* ================= CLASSIC CORPORATE PREVIEW ================= */
             <div className="space-y-6 font-serif text-gray-900">
               <div className="border-b-4 border-double border-gray-900 pb-4 flex justify-between items-start">
-                <div>
-                  <h1 className="text-2xl font-bold uppercase tracking-wide">GESTIÓN TOTAL</h1>
-                  <p className="text-xs italic text-gray-600 font-sans">Comercio, Servicios & Reparaciones Generales</p>
-                  <p className="text-xs text-gray-500 font-sans mt-1">Atención personalizada &bull; Tel: +54 9 11 6025-5767</p>
+                <div className="flex items-center gap-4">
+                  {receiptData.storeLogo && (
+                    <img src={receiptData.storeLogo} alt={receiptData.storeName} className="h-14 max-w-[140px] object-contain" />
+                  )}
+                  <div>
+                    <h1 className="text-2xl font-bold uppercase tracking-wide">{receiptData.storeName}</h1>
+                    <p className="text-xs italic text-gray-600 font-sans">{receiptData.storeSlogan || 'Comercio, Servicios & Reparaciones Generales'}</p>
+                    {(receiptData.storePhone || receiptData.storeEmail || receiptData.storeAddress) && (
+                      <p className="text-xs text-gray-500 font-sans mt-1">
+                        {[receiptData.storePhone ? `Tel: ${receiptData.storePhone}` : '', receiptData.storeEmail, receiptData.storeAddress].filter(Boolean).join(' • ')}
+                      </p>
+                    )}
+                  </div>
                 </div>
                 <div className="text-right font-sans">
                   <h2 className="text-lg font-bold uppercase text-gray-900">{title}</h2>
@@ -566,7 +622,7 @@ export function ReceiptModal({
               <div className="grid grid-cols-2 gap-12 pt-8 text-center text-xs font-sans text-gray-700">
                 <div>
                   <div className="border-t border-gray-900 pt-2 font-bold">Firma y Sello Comercial Autorizado</div>
-                  <p className="text-[10px] text-gray-400">Gestión Total</p>
+                  <p className="text-[10px] text-gray-400">{receiptData.storeName}</p>
                 </div>
                 <div>
                   <div className="border-t border-gray-900 pt-2 font-bold">Conforme y Aceptación de Cotización</div>
@@ -577,8 +633,16 @@ export function ReceiptModal({
           ) : selectedStyle === 'minimal' ? (
             /* ================= MINIMALIST NORDIC PREVIEW ================= */
             <div className="space-y-8 font-sans text-gray-900">
-              <div className="flex justify-between items-baseline border-b border-gray-900 pb-6">
-                <h1 className="text-base font-black tracking-[2px] uppercase">GESTIÓN TOTAL</h1>
+              <div className="flex justify-between items-center border-b border-gray-900 pb-6">
+                <div className="flex items-center gap-3">
+                  {receiptData.storeLogo && (
+                    <img src={receiptData.storeLogo} alt={receiptData.storeName} className="h-10 max-w-[120px] object-contain" />
+                  )}
+                  <div>
+                    <h1 className="text-base font-black tracking-[2px] uppercase">{receiptData.storeName}</h1>
+                    <p className="text-[10px] text-gray-400">{receiptData.storeSlogan || 'Comercio & Servicios'}</p>
+                  </div>
+                </div>
                 <p className="text-xs text-gray-400 uppercase tracking-wider">{title} &bull; {docNumber}</p>
               </div>
 
@@ -641,12 +705,17 @@ export function ReceiptModal({
             /* ================= TECHNICAL INDUSTRIAL PREVIEW ================= */
             <div className="space-y-6 font-mono text-xs text-gray-900">
               <div className="border-2 border-sky-600 rounded-2xl p-4 bg-sky-50 flex justify-between items-center">
-                <div>
-                  <span className="bg-sky-600 text-white font-bold text-[10px] px-2 py-0.5 rounded uppercase">
-                    Ficha Técnica / Cotización
-                  </span>
-                  <h1 className="text-base font-black text-sky-900 mt-1 uppercase">GESTIÓN TOTAL &bull; SERVICIO TÉCNICO</h1>
-                  <p className="text-[10px] text-gray-500">Presupuesto de Repuestos, Insumos y Mano de Obra</p>
+                <div className="flex items-center gap-3.5">
+                  {receiptData.storeLogo && (
+                    <img src={receiptData.storeLogo} alt={receiptData.storeName} className="h-12 max-w-[120px] object-contain bg-white p-1 rounded-md" />
+                  )}
+                  <div>
+                    <span className="bg-sky-600 text-white font-bold text-[10px] px-2 py-0.5 rounded uppercase">
+                      Ficha Técnica / Cotización
+                    </span>
+                    <h1 className="text-base font-black text-sky-900 mt-1 uppercase">{receiptData.storeName} &bull; SERVICIO TÉCNICO</h1>
+                    <p className="text-[10px] text-gray-500">{receiptData.storeSlogan || 'Presupuesto de Repuestos, Insumos y Mano de Obra'}</p>
+                  </div>
                 </div>
                 <div className="text-right">
                   <span className="text-sm font-bold text-sky-700 block">{docNumber}</span>
@@ -738,14 +807,19 @@ export function ReceiptModal({
               <div className="h-1.5 bg-gradient-to-r from-red-600 via-red-500 to-slate-900 rounded-full" />
               
               <div className="flex justify-between items-start border-b-2 border-gray-200 pb-4">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h1 className="text-xl font-black text-gray-900 uppercase">GESTIÓN TOTAL</h1>
-                    <span className="bg-red-50 text-red-600 border border-red-200 text-[10px] font-black uppercase px-2 py-0.5 rounded">
-                      ⚙️ TALLER MECÁNICO & AUTOPARTES
-                    </span>
+                <div className="flex items-center gap-3.5">
+                  {receiptData.storeLogo && (
+                    <img src={receiptData.storeLogo} alt={receiptData.storeName} className="h-12 max-w-[130px] object-contain bg-white p-1 rounded-lg border border-gray-200" />
+                  )}
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h1 className="text-xl font-black text-gray-900 uppercase">{receiptData.storeName}</h1>
+                      <span className="bg-red-50 text-red-600 border border-red-200 text-[10px] font-black uppercase px-2 py-0.5 rounded">
+                        ⚙️ TALLER MECÁNICO & AUTOPARTES
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">{receiptData.storeSlogan || 'Servicio Mecánico Especializado & Repuestos Oficiales'}</p>
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">Servicio Mecánico Especializado & Repuestos Oficiales</p>
                 </div>
                 <div className="text-right">
                   <span className="text-xs font-bold text-gray-400 uppercase block">{title}</span>
@@ -844,15 +918,24 @@ export function ReceiptModal({
             /* ================= EXECUTIVE GOLD / ALTA GAMA PREVIEW ================= */
             <div className="space-y-5 text-gray-900 border border-amber-200/80 rounded-2xl p-5 bg-gradient-to-b from-amber-50/30 to-white shadow-sm">
               <div className="flex justify-between items-start border-b border-amber-200 pb-4">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h1 className="text-xl font-black text-slate-900 uppercase tracking-tight">GESTIÓN TOTAL</h1>
-                    <span className="bg-amber-100 text-amber-900 text-[10px] font-black uppercase px-2 py-0.5 rounded-full border border-amber-300">
-                      💎 ALTA GAMA
-                    </span>
+                <div className="flex items-center gap-3.5">
+                  {receiptData.storeLogo && (
+                    <img src={receiptData.storeLogo} alt={receiptData.storeName} className="h-12 max-w-[130px] object-contain rounded-lg" />
+                  )}
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h1 className="text-xl font-black text-slate-900 uppercase tracking-tight">{receiptData.storeName}</h1>
+                      <span className="bg-amber-100 text-amber-900 text-[10px] font-black uppercase px-2 py-0.5 rounded-full border border-amber-300">
+                        💎 ALTA GAMA
+                      </span>
+                    </div>
+                    <p className="text-xs font-bold text-amber-800 mt-1">💎 {receiptData.storeSlogan || 'Propuesta Comercial & Servicios Exclusivos'}</p>
+                    {(receiptData.storePhone || receiptData.storeEmail) && (
+                      <p className="text-[11px] text-gray-500 mt-0.5">
+                        {[receiptData.storePhone ? `Tel: ${receiptData.storePhone}` : '', receiptData.storeEmail].filter(Boolean).join(' • ')}
+                      </p>
+                    )}
                   </div>
-                  <p className="text-xs font-bold text-amber-800 mt-1">Propuesta Comercial & Servicios Exclusivos</p>
-                  <p className="text-[11px] text-gray-400">Atención personalizada • Tel: +54 9 11 6025-5767</p>
                 </div>
                 <div className="text-right">
                   <span className="text-xs font-bold text-amber-800 uppercase block">{title}</span>
@@ -910,7 +993,7 @@ export function ReceiptModal({
                 <div className="max-w-sm space-y-2">
                   <div className="bg-amber-50 border border-dashed border-amber-300 rounded-xl p-3 text-xs text-amber-900">
                     <strong>🏦 DATOS BANCARIOS:</strong><br />
-                    <span>Banco Galicia / Santander &bull; Alias: <strong>TALLER.GREGORUTTI</strong></span>
+                    <span>Alias de Transferencia: <strong>{receiptData.bankAlias || 'PULSESTORE.PAGO'}</strong></span>
                   </div>
                   {isQuote && quote.notas && (
                     <div className="text-xs text-stone-600">
@@ -941,8 +1024,11 @@ export function ReceiptModal({
             /* ================= COMPACT EXPRESS PREVIEW ================= */
             <div className="space-y-3 font-sans text-gray-900 border border-emerald-200 rounded-xl p-4 bg-emerald-50/20">
               <div className="flex justify-between items-center border-b-2 border-emerald-600 pb-2">
-                <div className="flex items-center gap-2">
-                  <h1 className="text-base font-black text-emerald-800 uppercase">GESTIÓN TOTAL</h1>
+                <div className="flex items-center gap-2.5">
+                  {receiptData.storeLogo && (
+                    <img src={receiptData.storeLogo} alt={receiptData.storeName} className="h-8 max-w-[100px] object-contain" />
+                  )}
+                  <h1 className="text-base font-black text-emerald-800 uppercase">{receiptData.storeName}</h1>
                   <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded">
                     ⚡ EXPRESS
                   </span>
@@ -999,14 +1085,21 @@ export function ReceiptModal({
             <>
               {/* Header */}
               <div className="flex flex-col sm:flex-row sm:items-start justify-between pb-6 border-b-2 border-gray-200 gap-4">
-                <div>
-                  <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3.5">
+                  {receiptData.storeLogo && (
+                    <img src={receiptData.storeLogo} alt={receiptData.storeName} className="h-14 max-w-[150px] object-contain rounded-xl border border-gray-200 p-1" />
+                  )}
+                  <div>
                     <span className="text-xl font-black text-gray-900 tracking-tight uppercase">
-                      GESTIÓN TOTAL
+                      {receiptData.storeName}
                     </span>
+                    <p className="text-xs text-gray-500 mt-0.5">{receiptData.storeSlogan || 'Gestión Comercial & Ventas'}</p>
+                    {(receiptData.storePhone || receiptData.storeAddress || receiptData.storeEmail) && (
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {[receiptData.storePhone ? `Tel: ${receiptData.storePhone}` : '', receiptData.storeEmail, receiptData.storeAddress].filter(Boolean).join(' • ')}
+                      </p>
+                    )}
                   </div>
-                  <p className="text-xs text-gray-500 mt-0.5">Gestión Comercial & Ventas</p>
-                  <p className="text-xs text-gray-400">Atención personalizada y control de inventario</p>
                 </div>
 
                 <div className="text-left sm:text-right">
@@ -1200,6 +1293,12 @@ export function ReceiptModal({
         </div>
 
       </div>
+
+      {/* Embedded Company Branding & Logo Editor Modal */}
+      <CompanyBrandingModal
+        isOpen={showBrandingModal}
+        onClose={() => setShowBrandingModal(false)}
+      />
     </div>
   );
 }

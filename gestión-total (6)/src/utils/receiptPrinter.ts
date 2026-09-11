@@ -30,6 +30,14 @@ export interface ReceiptData {
   validUntilText?: string;
   notas?: string;
   storeName?: string;
+  storeLogo?: string;
+  storeSlogan?: string;
+  storePhone?: string;
+  storeEmail?: string;
+  storeAddress?: string;
+  storeTaxId?: string;
+  bankAlias?: string;
+  bankCbu?: string;
 }
 
 export type QuoteStyle = 'modern' | 'classic' | 'minimal' | 'technical' | 'automotive' | 'executive_gold' | 'compact_express' | 'ticket';
@@ -115,7 +123,8 @@ export const QUOTE_STYLE_OPTIONS: QuoteStyleOption[] = [
  * Supports multiple design themes (modern, classic, minimal, technical, ticket).
  */
 export function generateReceiptHtml(data: ReceiptData, style: QuoteStyle | 'a4' | 'ticket' = 'modern'): string {
-  const store = data.storeName || 'GESTIÓN TOTAL';
+  const store = data.storeName || 'PulseStore';
+  const slogan = data.storeSlogan || 'Venta de Accesorios, Repuestos & Taller';
   const dateStr = data.date.toLocaleDateString('es-AR');
   const timeStr = data.date.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
 
@@ -184,8 +193,10 @@ export function generateReceiptHtml(data: ReceiptData, style: QuoteStyle | 'a4' 
 </head>
 <body>
   <div class="text-center">
+    ${data.storeLogo ? `<img src="${data.storeLogo}" alt="${store}" style="max-height: 46px; max-width: 60mm; object-fit: contain; margin: 0 auto 6px auto; display: block;" />` : ''}
     <div style="font-size: 16px; font-weight: bold; letter-spacing: 1px;">${store.toUpperCase()}</div>
-    <div style="font-size: 10px;">Gestión Comercial & Stock</div>
+    <div style="font-size: 10px; color: #333;">${slogan}</div>
+    ${(data.storePhone || data.storeAddress) ? `<div style="font-size: 9.5px; color: #444; margin-top: 2px;">${[data.storePhone ? `Tel: ${data.storePhone}` : '', data.storeAddress].filter(Boolean).join(' • ')}</div>` : ''}
     <div class="divider"></div>
     <div style="font-size: 13px; font-weight: bold;">${data.title.toUpperCase()}</div>
     <div>N°: <strong>${data.docNumber}</strong></div>
@@ -362,10 +373,17 @@ export function generateReceiptHtml(data: ReceiptData, style: QuoteStyle | 'a4' 
 </head>
 <body>
   <div class="header-box">
-    <div>
-      <div class="company-title">${store}</div>
-      <div class="company-sub">Comercio, Servicios & Reparaciones Generales</div>
-      <div style="font-size: 11px; margin-top: 4px;">Atención personalizada &bull; Tel: +54 9 11 6025-5767</div>
+    <div style="display: flex; align-items: center; gap: 16px;">
+      ${data.storeLogo ? `<img src="${data.storeLogo}" alt="${store}" style="max-height: 60px; max-width: 150px; object-fit: contain;" />` : ''}
+      <div>
+        <div class="company-title">${store}</div>
+        <div class="company-sub">${slogan}</div>
+        ${(data.storePhone || data.storeAddress || data.storeEmail) ? `
+          <div style="font-size: 11px; margin-top: 4px; color: #444;">
+            ${[data.storePhone ? `Tel: ${data.storePhone}` : '', data.storeEmail ? `Email: ${data.storeEmail}` : '', data.storeAddress].filter(Boolean).join(' &bull; ')}
+          </div>
+        ` : ''}
+      </div>
     </div>
     <div class="doc-meta">
       <h2>${data.title}</h2>
@@ -533,8 +551,14 @@ export function generateReceiptHtml(data: ReceiptData, style: QuoteStyle | 'a4' 
   </style>
 </head>
 <body>
-  <div class="header">
-    <div class="brand">${store}</div>
+  <div class="header" style="display: flex; justify-content: space-between; align-items: center;">
+    <div style="display: flex; align-items: center; gap: 14px;">
+      ${data.storeLogo ? `<img src="${data.storeLogo}" alt="${store}" style="max-height: 48px; max-width: 130px; object-fit: contain;" />` : ''}
+      <div>
+        <div class="brand">${store}</div>
+        <div style="font-size: 10px; color: #6b7280; letter-spacing: 0.5px;">${slogan}</div>
+      </div>
+    </div>
     <div class="doc-num">${data.title.toUpperCase()} &bull; ${data.docNumber}</div>
   </div>
 
@@ -696,11 +720,15 @@ export function generateReceiptHtml(data: ReceiptData, style: QuoteStyle | 'a4' 
   </style>
 </head>
 <body>
-  <div class="tech-header">
-    <div>
-      <span class="tech-badge">FICHA TÉCNICA / COTIZACIÓN</span>
-      <h1 style="font-size: 16px; font-weight: 900; color: #0369a1; text-transform: uppercase;">${store} &bull; SERVICIO TÉCNICO</h1>
-      <p style="font-size: 10px; color: #475569;">Presupuesto de Repuestos, Insumos y Mano de Obra</p>
+  <div class="tech-header" style="display: flex; justify-content: space-between; align-items: center;">
+    <div style="display: flex; align-items: center; gap: 14px;">
+      ${data.storeLogo ? `<img src="${data.storeLogo}" alt="${store}" style="max-height: 52px; max-width: 140px; object-fit: contain; background: #fff; padding: 3px; border-radius: 4px;" />` : ''}
+      <div>
+        <span class="tech-badge">FICHA TÉCNICA / COTIZACIÓN</span>
+        <h1 style="font-size: 16px; font-weight: 900; color: #0369a1; text-transform: uppercase;">${store} &bull; SERVICIO TÉCNICO</h1>
+        <p style="font-size: 10px; color: #475569;">${slogan}</p>
+        ${data.storePhone ? `<p style="font-size: 9.5px; color: #64748b;">Contacto: ${data.storePhone}</p>` : ''}
+      </div>
     </div>
     <div style="text-align: right;">
       <div style="font-size: 14px; font-weight: bold; color: #0284c7;">${data.docNumber}</div>
@@ -940,10 +968,14 @@ export function generateReceiptHtml(data: ReceiptData, style: QuoteStyle | 'a4' 
 <body>
   <div class="racing-stripe"></div>
   <div class="auto-header">
-    <div class="auto-brand">
-      <h1>${store}</h1>
-      <span class="badge">⚙️ TALLER MECÁNICO & AUTOPARTES</span>
-      <p style="font-size: 11px; color: #64748b; margin-top: 4px;">Servicio Mecánico Integral • Diagnóstico & Repuestos</p>
+    <div class="auto-brand" style="display: flex; align-items: center; gap: 14px;">
+      ${data.storeLogo ? `<img src="${data.storeLogo}" alt="${store}" style="max-height: 55px; max-width: 140px; object-fit: contain; background: #fff; padding: 4px; border-radius: 6px;" />` : ''}
+      <div>
+        <h1>${store}</h1>
+        <span class="badge">⚙️ TALLER MECÁNICO & AUTOPARTES</span>
+        <p style="font-size: 11px; color: #64748b; margin-top: 4px;">${slogan}</p>
+        ${(data.storePhone || data.storeAddress) ? `<p style="font-size: 10px; color: #64748b; margin-top: 2px;">${[data.storePhone ? `Tel: ${data.storePhone}` : '', data.storeAddress].filter(Boolean).join(' • ')}</p>` : ''}
+      </div>
     </div>
     <div class="auto-meta">
       <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: #64748b;">${data.title}</div>
@@ -1163,10 +1195,13 @@ export function generateReceiptHtml(data: ReceiptData, style: QuoteStyle | 'a4' 
 <body>
   <div class="gold-frame">
     <div class="header-gold">
-      <div class="brand-gold">
-        <h1>${store}</h1>
-        <div class="tagline">💎 Propuesta Comercial & Servicios Premium</div>
-        <p style="font-size: 11px; color: #64748b; margin-top: 3px;">Atención Exclusiva • Tel: +54 9 11 6025-5767</p>
+      <div class="brand-gold" style="display: flex; align-items: center; gap: 14px;">
+        ${data.storeLogo ? `<img src="${data.storeLogo}" alt="${store}" style="max-height: 55px; max-width: 140px; object-fit: contain; border-radius: 6px;" />` : ''}
+        <div>
+          <h1>${store}</h1>
+          <div class="tagline">💎 ${slogan}</div>
+          ${(data.storePhone || data.storeEmail) ? `<p style="font-size: 11px; color: #64748b; margin-top: 3px;">${[data.storePhone ? `Tel: ${data.storePhone}` : '', data.storeEmail].filter(Boolean).join(' • ')}</p>` : ''}
+        </div>
       </div>
       <div class="meta-gold">
         <div class="doc-pill">${data.title}</div>
@@ -1221,8 +1256,8 @@ export function generateReceiptHtml(data: ReceiptData, style: QuoteStyle | 'a4' 
       <div style="max-width: 460px;">
         <div class="bank-box">
           <strong>🏦 DATOS BANCARIOS PARA TRANSFERENCIA:</strong><br>
-          <span>Banco Santander / Galicia • Alias: <strong>TALLER.GREGORUTTI</strong></span><br>
-          <span style="font-size: 10px; color: #92400e;">Enviar comprobante por WhatsApp para acreditar el pago inmediatamente.</span>
+          <span>Alias: <strong>${data.bankAlias || 'PULSESTORE.PAGO'}</strong></span><br>
+          <span style="font-size: 10px; color: #92400e;">Enviar comprobante de transferencia para confirmar y asentar el pago.</span>
         </div>
         ${data.notas ? `
           <div style="font-size: 11px; color: #57534e; margin-top: 8px;">
@@ -1321,9 +1356,12 @@ export function generateReceiptHtml(data: ReceiptData, style: QuoteStyle | 'a4' 
 </head>
 <body>
   <div class="express-header">
-    <div>
-      <span class="express-title">${store}</span>
-      <span style="font-size: 10px; color: #64748b; margin-left: 8px;">⚡ PRESUPUESTO EXPRESS</span>
+    <div style="display: flex; align-items: center; gap: 12px;">
+      ${data.storeLogo ? `<img src="${data.storeLogo}" alt="${store}" style="max-height: 40px; max-width: 110px; object-fit: contain;" />` : ''}
+      <div>
+        <span class="express-title">${store}</span>
+        <span style="font-size: 10px; color: #64748b; margin-left: 8px;">⚡ ${slogan}</span>
+      </div>
     </div>
     <div style="text-align: right; font-size: 11px;">
       <strong>N° ${data.docNumber}</strong> • ${dateStr}
@@ -1571,9 +1609,17 @@ export function generateReceiptHtml(data: ReceiptData, style: QuoteStyle | 'a4' 
 </head>
 <body>
   <div class="header">
-    <div>
-      <div class="store-title">${store}</div>
-      <div class="store-subtitle">Gestión Comercial &bull; Inventario &bull; Servicio</div>
+    <div style="display: flex; align-items: center; gap: 16px;">
+      ${data.storeLogo ? `<img src="${data.storeLogo}" alt="${store}" style="max-height: 58px; max-width: 150px; object-fit: contain; border-radius: 6px;" />` : ''}
+      <div>
+        <div class="store-title">${store}</div>
+        <div class="store-subtitle">${slogan}</div>
+        ${(data.storePhone || data.storeAddress || data.storeEmail) ? `
+          <div style="font-size: 10.5px; color: #6b7280; margin-top: 3px;">
+            ${[data.storePhone ? `Tel: ${data.storePhone}` : '', data.storeEmail ? `Email: ${data.storeEmail}` : '', data.storeAddress].filter(Boolean).join(' &bull; ')}
+          </div>
+        ` : ''}
+      </div>
     </div>
     <div class="doc-info">
       <span class="doc-badge">${data.title}</span>
@@ -1763,23 +1809,45 @@ export function downloadReceiptPdf(data: ReceiptData, style: QuoteStyle = 'moder
     const mutedText = [107, 114, 128]; // Gray 500
 
     // 1. Header: Store Name & Title
+    let textStartX = 14;
+    if (data.storeLogo) {
+      try {
+        doc.addImage(data.storeLogo, 'PNG', 14, 12, 22, 16);
+        textStartX = 40;
+      } catch (e) {
+        console.warn('Could not add storeLogo to PDF', e);
+      }
+    }
+
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(18);
+    doc.setFontSize(17);
     doc.setTextColor(darkTextColor[0], darkTextColor[1], darkTextColor[2]);
-    doc.text(data.storeName || 'GESTIÓN TOTAL', 14, 18);
+    doc.text(data.storeName || 'PULSESTORE', textStartX, 18);
 
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8.5);
+    doc.setFontSize(8);
     doc.setTextColor(mutedText[0], mutedText[1], mutedText[2]);
     
-    let subheaderText = 'Gestión Comercial, Inventario & Ventas';
-    if (style === 'technical') subheaderText = 'Servicio Técnico & Repuestos Oficiales';
-    if (style === 'automotive') subheaderText = 'Taller Mecánico Especializado & Autopartes';
-    if (style === 'executive_gold') subheaderText = 'Propuesta Comercial & Servicios de Alta Gama';
-    if (style === 'compact_express') subheaderText = 'Comprobante Express de Mostrador';
+    let subheaderText = data.storeSlogan || 'Gestión Comercial, Inventario & Ventas';
+    if (style === 'technical') subheaderText = data.storeSlogan || 'Servicio Técnico & Repuestos Oficiales';
+    if (style === 'automotive') subheaderText = data.storeSlogan || 'Taller Mecánico Especializado & Autopartes';
+    if (style === 'executive_gold') subheaderText = data.storeSlogan || 'Propuesta Comercial & Servicios de Alta Gama';
+    if (style === 'compact_express') subheaderText = data.storeSlogan || 'Comprobante Express de Mostrador';
     
-    doc.text(subheaderText, 14, 23);
-    doc.text('Comprobante de uso comercial e informativo interno', 14, 27);
+    doc.text(subheaderText, textStartX, 23);
+
+    const contactStr = [
+      data.storePhone ? `Tel: ${data.storePhone}` : '',
+      data.storeEmail ? `Email: ${data.storeEmail}` : '',
+      data.storeAddress || ''
+    ].filter(Boolean).join(' • ');
+
+    if (contactStr) {
+      doc.text(contactStr, textStartX, 27);
+      doc.text('Comprobante de uso comercial e informativo interno', textStartX, 31);
+    } else {
+      doc.text('Comprobante de uso comercial e informativo interno', textStartX, 27);
+    }
 
     // Right side: Document Type & Number
     doc.setFont('helvetica', 'bold');

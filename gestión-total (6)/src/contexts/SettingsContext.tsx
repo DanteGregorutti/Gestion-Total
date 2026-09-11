@@ -6,6 +6,20 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { inventoryService } from '../services/inventoryService';
 import { useAuth } from './AuthContext';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '../firebase';
+
+export interface CompanyProfile {
+  name: string;
+  logoUrl?: string;
+  slogan?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  taxId?: string;
+  bankAlias?: string;
+  bankCbu?: string;
+}
 
 type Theme = 'light' | 'dark';
 
@@ -18,6 +32,8 @@ interface SettingsContextType {
   loading: boolean;
   mobileCompactMode: boolean;
   setMobileCompactMode: (value: boolean) => void;
+  companyProfile: CompanyProfile;
+  updateCompanyProfile: (profile: Partial<CompanyProfile>) => Promise<void>;
 }
 
 const translations: Record<string, string> = {
@@ -491,6 +507,83 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('mobile_compact_mode', String(mobileCompactMode));
   }, [mobileCompactMode]);
 
+  const defaultProfile: CompanyProfile = {
+    name: 'PulseStore',
+    slogan: 'Venta de Accesorios, Repuestos & Taller',
+    phone: '',
+    email: user?.email || 'pulsestore07@gmail.com',
+    address: '',
+    taxId: '',
+    bankAlias: 'PULSESTORE.PAGO'
+  };
+
+  const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(() => {
+    try {
+      const userKey = user?.uid ? `company_profile_${user.uid}` : 'company_profile';
+      const saved = localStorage.getItem(userKey) || localStorage.getItem('company_profile');
+      if (saved) {
+        return { ...defaultProfile, ...JSON.parse(saved) };
+      }
+    } catch (e) {
+      console.warn('Error reading company profile from localStorage', e);
+    }
+    return defaultProfile;
+  });
+
+  // Sync with Firestore profile if logged in
+  useEffect(() => {
+    if (!user?.uid) return;
+    const userKey = `company_profile_${user.uid}`;
+    const savedLocal = localStorage.getItem(userKey);
+    if (savedLocal) {
+      try {
+        setCompanyProfile(prev => ({ ...prev, ...JSON.parse(savedLocal) }));
+      } catch (e) {}
+    }
+
+    const loadFromFirestore = async () => {
+      try {
+        const userDocRef = doc(db, 'users', user.uid);
+        const snap = await getDoc(userDocRef);
+        if (snap.exists() && snap.data()?.companyProfile) {
+          const remote = snap.data().companyProfile as Partial<CompanyProfile>;
+          setCompanyProfile(prev => {
+            const merged = { ...prev, ...remote };
+            localStorage.setItem(userKey, JSON.stringify(merged));
+            localStorage.setItem('company_profile', JSON.stringify(merged));
+            return merged;
+          });
+        }
+      } catch (err) {
+        // Silently fallback to local storage
+      }
+    };
+    loadFromFirestore();
+  }, [user?.uid]);
+
+  const updateCompanyProfile = async (partial: Partial<CompanyProfile>) => {
+    let nextState: CompanyProfile = { ...companyProfile, ...partial };
+    setCompanyProfile(prev => {
+      nextState = { ...prev, ...partial };
+      try {
+        if (user?.uid) {
+          localStorage.setItem(`company_profile_${user.uid}`, JSON.stringify(nextState));
+        }
+        localStorage.setItem('company_profile', JSON.stringify(nextState));
+      } catch (e) {}
+      return nextState;
+    });
+
+    if (user?.uid) {
+      try {
+        const userDocRef = doc(db, 'users', user.uid);
+        await setDoc(userDocRef, { companyProfile: nextState }, { merge: true });
+      } catch (err) {
+        console.warn('Could not sync company profile to Firestore', err);
+      }
+    }
+  };
+
   const togglePreference = (key: string) => {
     setPreferences(prev => ({ ...prev, [key]: !prev[key] }));
   };
@@ -508,7 +601,9 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       togglePreference,
       loading,
       mobileCompactMode,
-      setMobileCompactMode
+      setMobileCompactMode,
+      companyProfile,
+      updateCompanyProfile
     }}>
       {children}
     </SettingsContext.Provider>
