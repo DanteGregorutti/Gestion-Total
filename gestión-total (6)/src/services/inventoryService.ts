@@ -119,17 +119,8 @@ const sanitizeData = (data: any) => {
 export const inventoryService = {
   // Products
   getProducts: async () => {
-    try {
-      const sbProducts = await supabaseService.getProducts();
-      if (sbProducts && sbProducts.length > 0) {
-        return sbProducts;
-      }
-    } catch (e) {
-      console.warn('Supabase getProducts warning:', e);
-    }
-
     if (!auth.currentUser) {
-      return await supabaseService.getProducts();
+      return [];
     }
     const path = 'products';
     try {
@@ -145,10 +136,10 @@ export const inventoryService = {
           const dateB = (b.createdAt as any)?.toDate ? (b.createdAt as any).toDate() : new Date(b.createdAt as any || 0);
           return dateB.getTime() - dateA.getTime();
         });
-      return list.length > 0 ? list : await supabaseService.getProducts();
+      return list;
     } catch (error) {
       handleFirestoreError(error, OperationType.LIST, path);
-      return await supabaseService.getProducts();
+      return [];
     }
   },
 
@@ -250,23 +241,27 @@ export const inventoryService = {
   },
 
   subscribeToProducts: (callback: (products: Product[]) => void) => {
-    // Initial fetch from Supabase
-    supabaseService.getProducts().then(products => {
-      if (products && products.length > 0) callback(products);
-    }).catch(() => {});
-
-    // Supabase Realtime channel
-    const channel = supabase
-      .channel('public:products_live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, async () => {
-        const updated = await supabaseService.getProducts();
-        callback(updated);
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    if (!auth.currentUser) {
+      callback([]);
+      return () => {};
+    }
+    const path = 'products';
+    const q = query(
+      collection(db, path),
+      where('createdBy', '==', auth.currentUser.uid)
+    );
+    return onSnapshot(q, (snapshot) => {
+      const products = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Product))
+        .sort((a, b) => {
+          const dateA = (a.createdAt as any)?.toDate ? (a.createdAt as any).toDate() : new Date(a.createdAt as any || 0);
+          const dateB = (b.createdAt as any)?.toDate ? (b.createdAt as any).toDate() : new Date(b.createdAt as any || 0);
+          return dateB.getTime() - dateA.getTime();
+        });
+      callback(products);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, path);
+    });
   },
 
   addProduct: async (product: Omit<Product, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>) => {
@@ -510,13 +505,6 @@ export const inventoryService = {
 
   // Warehouses
   getWarehouses: async () => {
-    try {
-      const sbW = await supabaseService.getWarehouses();
-      if (sbW && sbW.length > 0) return sbW;
-    } catch (e) {
-      console.warn('Supabase getWarehouses fallback:', e);
-    }
-
     if (!auth.currentUser) return [];
     const path = 'warehouses';
     try {
@@ -539,21 +527,27 @@ export const inventoryService = {
   },
 
   subscribeToWarehouses: (callback: (warehouses: Warehouse[]) => void) => {
-    supabaseService.getWarehouses().then(warehouses => {
-      if (warehouses && warehouses.length > 0) callback(warehouses);
-    }).catch(() => {});
-
-    const channel = supabase
-      .channel('public:warehouses_live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'warehouses' }, async () => {
-        const updated = await supabaseService.getWarehouses();
-        callback(updated);
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    if (!auth.currentUser) {
+      callback([]);
+      return () => {};
+    }
+    const path = 'warehouses';
+    const q = query(
+      collection(db, path),
+      where('createdBy', '==', auth.currentUser.uid)
+    );
+    return onSnapshot(q, (snapshot) => {
+      const warehouses = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Warehouse))
+        .sort((a, b) => {
+          const dateA = (a.createdAt as any)?.toDate ? (a.createdAt as any).toDate() : new Date(a.createdAt as any || 0);
+          const dateB = (b.createdAt as any)?.toDate ? (b.createdAt as any).toDate() : new Date(b.createdAt as any || 0);
+          return dateB.getTime() - dateA.getTime();
+        });
+      callback(warehouses);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, path);
+    });
   },
 
   addWarehouse: async (warehouse: Omit<Warehouse, 'id' | 'createdAt' | 'createdBy'>) => {
@@ -590,14 +584,7 @@ export const inventoryService = {
 
   // Clients
   getClients: async () => {
-    let sbClients: Client[] = [];
-    try {
-      sbClients = await supabaseService.getClients();
-    } catch (e) {
-      console.warn(e);
-    }
-
-    if (!auth.currentUser) return sbClients;
+    if (!auth.currentUser) return [];
     const path = 'clients';
     try {
       const q = query(
@@ -605,16 +592,12 @@ export const inventoryService = {
         where('createdBy', '==', auth.currentUser.uid)
       );
       const snapshot = await getDocs(q);
-      const fsClients = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Client));
-
-      const map = new Map<string, Client>();
-      sbClients.forEach(c => map.set(c.id, c));
-      fsClients.forEach(c => map.set(c.id, c));
-      return Array.from(map.values()).sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+      return snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Client))
+        .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
     } catch (error) {
       handleFirestoreError(error, OperationType.LIST, path);
-      return sbClients;
+      return [];
     }
   },
 
@@ -918,113 +901,31 @@ export const inventoryService = {
 
   // Sales
   getSales: async (days: number = 30) => {
-    let sbSales: Sale[] = [];
+    if (!auth.currentUser) return [];
+    const path = 'sales';
     try {
-      sbSales = await supabaseService.getSales();
-    } catch (e) {
-      console.warn('Supabase getSales warning:', e);
-    }
+      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+      const q = query(
+        collection(db, path),
+        where('createdBy', '==', auth.currentUser.uid)
+      );
+      const snapshot = await getDocs(q);
+      const fsSales = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Sale))
+        .filter(s => {
+          const date = (s.fecha as any)?.toDate ? (s.fecha as any).toDate() : new Date(s.fecha as any);
+          return date >= since;
+        });
 
-    let fsSales: Sale[] = [];
-    if (auth.currentUser) {
-      const path = 'sales';
-      try {
-        const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-        const q = query(
-          collection(db, path),
-          where('createdBy', '==', auth.currentUser.uid)
-        );
-        const snapshot = await getDocs(q);
-        fsSales = snapshot.docs
-          .map(doc => ({ id: doc.id, ...doc.data() } as Sale))
-          .filter(s => {
-            const date = (s.fecha as any)?.toDate ? (s.fecha as any).toDate() : new Date(s.fecha as any);
-            return date >= since;
-          });
-      } catch (error) {
-        console.warn('Firestore getSales warning:', error);
-      }
-    }
-
-    // Merge & Deduplicate fsSales and sbSales without duplicates
-    const salesMap = new Map<string, Sale>();
-    const seenTx = new Set<string>();
-
-    const getTimestamp = (s: Sale): number => {
-      const d = (s.fecha as any)?.toDate ? (s.fecha as any).toDate() : new Date(s.fecha as any || 0);
-      return isNaN(d.getTime()) ? 0 : d.getTime();
-    };
-
-    // 1. Prioritize Firestore sales (authoritative cloud records)
-    for (const s of fsSales) {
-      salesMap.set(s.id, s);
-      if (s.transactionId) {
-        seenTx.add(`${s.transactionId}_${s.productId || ''}`);
-      }
-    }
-
-    // 2. Include Supabase sales only if not already present in Firestore
-    for (const s of sbSales) {
-      if (salesMap.has(s.id)) continue;
-      if (s.transactionId && seenTx.has(`${s.transactionId}_${s.productId || ''}`)) continue;
-
-      // Check if there is already a matching sale with same product, qty, total within 25 seconds
-      const sTime = getTimestamp(s);
-      let isDuplicate = false;
-      if (sTime > 0) {
-        for (const existing of salesMap.values()) {
-          const exTime = getTimestamp(existing);
-          if (
-            existing.productId === s.productId &&
-            (existing.variantId || '') === (s.variantId || '') &&
-            existing.cantidad === s.cantidad &&
-            existing.total === s.total &&
-            Math.abs(exTime - sTime) <= 25000
-          ) {
-            isDuplicate = true;
-            break;
-          }
-        }
-      }
-
-      if (!isDuplicate) {
-        salesMap.set(s.id, s);
-        if (s.transactionId) {
-          seenTx.add(`${s.transactionId}_${s.productId || ''}`);
-        }
-      }
-    }
-
-    // 3. Sort by date descending
-    const merged = Array.from(salesMap.values());
-    merged.sort((a, b) => {
-      const dateA = getTimestamp(a);
-      const dateB = getTimestamp(b);
-      return dateB - dateA;
-    });
-
-    // 4. Secondary deduplication filter (catches any duplicate records saved in the database)
-    const result: Sale[] = [];
-    for (const sale of merged) {
-      const saleTime = getTimestamp(sale);
-      const dup = result.some(prev => {
-        if (prev.id === sale.id) return true;
-        if (prev.transactionId && sale.transactionId && prev.transactionId === sale.transactionId && (prev.productId || '') === (sale.productId || '')) return true;
-        const timeDiff = Math.abs(getTimestamp(prev) - saleTime);
-        const isIdentical =
-          prev.productId === sale.productId &&
-          (prev.variantId || '') === (sale.variantId || '') &&
-          prev.cantidad === sale.cantidad &&
-          prev.total === sale.total;
-        return isIdentical && timeDiff <= 15000;
+      return fsSales.sort((a, b) => {
+        const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
+        const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
+        return dateB.getTime() - dateA.getTime();
       });
-
-      if (!dup) {
-        result.push(sale);
-      }
+    } catch (error) {
+      console.warn('Firestore getSales warning:', error);
+      return [];
     }
-
-    return result;
   },
 
   getSalesByClient: async (clientId: string) => {
@@ -1052,39 +953,56 @@ export const inventoryService = {
   },
 
   subscribeToSales: (callback: (sales: Sale[]) => void) => {
-    supabaseService.getSales(100).then(sales => {
-      if (sales) callback(sales);
-    }).catch(() => {});
-
-    const channel = supabase
-      .channel('public:sales_live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, async () => {
-        const updated = await supabaseService.getSales(100);
-        callback(updated);
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    if (!auth.currentUser) {
+      callback([]);
+      return () => {};
+    }
+    const path = 'sales';
+    const q = query(
+      collection(db, path),
+      where('createdBy', '==', auth.currentUser.uid)
+    );
+    return onSnapshot(q, (snapshot) => {
+      const sales = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Sale))
+        .sort((a, b) => {
+          const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
+          const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
+          return dateB.getTime() - dateA.getTime();
+        });
+      callback(sales);
+    }, (error) => {
+      console.warn('Sales snapshot error:', error);
+    });
   },
 
   subscribeToRecentSales: (callback: (sales: Sale[]) => void, days: number = 30) => {
-    supabaseService.getSales(days).then(sales => {
-      if (sales) callback(sales);
-    }).catch(() => {});
-
-    const channel = supabase
-      .channel('public:sales_recent_live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, async () => {
-        const updated = await supabaseService.getSales(days);
-        callback(updated);
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    if (!auth.currentUser) {
+      callback([]);
+      return () => {};
+    }
+    const path = 'sales';
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const q = query(
+      collection(db, path),
+      where('createdBy', '==', auth.currentUser.uid)
+    );
+    return onSnapshot(q, (snapshot) => {
+      const sales = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Sale))
+        .filter(s => {
+          const date = (s.fecha as any)?.toDate ? (s.fecha as any).toDate() : new Date(s.fecha as any);
+          return date >= since;
+        })
+        .sort((a, b) => {
+          const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
+          const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
+          return dateB.getTime() - dateA.getTime();
+        });
+      callback(sales);
+    }, (error) => {
+      console.warn('Recent sales snapshot error:', error);
+    });
   },
 
   registerSale: async (saleOrSales: (Omit<Sale, 'id' | 'fecha' | 'createdBy' | 'total'> & { id?: string; transactionId?: string; total?: number }) | (Omit<Sale, 'id' | 'fecha' | 'createdBy' | 'total'> & { id?: string; transactionId?: string; total?: number })[]) => {
@@ -1401,39 +1319,56 @@ export const inventoryService = {
   },
 
   subscribeToPurchases: (callback: (purchases: Purchase[]) => void) => {
-    supabaseService.getPurchases().then(purchases => {
-      if (purchases) callback(purchases);
-    }).catch(() => {});
-
-    const channel = supabase
-      .channel('public:purchases_live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'purchases' }, async () => {
-        const updated = await supabaseService.getPurchases();
-        callback(updated);
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    if (!auth.currentUser) {
+      callback([]);
+      return () => {};
+    }
+    const path = 'purchases';
+    const q = query(
+      collection(db, path),
+      where('createdBy', '==', auth.currentUser.uid)
+    );
+    return onSnapshot(q, (snapshot) => {
+      const purchases = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Purchase))
+        .sort((a, b) => {
+          const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
+          const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
+          return dateB.getTime() - dateA.getTime();
+        });
+      callback(purchases);
+    }, (error) => {
+      console.warn('Purchases snapshot error:', error);
+    });
   },
 
   subscribeToRecentPurchases: (callback: (purchases: Purchase[]) => void, days: number = 30) => {
-    supabaseService.getPurchases().then(purchases => {
-      if (purchases) callback(purchases);
-    }).catch(() => {});
-
-    const channel = supabase
-      .channel('public:purchases_recent_live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'purchases' }, async () => {
-        const updated = await supabaseService.getPurchases();
-        callback(updated);
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    if (!auth.currentUser) {
+      callback([]);
+      return () => {};
+    }
+    const path = 'purchases';
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const q = query(
+      collection(db, path),
+      where('createdBy', '==', auth.currentUser.uid)
+    );
+    return onSnapshot(q, (snapshot) => {
+      const purchases = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Purchase))
+        .filter(p => {
+          const date = (p.fecha as any)?.toDate ? (p.fecha as any).toDate() : new Date(p.fecha as any);
+          return date >= since;
+        })
+        .sort((a, b) => {
+          const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
+          const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
+          return dateB.getTime() - dateA.getTime();
+        });
+      callback(purchases);
+    }, (error) => {
+      console.warn('Recent purchases snapshot error:', error);
+    });
   },
 
   registerPurchase: async (purchase: Omit<Purchase, 'id' | 'fecha' | 'createdBy' | 'total'>) => {
@@ -2084,30 +2019,49 @@ export const inventoryService = {
 
   // Finances & Business Money
   getFinances: async () => {
+    if (!auth.currentUser) return [];
+    const path = 'finances';
     try {
-      const sbFinances = await supabaseService.getFinances();
-      if (sbFinances && sbFinances.length > 0) return sbFinances;
-    } catch (e) {}
-
-    return [];
+      const q = query(
+        collection(db, path),
+        where('createdBy', '==', auth.currentUser.uid)
+      );
+      const snapshot = await getDocs(q);
+      return snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as FinanceTransaction))
+        .sort((a, b) => {
+          const dateA = new Date(a.fecha || a.createdAt || 0).getTime();
+          const dateB = new Date(b.fecha || b.createdAt || 0).getTime();
+          return dateB - dateA;
+        });
+    } catch (e) {
+      console.warn('Firestore getFinances warning:', e);
+      return [];
+    }
   },
 
   subscribeToFinances: (callback: (transactions: FinanceTransaction[]) => void) => {
-    supabaseService.getFinances().then(finances => {
-      if (finances) callback(finances);
-    }).catch(() => {});
-
-    const channel = supabase
-      .channel('public:finances_live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'finances' }, async () => {
-        const updated = await supabaseService.getFinances();
-        callback(updated);
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    if (!auth.currentUser) {
+      callback([]);
+      return () => {};
+    }
+    const path = 'finances';
+    const q = query(
+      collection(db, path),
+      where('createdBy', '==', auth.currentUser.uid)
+    );
+    return onSnapshot(q, (snapshot) => {
+      const finances = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as FinanceTransaction))
+        .sort((a, b) => {
+          const dateA = new Date(a.fecha || a.createdAt || 0).getTime();
+          const dateB = new Date(b.fecha || b.createdAt || 0).getTime();
+          return dateB - dateA;
+        });
+      callback(finances);
+    }, (error) => {
+      console.warn('Finances snapshot error:', error);
+    });
   },
 
   addFinanceTransaction: async (transaction: Omit<FinanceTransaction, 'id' | 'createdAt' | 'createdBy'>) => {
@@ -2203,23 +2157,14 @@ export const inventoryService = {
 
   // Quotes / Presupuestos (Documento no válido como factura)
   getQuotes: async () => {
-    try {
-      const sbQuotes = await supabaseService.getQuotes();
-      if (sbQuotes && sbQuotes.length > 0) {
-        return sbQuotes;
-      }
-    } catch (e) {
-      console.warn('Supabase getQuotes warning:', e);
-    }
-
-    const cacheKey = auth.currentUser ? `cached_quotes_${auth.currentUser.uid}` : 'cached_quotes_default';
+    if (!auth.currentUser) return [];
+    const cacheKey = `cached_quotes_${auth.currentUser.uid}`;
     let localQuotes: Quote[] = [];
     try {
       const cached = localStorage.getItem(cacheKey);
       if (cached) localQuotes = JSON.parse(cached);
     } catch (e) {}
 
-    if (!auth.currentUser) return localQuotes;
     const path = 'quotes';
 
     try {
@@ -2231,16 +2176,7 @@ export const inventoryService = {
       const firestoreQuotes = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() } as Quote));
 
-      // Merge firestore quotes with local cache
-      const map = new Map<string, Quote>();
-      firestoreQuotes.forEach(q => map.set(q.id, q));
-      localQuotes.forEach(q => {
-        if (!map.has(q.id)) {
-          map.set(q.id, q);
-        }
-      });
-
-      const merged = Array.from(map.values()).sort((a, b) => {
+      const merged = firestoreQuotes.sort((a, b) => {
         const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
         const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
         return dateB.getTime() - dateA.getTime();
@@ -2257,21 +2193,31 @@ export const inventoryService = {
   },
 
   subscribeToQuotes: (callback: (quotes: Quote[]) => void) => {
-    supabaseService.getQuotes().then(quotes => {
-      if (quotes) callback(quotes);
-    }).catch(() => {});
-
-    const channel = supabase
-      .channel('public:quotes_live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'quotes' }, async () => {
-        const updated = await supabaseService.getQuotes();
-        callback(updated);
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    if (!auth.currentUser) {
+      callback([]);
+      return () => {};
+    }
+    const path = 'quotes';
+    const cacheKey = `cached_quotes_${auth.currentUser.uid}`;
+    const q = query(
+      collection(db, path),
+      where('createdBy', '==', auth.currentUser.uid)
+    );
+    return onSnapshot(q, (snapshot) => {
+      const quotes = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Quote))
+        .sort((a, b) => {
+          const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
+          const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
+          return dateB.getTime() - dateA.getTime();
+        });
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify(quotes));
+      } catch (e) {}
+      callback(quotes);
+    }, (error) => {
+      console.warn('Quotes snapshot error:', error);
+    });
   },
 
   createQuote: async (quoteData: Omit<Quote, 'id' | 'fecha' | 'createdBy' | 'numero'> & { numero?: string }) => {

@@ -3,19 +3,21 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Product, Sale, Purchase, Movement, Client, Supplier, Warehouse } from '../types';
+import { Product, Sale, Purchase, Movement, Client, Supplier, Warehouse, WorkOrder, RepairQuote } from '../types';
 
 export const geminiService = {
   askAboutBusiness: async (
     prompt: string, 
     context: { 
-      products: Product[], 
-      sales: Sale[], 
-      purchases: Purchase[], 
-      movements: Movement[],
-      clients: Client[],
-      suppliers: Supplier[],
-      warehouses: Warehouse[]
+      products: Product[]; 
+      sales: Sale[]; 
+      purchases: Purchase[]; 
+      movements: Movement[];
+      clients: Client[];
+      suppliers: Supplier[];
+      warehouses: Warehouse[];
+      workOrders?: WorkOrder[];
+      repairQuotes?: RepairQuote[];
     }
   ) => {
     const formatDate = (date: any) => {
@@ -25,16 +27,29 @@ export const geminiService = {
       return date.toString();
     };
 
+    const workOrdersList = context.workOrders || [];
+    const repairQuotesList = context.repairQuotes || [];
+    const activeOrders = workOrdersList.filter(o => o.estado !== 'entregado' && o.estado !== 'cancelado');
+    const readyOrders = workOrdersList.filter(o => o.estado === 'listo');
+    const totalTallerPending = activeOrders.reduce((acc, o) => acc + (o.saldoPendiente || 0), 0);
+
     const systemInstruction = `
-      Eres un asistente experto en gestión de inventarios y analista de negocios estratégico para la aplicación "Gestión Total".
-      Tu objetivo es proporcionar análisis profundos, informes financieros y consejos operativos basados en los datos reales del negocio.
+      Eres un asistente experto en gestión de inventarios, taller mecánico de reparaciones y analista de negocios estratégico para la aplicación "Gestión Total" y "PulseStore".
+      Tu objetivo es proporcionar análisis profundos, informes financieros, estado del taller y consejos operativos basados en los datos reales del negocio.
 
       RESUMEN DEL UNIVERSO DE DATOS:
       - Inventario: ${context.products.length} productos registrados.
       - Clientes: ${context.clients.length} registrados.
       - Proveedores: ${context.suppliers.length} registrados.
       - Almacenes: ${context.warehouses.map(w => w.nombre).join(', ') || 'Principal'}.
-      - Actividad: ${context.sales.length} ventas, ${context.purchases.length} compras y ${context.movements.length} movimientos de stock registrados.
+      - Actividad Comercial: ${context.sales.length} ventas, ${context.purchases.length} compras y ${context.movements.length} movimientos de stock registrados.
+      - Taller & Reparaciones: ${workOrdersList.length} órdenes en total (${activeOrders.length} activas, ${readyOrders.length} listas para retirar), ${repairQuotesList.length} cotizaciones de reparación, saldo pendiente por cobrar en taller: $${totalTallerPending.toLocaleString('es-AR')}.
+
+      --- TALLER & ÓRDENES DE TRABAJO ACTIVAS ---
+      ${activeOrders.map(o => `- [${o.numero}] ${o.equipo} (${o.marcaModelo || '-'}) - Cliente: ${o.clientNombre} (Tel: ${o.clientTelefono || '-'}). Estado: ${o.estado.toUpperCase()}. Falla: "${o.fallaReportada || '-'}". Total: $${o.total}, Saldo Pendiente: $${o.saldoPendiente}. Prioridad: ${o.prioridad}.`).join('\n')}
+
+      --- COTIZACIONES DE TALLER PENDIENTES ---
+      ${repairQuotesList.filter(q => q.estado === 'pendiente').map(q => `- [${q.numero}] ${q.equipo} - Cliente: ${q.clientNombre}. Total Presupuestado: $${q.total}. Estado: Pendiente de aprobación.`).join('\n')}
 
       --- LISTA COMPLETA DE PRODUCTOS ---
       ${context.products.map(p => {
@@ -52,23 +67,23 @@ export const geminiService = {
       ${context.movements.map(m => `- ${formatDate(m.fecha)}: ${m.tipo.toUpperCase()} de ${m.productNombre} (${m.cantidad} unidades). Notas: ${m.notas || '-'}`).join('\n')}
 
       --- RELACIONES ---
-      - Los Clientes compran productos (ver Log de Ventas).
-      - Los Proveedores suministran productos (ver Log de Compras).
+      - Los Clientes compran productos y traen equipos al Taller.
+      - En el Taller se reparan equipos, se utilizan repuestos del inventario y se cobran saldos.
+      - Los Proveedores suministran productos y repuestos.
       - Los Almacenes guardan los productos.
 
       TAREAS Y RESPONSABILIDADES:
-      1. ANALISTA FINANCIERO: Si te preguntan cuánto ganaron, calcula: Sumatoria de (Venta.total - (Venta.costo * Venta.cantidad)).
-      2. GESTIÓN DE STOCK: Si el stock total es <= minStock, avisa proactivamente.
-      3. RENTABILIDAD: Puedes decir qué producto tiene el mayor margen de ganancia porcentual.
-      4. AUDITOR: Puedes ver si hubo discrepancias o ajustes de stock manuales en los movimientos.
-      5. ESTRATEGA: Identifica productos que se compran pero no se venden, o viceversa.
+      1. ESTADO DEL TALLER: Si te preguntan por reparaciones u órdenes, detalla cuántas están en diagnóstico, en taller, listas para retirar o si faltan repuestos.
+      2. ANALISTA FINANCIERO: Si te preguntan cuánto ganaron o saldos pendientes, calcula ventas netas y suma saldos deudores de clientes y taller.
+      3. GESTIÓN DE STOCK: Si el stock total es <= minStock, avisa proactivamente.
+      4. RENTABILIDAD: Puedes decir qué producto tiene el mayor margen de ganancia porcentual.
+      5. AUDITOR: Puedes ver si hubo discrepancias o ajustes de stock manuales en los movimientos.
 
       REGLAS DE ORO:
-      - Responde SIEMPRE en español.
-      - Sé profesional pero cercano.
-      - Usa tablas de Markdown para mostrar datos comparativos.
-      - No inventes datos. Si no existe un registro, di que no hay datos para esa consulta.
-      - Si te preguntan "dime todo", haz un resumen ejecutivo: Ingresos Totales, Costos Totales, Ganancia Neta, y Alertas críticas.
+      - Responde SIEMPRE en español con tono servicial, claro y profesional.
+      - Usa tablas o listas de Markdown con viñetas para mostrar datos comparativos.
+      - No inventes datos. Si no existe un registro, indícalo transparentemente.
+      - Si te preguntan "dime todo" o "resumen general", incluye inventario, finanzas y estado del taller.
     `;
 
     try {
@@ -85,7 +100,7 @@ export const geminiService = {
       return data.text;
     } catch (error) {
       console.error("Error calling Gemini API proxy:", error);
-      return "Lo siento, hubo un error al procesar tu solicitud con la IA. Por favor, intenta de nuevo más tarde.";
+      return "Hubo un error de conexión al consultar el asistente IA. Por favor, intenta de nuevo.";
     }
   }
 };

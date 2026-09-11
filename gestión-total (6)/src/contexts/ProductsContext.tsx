@@ -32,16 +32,33 @@ export function ProductsProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    // Initial fetch from Supabase / cache immediately
-    fetchProducts();
+    let unsubscribeProducts: (() => void) | null = null;
 
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (unsubscribeProducts) {
+        unsubscribeProducts();
+        unsubscribeProducts = null;
+      }
+
       if (user) {
-        fetchProducts();
+        setIsLoading(true);
+        unsubscribeProducts = inventoryService.subscribeToProducts((userProducts) => {
+          setProducts(userProducts);
+          setIsLoading(false);
+          setIsInitialized(true);
+        });
+      } else {
+        setProducts([]);
+        setIsLoading(false);
+        setIsInitialized(true);
       }
     });
-    return () => unsubscribe();
-  }, [fetchProducts]);
+
+    return () => {
+      if (unsubscribeProducts) unsubscribeProducts();
+      unsubscribeAuth();
+    };
+  }, []);
 
   const refreshProducts = async () => {
     await fetchProducts();

@@ -28,6 +28,7 @@ export interface Product {
   precio: number;
   costo?: number;
   minStock?: number;
+  stockMinimo?: number;
   talle?: string;
   genero?: string;
   imagenUrl?: string;
@@ -112,6 +113,56 @@ export interface Purchase {
   proveedor: string;
   fecha: any;
   createdBy: string;
+  numeroComprobante?: string;
+}
+
+export type PurchaseOrderStatus = 'borrador' | 'enviada' | 'parcial' | 'recibida' | 'cancelada';
+export type PurchaseOrderPaymentStatus = 'pendiente' | 'parcial' | 'pagado';
+
+export interface PurchaseOrderPayment {
+  id: string;
+  fecha: string;
+  monto: number;
+  metodo: 'efectivo' | 'transferencia' | 'cheque' | 'tarjeta' | 'otro';
+  comprobante?: string;
+  notas?: string;
+}
+
+export interface PurchaseOrderItem {
+  productId: string;
+  codigo?: string;
+  productNombre: string;
+  talle?: string;
+  genero?: string;
+  cantidad: number;
+  costoEstimado: number;
+  subtotal: number;
+}
+
+export interface PurchaseOrder {
+  id: string;
+  numero: string; // e.g. OC-1001
+  proveedor: string;
+  proveedorTelefono?: string;
+  proveedorEmail?: string;
+  fechaEmision: string;
+  fechaEsperada?: string;
+  condicionPago?: string;
+  estado: PurchaseOrderStatus;
+  estadoPago?: PurchaseOrderPaymentStatus;
+  montoPagado?: number;
+  saldoPendiente?: number;
+  fechaVencimientoPago?: string;
+  historialPagos?: PurchaseOrderPayment[];
+  items: PurchaseOrderItem[];
+  subtotal: number;
+  total: number;
+  flete?: number;
+  notas?: string;
+  receivedAt?: string;
+  createdBy: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Notification {

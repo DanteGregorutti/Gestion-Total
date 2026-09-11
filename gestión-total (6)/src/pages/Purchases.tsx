@@ -18,16 +18,36 @@ import {
   Filter,
   X,
   Package,
-  Clock
+  Clock,
+  FileText,
+  Printer,
+  MessageCircle,
+  CheckCircle2,
+  AlertCircle,
+  Building2,
+  Eye,
+  SlidersHorizontal,
+  Send,
+  Download,
+  Receipt,
+  FileCheck,
+  Edit3
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui';
 import Modal from '../components/Modal';
 import ConfirmationModal from '../components/ConfirmationModal';
 import ProductSearch from '../components/ProductSearch';
-import { Purchase, Product } from '../types';
+import { Purchase, Product, PurchaseOrder, PurchaseOrderStatus, PurchaseOrderItem } from '../types';
 import { cn } from '../utils/cn';
 import { inventoryService } from '../services/inventoryService';
+import { purchaseOrderService } from '../services/purchaseOrderService';
+import { PurchaseOrderModal } from '../components/purchases/PurchaseOrderModal';
+import { GoodsReceiptModal } from '../components/purchases/GoodsReceiptModal';
+import { PurchaseOrderPrintTicket } from '../components/purchases/PurchaseOrderPrintTicket';
+import { RestockAssistant } from '../components/purchases/RestockAssistant';
+import { SupplierPayablesTab } from '../components/purchases/SupplierPayablesTab';
+import { SupplierPayablesModal } from '../components/purchases/SupplierPayablesModal';
 import { toast } from 'sonner';
 import { useSettings } from '../contexts/SettingsContext';
 import { useProducts } from '../contexts/ProductsContext';
@@ -37,23 +57,47 @@ export default function Purchases() {
   const { t, loading: settingsLoading, mobileCompactMode } = useSettings();
   const { products, refreshProducts: refreshAllProducts } = useProducts();
   const navigate = useNavigate();
-  const [purchases, setPurchases] = React.useState<Purchase[]>([]);
-  const [isLoading, setIsLoading] = React.useState(true);
-  const [isAddModalOpen, setIsAddModalOpen] = React.useState(false);
-  const [searchTerm, setSearchTerm] = React.useState('');
-  const [isDeleteModalOpen, setIsDeleteModalOpen] = React.useState(false);
-  const [purchaseToDelete, setPurchaseToDelete] = React.useState<string | null>(null);
-  const [isDeleting, setIsDeleting] = React.useState(false);
-  const [isSubmitting, setIsSubmitting] = React.useState(false);
-  const [showFilters, setShowFilters] = React.useState(false);
-  const [filters, setFilters] = React.useState({
+
+  // Navigation tab
+  const [activeTab, setActiveTab] = useState<'purchases' | 'orders' | 'restock' | 'payables' | 'suppliers'>('purchases');
+
+  // Purchases state
+  const [purchases, setPurchases] = useState<Purchase[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [purchaseToDelete, setPurchaseToDelete] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+  const [receiptPurchase, setReceiptPurchase] = useState<Purchase | null>(null);
+
+  // Purchase Orders state
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
+  const [orderToEdit, setOrderToEdit] = useState<PurchaseOrder | null>(null);
+  const [orderInitialItems, setOrderInitialItems] = useState<PurchaseOrderItem[] | undefined>(undefined);
+  const [orderInitialSupplier, setOrderInitialSupplier] = useState<string | undefined>(undefined);
+  const [orderToPrint, setOrderToPrint] = useState<PurchaseOrder | null>(null);
+  const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | PurchaseOrderStatus>('all');
+  const [orderSearchTerm, setOrderSearchTerm] = useState('');
+  const [isDeleteOrderModalOpen, setIsDeleteOrderModalOpen] = useState(false);
+  const [orderToDelete, setOrderToDelete] = useState<string | null>(null);
+  const [isDeletingOrder, setIsDeletingOrder] = useState(false);
+
+  // Accounts Payable state
+  const [payableOrderToEdit, setPayableOrderToEdit] = useState<PurchaseOrder | null>(null);
+  const [isPayableModalOpen, setIsPayableModalOpen] = useState(false);
+
+  const [filters, setFilters] = useState({
     dateRange: 'all' as 'all' | '7' | '30' | 'custom',
     customStart: '',
     customEnd: '',
     productId: 'all'
   });
 
-  const [formData, setFormData] = React.useState({
+  const [formData, setFormData] = useState({
     productId: '',
     productNombre: '',
     cantidad: '' as any,
@@ -61,9 +105,9 @@ export default function Purchases() {
     proveedor: ''
   });
 
-  const [selectedBaseProduct, setSelectedBaseProduct] = React.useState<any | null>(null);
+  const [selectedBaseProduct, setSelectedBaseProduct] = useState<any | null>(null);
 
-  const groupedProducts = React.useMemo(() => {
+  const groupedProducts = useMemo(() => {
     const groups: { [key: string]: { 
       codigo: string; 
       descripcion: string; 
@@ -98,16 +142,20 @@ export default function Purchases() {
     return Object.values(groups);
   }, [products]);
 
-  const representativeProducts = React.useMemo(() => 
+  const representativeProducts = useMemo(() => 
     groupedProducts.map(g => g.representative),
     [groupedProducts]
   );
 
-  React.useEffect(() => {
+  useEffect(() => {
     const loadAllData = async () => {
       try {
-        const pu = await inventoryService.getPurchases(30);
+        const [pu, po] = await Promise.all([
+          inventoryService.getPurchases(50),
+          purchaseOrderService.getPurchaseOrders()
+        ]);
         setPurchases(pu);
+        setPurchaseOrders(po);
         setIsLoading(false);
       } catch (error) {
         console.error('Error loading purchases data:', error);
@@ -120,11 +168,13 @@ export default function Purchases() {
   const refreshData = async () => {
     setIsLoading(true);
     try {
-      const [pu] = await Promise.all([
-        inventoryService.getPurchases(30),
+      const [pu, po] = await Promise.all([
+        inventoryService.getPurchases(50),
+        purchaseOrderService.getPurchaseOrders(),
         refreshAllProducts()
       ]);
       setPurchases(pu);
+      setPurchaseOrders(po);
     } catch (error) {
       console.error('Error refreshing data:', error);
     } finally {
@@ -132,7 +182,7 @@ export default function Purchases() {
     }
   };
 
-  const filteredPurchases = React.useMemo(() => {
+  const filteredPurchases = useMemo(() => {
     return purchases.filter(p => {
       const matchesSearch = (p.productNombre || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
                           (p.proveedor || '').toLowerCase().includes(searchTerm.toLowerCase());
@@ -170,6 +220,64 @@ export default function Purchases() {
     });
   }, [purchases, searchTerm, filters]);
 
+  const filteredOrders = useMemo(() => {
+    return purchaseOrders.filter(o => {
+      const matchesStatus = orderStatusFilter === 'all' || o.estado === orderStatusFilter;
+      if (!matchesStatus) return false;
+
+      const term = orderSearchTerm.toLowerCase();
+      const matchesSearch = 
+        (o.numero || '').toLowerCase().includes(term) ||
+        (o.proveedor || '').toLowerCase().includes(term) ||
+        (o.items || []).some(it => (it.productNombre || '').toLowerCase().includes(term));
+
+      return matchesSearch;
+    });
+  }, [purchaseOrders, orderStatusFilter, orderSearchTerm]);
+
+  // Suppliers Directory Summary
+  const suppliersDirectory = useMemo(() => {
+    const map = new Map<string, {
+      name: string;
+      totalInvested: number;
+      totalUnits: number;
+      purchasesCount: number;
+      lastDate: Date;
+      phone?: string;
+    }>();
+
+    purchases.forEach(p => {
+      const name = p.proveedor || 'Sin Proveedor';
+      let date: Date;
+      try {
+        date = (p.fecha as any)?.toDate ? (p.fecha as any).toDate() : new Date(p.fecha as any);
+        if (isNaN(date.getTime())) date = new Date();
+      } catch (e) {
+        date = new Date();
+      }
+
+      const existing = map.get(name);
+      if (!existing) {
+        map.set(name, {
+          name,
+          totalInvested: Number(p.total) || 0,
+          totalUnits: Number(p.cantidad) || 0,
+          purchasesCount: 1,
+          lastDate: date
+        });
+      } else {
+        existing.totalInvested += Number(p.total) || 0;
+        existing.totalUnits += Number(p.cantidad) || 0;
+        existing.purchasesCount += 1;
+        if (date > existing.lastDate) {
+          existing.lastDate = date;
+        }
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) => b.totalInvested - a.totalInvested);
+  }, [purchases]);
+
   const totalMonth = purchases
     .filter(p => {
       if (!p.fecha) return false;
@@ -178,6 +286,43 @@ export default function Purchases() {
       return date.getMonth() === new Date().getMonth() && date.getFullYear() === new Date().getFullYear();
     })
     .reduce((acc, p) => acc + (Number(p.total) || 0), 0);
+
+  const criticalStockCount = useMemo(() => {
+    return products.filter(p => {
+      const minStock = p.stockMinimo !== undefined && p.stockMinimo !== null ? p.stockMinimo : 5;
+      return p.cantidad <= minStock;
+    }).length;
+  }, [products]);
+
+  const totalSupplierDebt = useMemo(() => {
+    return purchaseOrders.reduce((acc, o) => {
+      const tot = Number(o.total) || 0;
+      const paid = Number(o.montoPagado) || 0;
+      return acc + Math.max(0, tot - paid);
+    }, 0);
+  }, [purchaseOrders]);
+
+  const handleGeneratePurchaseOrderFromRestock = (items: PurchaseOrderItem[], defaultSupplier?: string) => {
+    setOrderToEdit(null);
+    setOrderInitialItems(items);
+    setOrderInitialSupplier(defaultSupplier);
+    setIsOrderModalOpen(true);
+  };
+
+  const handleOpenPaymentModal = (order: PurchaseOrder) => {
+    setPayableOrderToEdit(order);
+    setIsPayableModalOpen(true);
+  };
+
+  const handleSaveSupplierPayment = async (orderId: string, updates: Partial<PurchaseOrder>) => {
+    try {
+      await purchaseOrderService.updatePurchaseOrder(orderId, updates);
+      await refreshData();
+    } catch (error) {
+      console.error('Error updating supplier payment:', error);
+      throw error;
+    }
+  };
 
   const handleRegisterPurchase = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -200,6 +345,7 @@ export default function Purchases() {
       toast.success(t('purchase_registered_success'));
       setIsAddModalOpen(false);
       setFormData({ productId: '', productNombre: '', cantidad: '', costo: '', proveedor: '' });
+      await refreshData();
     } catch (error) {
       toast.error(t('purchase_registered_error'));
     } finally {
@@ -228,9 +374,70 @@ export default function Purchases() {
     setIsDeleteModalOpen(true);
   };
 
-  const [isBulkModalOpen, setIsBulkModalOpen] = React.useState(false);
-  const [bulkItems, setBulkItems] = React.useState<any[]>([]);
-  const [bulkProveedor, setBulkProveedor] = React.useState('');
+  // Save or edit Purchase Order
+  const handleSavePurchaseOrder = async (data: Partial<PurchaseOrder>) => {
+    try {
+      if (orderToEdit) {
+        await purchaseOrderService.updatePurchaseOrder(orderToEdit.id, data);
+        toast.success('Orden de compra actualizada');
+      } else {
+        await purchaseOrderService.createPurchaseOrder(data);
+        toast.success('¡Orden de compra creada exitosamente!');
+      }
+      setIsOrderModalOpen(false);
+      setOrderToEdit(null);
+      await refreshData();
+    } catch (error) {
+      console.error('Error al guardar orden:', error);
+      toast.error('Error al guardar la orden de compra');
+    }
+  };
+
+  const handleDeleteOrder = async () => {
+    if (!orderToDelete) return;
+    setIsDeletingOrder(true);
+    try {
+      await purchaseOrderService.deletePurchaseOrder(orderToDelete);
+      toast.success('Orden de compra eliminada');
+      setIsDeleteOrderModalOpen(false);
+      setOrderToDelete(null);
+      await refreshData();
+    } catch (error) {
+      toast.error('Error al eliminar orden de compra');
+    } finally {
+      setIsDeletingOrder(false);
+    }
+  };
+
+  const handleUpdateOrderStatus = async (orderId: string, status: PurchaseOrderStatus) => {
+    try {
+      await purchaseOrderService.updateOrderStatus(orderId, status);
+      toast.success(`Estado de orden actualizado a: ${status.toUpperCase()}`);
+      await refreshData();
+    } catch (error) {
+      toast.error('Error al actualizar estado');
+    }
+  };
+
+  const handleReceiveGoods = async (order: PurchaseOrder) => {
+    try {
+      toast.info('Recibiendo mercadería e incrementando stock...');
+      const receipts = order.items.map(it => ({
+        productId: it.productId,
+        cantidadRecibida: it.cantidad
+      }));
+      await purchaseOrderService.receiveGoods(order.id, receipts, `Recepción completa de OC ${order.numero}`);
+      toast.success('¡Mercadería recibida e inventario actualizado!');
+      await refreshData();
+    } catch (error) {
+      console.error('Error al recibir mercadería:', error);
+      toast.error('Error al procesar la recepción');
+    }
+  };
+
+  const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
+  const [bulkItems, setBulkItems] = useState<any[]>([]);
+  const [bulkProveedor, setBulkProveedor] = useState('');
 
   const handleAddBulkItem = (product: Product) => {
     const existingKey = product.id;
@@ -284,7 +491,7 @@ export default function Purchases() {
       setIsBulkModalOpen(false);
       setBulkItems([]);
       setBulkProveedor('');
-      refreshData();
+      await refreshData();
     } catch (error) {
       toast.error(t('purchase_registered_error'));
     } finally {
@@ -313,291 +520,829 @@ export default function Purchases() {
   return (
     <div className="space-y-6">
       {/* Stats Summary */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-emerald-600 p-6 rounded-3xl text-white shadow-lg shadow-emerald-200 dark:shadow-none">
-          <div className="flex items-center justify-between mb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="bg-emerald-600 p-5 rounded-3xl text-white shadow-lg shadow-emerald-200 dark:shadow-none">
+          <div className="flex items-center justify-between mb-3">
             <div className="p-2 bg-white/20 rounded-xl">
-              <ShoppingCart size={20} />
+              <ShoppingCart size={18} />
             </div>
           </div>
-          <p className="text-sm font-medium text-emerald-100">{t('total_purchased_month')}</p>
-          <h3 className="text-2xl font-bold mt-1">${totalMonth.toLocaleString()}</h3>
+          <p className="text-xs font-medium text-emerald-100">{t('total_purchased_month')}</p>
+          <h3 className="text-xl font-black mt-0.5">${totalMonth.toLocaleString()}</h3>
         </div>
-        <div className="bg-white dark:bg-gray-900 p-6 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <div className="p-2 bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 rounded-xl">
-              <ArrowDownRight size={20} />
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('restock')}
+          className={cn(
+            "p-5 rounded-3xl border transition-all text-left group",
+            activeTab === 'restock'
+              ? "bg-amber-500 text-white border-amber-500 shadow-md shadow-amber-200 dark:shadow-none"
+              : "bg-white dark:bg-gray-900 border-gray-100 dark:border-gray-800 hover:border-amber-300"
+          )}
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div className={cn(
+              "p-2 rounded-xl",
+              activeTab === 'restock' ? "bg-white/20 text-white" : "bg-amber-50 dark:bg-amber-900/20 text-amber-600"
+            )}>
+              <AlertCircle size={18} />
+            </div>
+            {criticalStockCount > 0 && (
+              <span className={cn(
+                "text-[10px] font-black uppercase px-2 py-0.5 rounded-full",
+                activeTab === 'restock' ? "bg-white text-amber-600" : "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300 animate-pulse"
+              )}>
+                {criticalStockCount} Críticos
+              </span>
+            )}
+          </div>
+          <p className={cn("text-xs font-medium", activeTab === 'restock' ? "text-amber-100" : "text-gray-500")}>
+            Reposición de Stock
+          </p>
+          <h3 className={cn("text-xl font-black mt-0.5", activeTab === 'restock' ? "text-white" : "text-amber-600 dark:text-amber-400")}>
+            {criticalStockCount} a reponer
+          </h3>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('payables')}
+          className={cn(
+            "p-5 rounded-3xl border transition-all text-left group",
+            activeTab === 'payables'
+              ? "bg-rose-600 text-white border-rose-600 shadow-md shadow-rose-200 dark:shadow-none"
+              : "bg-white dark:bg-gray-900 border-gray-100 dark:border-gray-800 hover:border-rose-300"
+          )}
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div className={cn(
+              "p-2 rounded-xl",
+              activeTab === 'payables' ? "bg-white/20 text-white" : "bg-rose-50 dark:bg-rose-900/20 text-rose-600"
+            )}>
+              <ArrowDownRight size={18} />
+            </div>
+            {totalSupplierDebt > 0 && (
+              <span className={cn(
+                "text-[10px] font-black uppercase px-2 py-0.5 rounded-full",
+                activeTab === 'payables' ? "bg-white text-rose-600" : "bg-rose-100 text-rose-700"
+              )}>
+                Saldo Activo
+              </span>
+            )}
+          </div>
+          <p className={cn("text-xs font-medium", activeTab === 'payables' ? "text-rose-100" : "text-gray-500")}>
+            Cuentas por Pagar
+          </p>
+          <h3 className={cn("text-xl font-black mt-0.5", activeTab === 'payables' ? "text-white" : "text-rose-600 dark:text-rose-400")}>
+            ${totalSupplierDebt.toLocaleString()}
+          </h3>
+        </button>
+
+        <div className="bg-white dark:bg-gray-900 p-5 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm">
+          <div className="flex items-center justify-between mb-3">
+            <div className="p-2 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-xl">
+              <FileText size={18} />
             </div>
           </div>
-          <p className="text-sm font-medium text-gray-500 dark:text-gray-400">{t('stock_investment')}</p>
-          <h3 className="text-2xl font-bold text-gray-900 dark:text-white mt-1">
-            {purchases.reduce((acc, p) => acc + (Number(p.cantidad) || 0), 0)} {t('units')}
+          <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Órdenes de Compra</p>
+          <h3 className="text-xl font-black text-gray-900 dark:text-white mt-0.5">
+            {purchaseOrders.length} <span className="text-xs font-normal text-amber-600 font-sans">({purchaseOrders.filter(o => o.estado === 'enviada').length} pend.)</span>
           </h3>
         </div>
-        <div className="bg-white dark:bg-gray-900 p-6 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
+
+        <div className="bg-white dark:bg-gray-900 p-5 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm">
+          <div className="flex items-center justify-between mb-3">
             <div className="p-2 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-xl">
-              <Truck size={20} />
+              <Truck size={18} />
             </div>
           </div>
-          <p className="text-sm font-medium text-gray-500 dark:text-gray-400">{t('active_suppliers')}</p>
-          <h3 className="text-2xl font-bold text-gray-900 dark:text-white mt-1">
-            {new Set(purchases.map(p => p.proveedor)).size}
+          <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Proveedores</p>
+          <h3 className="text-xl font-black text-gray-900 dark:text-white mt-0.5">
+            {suppliersDirectory.length} activos
           </h3>
         </div>
       </div>
 
-      {/* Header Actions */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex flex-1 items-center gap-3 max-w-2xl">
-          <div className="relative flex-1">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-indigo-500 w-5 h-5 pointer-events-none" />
-            <Input 
-              placeholder={t('search_purchases')} 
-              className="pl-12" 
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
-          <Button 
-            variant="outline" 
-            onClick={refreshData}
-            className="rounded-xl border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/50"
-            title="Actualizar datos"
-          >
-            <Clock className="w-5 h-5 sm:mr-2" />
-            <span className="hidden sm:inline">{t('refresh') || 'Actualizar'}</span>
-          </Button>
-          <Button 
-            variant="outline" 
-            onClick={() => setShowFilters(!showFilters)}
+      {/* Navigation Tabs */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 dark:border-gray-800 pb-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveTab('purchases')}
             className={cn(
-              "rounded-xl border-gray-200 dark:border-gray-800",
-              showFilters && "bg-indigo-50 dark:bg-indigo-900/20 border-indigo-200 text-indigo-600"
+              "px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2",
+              activeTab === 'purchases'
+                ? "bg-indigo-600 text-white shadow-md shadow-indigo-200 dark:shadow-none"
+                : "text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
             )}
           >
-            <Filter className="w-5 h-5 sm:mr-2" />
-            <span className="hidden sm:inline">{t('filters')}</span>
-          </Button>
+            <Package size={16} />
+            <span>Entradas de Stock ({filteredPurchases.length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('orders')}
+            className={cn(
+              "px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 relative",
+              activeTab === 'orders'
+                ? "bg-indigo-600 text-white shadow-md shadow-indigo-200 dark:shadow-none"
+                : "text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+            )}
+          >
+            <FileText size={16} />
+            <span>Órdenes de Compra ({purchaseOrders.length})</span>
+            {purchaseOrders.filter(o => o.estado === 'enviada').length > 0 && (
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('restock')}
+            className={cn(
+              "px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 relative",
+              activeTab === 'restock'
+                ? "bg-amber-500 text-white shadow-md shadow-amber-200 dark:shadow-none"
+                : "text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+            )}
+          >
+            <AlertCircle size={16} />
+            <span>Reposición Inteligente</span>
+            {criticalStockCount > 0 && (
+              <span className={cn(
+                "text-[10px] font-black px-1.5 py-0.2 rounded-full",
+                activeTab === 'restock' ? "bg-white text-amber-600" : "bg-rose-500 text-white"
+              )}>
+                {criticalStockCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('payables')}
+            className={cn(
+              "px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 relative",
+              activeTab === 'payables'
+                ? "bg-rose-600 text-white shadow-md shadow-rose-200 dark:shadow-none"
+                : "text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+            )}
+          >
+            <ArrowDownRight size={16} />
+            <span>Cuentas por Pagar</span>
+            {totalSupplierDebt > 0 && (
+              <span className={cn(
+                "text-[10px] font-black px-1.5 py-0.2 rounded-full",
+                activeTab === 'payables' ? "bg-white text-rose-600" : "bg-rose-100 text-rose-700"
+              )}>
+                ${totalSupplierDebt.toLocaleString('es-AR')}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('suppliers')}
+            className={cn(
+              "px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2",
+              activeTab === 'suppliers'
+                ? "bg-indigo-600 text-white shadow-md shadow-indigo-200 dark:shadow-none"
+                : "text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+            )}
+          >
+            <Truck size={16} />
+            <span>Directorio de Proveedores ({suppliersDirectory.length})</span>
+          </button>
         </div>
-          <Button onClick={() => setIsAddModalOpen(true)} className="rounded-xl shadow-lg shadow-indigo-200 dark:shadow-none">
-            <Plus className="w-5 h-5 sm:mr-2" />
-            <span className="hidden sm:inline">{t('register_purchase')}</span>
-            <span className="sm:hidden">{t('add') || 'Comprar'}</span>
+
+        {/* Global Action buttons */}
+        <div className="flex items-center gap-2">
+          <Button 
+            onClick={() => {
+              setOrderToEdit(null);
+              setIsOrderModalOpen(true);
+            }} 
+            className="rounded-xl shadow-sm text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white"
+          >
+            <Plus className="w-4 h-4 mr-1.5" />
+            <span>Nueva Orden de Compra</span>
           </Button>
+
+          <Button 
+            onClick={() => setIsAddModalOpen(true)} 
+            className="rounded-xl shadow-sm text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white"
+          >
+            <Plus className="w-4 h-4 mr-1.5" />
+            <span>Entrada Rápida</span>
+          </Button>
+
           <Button 
             variant="outline" 
             onClick={() => setIsBulkModalOpen(true)} 
-            className="rounded-xl border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/10"
+            className="rounded-xl border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/10 text-xs font-bold"
           >
-            <ShoppingCart className="w-5 h-5 sm:mr-2" />
-            <span className="hidden md:inline">{t('bulk_purchase')}</span>
-            <span className="md:hidden">Masivo</span>
+            <ShoppingCart className="w-4 h-4 mr-1.5" />
+            <span>Entrada Masiva</span>
           </Button>
+        </div>
       </div>
 
-      {/* Filters Panel */}
-      <AnimatePresence>
-        {showFilters && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="overflow-hidden"
-          >
-            <div className="bg-white dark:bg-gray-900 p-6 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="space-y-2">
-                  <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-1">{t('date_range')}</label>
-                  <select 
-                    value={filters.dateRange}
-                    onChange={(e) => setFilters({ ...filters, dateRange: e.target.value as any })}
-                    className="w-full px-4 py-2.5 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all"
-                  >
-                    <option value="all">{t('all_time')}</option>
-                    <option value="7">{t('last_7_days')}</option>
-                    <option value="30">{t('last_30_days')}</option>
-                    <option value="custom">{t('custom_range')}</option>
-                  </select>
-                </div>
-
-                <div className="space-y-2">
-                  <ProductSearch 
-                    label={t('product')}
-                    products={products}
-                    selectedProductId={filters.productId === 'all' ? undefined : filters.productId}
-                    onSelect={(p) => setFilters({ ...filters, productId: p.id })}
-                    placeholder={t('all_products')}
-                  />
-                  {filters.productId !== 'all' && (
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      className="text-[10px] h-6 px-2 text-gray-400"
-                      onClick={() => setFilters({ ...filters, productId: 'all' })}
-                    >
-                      {t('clear_product_filter')}
-                    </Button>
-                  )}
-                </div>
-
-                <div className="flex items-end">
-                  <Button 
-                    variant="ghost" 
-                    className="w-full text-gray-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/10 rounded-xl"
-                    onClick={() => setFilters({ dateRange: 'all', customStart: '', customEnd: '', productId: 'all' })}
-                  >
-                    <X className="w-4 h-4 mr-2" />
-                    {t('clear_filters')}
-                  </Button>
-                </div>
+      {/* ========================================================= */}
+      {/* TAB 1: PURCHASES / ENTRADAS DE STOCK                     */}
+      {/* ========================================================= */}
+      {activeTab === 'purchases' && (
+        <div className="space-y-6">
+          {/* Header Actions & Filters */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex flex-1 items-center gap-3 max-w-2xl">
+              <div className="relative flex-1">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-indigo-500 w-5 h-5 pointer-events-none" />
+                <Input 
+                  placeholder="Buscar por producto o proveedor..." 
+                  className="pl-12" 
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
               </div>
-
-              {filters.dateRange === 'custom' && (
-                <motion.div 
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-gray-50 dark:border-gray-800"
-                >
-                  <Input 
-                    type="date" 
-                    label={t('start_date')}
-                    value={filters.customStart}
-                    onChange={(e) => setFilters({ ...filters, customStart: e.target.value })}
-                  />
-                  <Input 
-                    type="date" 
-                    label={t('end_date')}
-                    value={filters.customEnd}
-                    onChange={(e) => setFilters({ ...filters, customEnd: e.target.value })}
-                  />
-                </motion.div>
-              )}
+              <Button 
+                variant="outline" 
+                onClick={refreshData}
+                className="rounded-xl border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/50"
+                title="Actualizar datos"
+              >
+                <Clock className="w-5 h-5 sm:mr-2" />
+                <span className="hidden sm:inline">Actualizar</span>
+              </Button>
+              <Button 
+                variant="outline" 
+                onClick={() => setShowFilters(!showFilters)}
+                className={cn(
+                  "rounded-xl border-gray-200 dark:border-gray-800",
+                  showFilters && "bg-indigo-50 dark:bg-indigo-900/20 border-indigo-200 text-indigo-600"
+                )}
+              >
+                <Filter className="w-5 h-5 sm:mr-2" />
+                <span className="hidden sm:inline">{t('filters')}</span>
+              </Button>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          </div>
 
-      {/* Table Section (Desktop) / Card Section (Mobile) */}
-      <div className={cn("bg-white dark:bg-gray-900 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm overflow-hidden", mobileCompactMode ? "hidden" : "block")}>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-gray-50/50 dark:bg-gray-800/50 border-b border-gray-100 dark:border-gray-800">
-                <th className="px-6 py-4 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('product')}</th>
-                <th className="px-6 py-4 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('supplier')}</th>
-                <th className="px-6 py-4 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('qty')}</th>
-                 <th className="px-6 py-4 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('unit_cost')}</th>
-                <th className="px-6 py-4 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('total')}</th>
-                <th className="px-6 py-4 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider text-right">{t('actions')}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
-              {filteredPurchases.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
-                    {t('no_purchases_found')}
-                  </td>
-                </tr>
-              ) : (
-                filteredPurchases.map((purchase) => {
-                  let date: Date;
-                  try {
-                    date = (purchase.fecha as any)?.toDate ? (purchase.fecha as any).toDate() : new Date(purchase.fecha as any);
-                    if (isNaN(date.getTime())) date = new Date();
-                  } catch (e) {
-                    date = new Date();
-                  }
-                  return (
-                    <tr key={purchase.id} className="hover:bg-gray-50/80 dark:hover:bg-gray-800/50 transition-colors group">
-                      <td className="px-6 py-4">
-                        <p className="text-sm font-bold text-gray-900 dark:text-white">{purchase.productNombre}</p>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">{date.toLocaleDateString()}</p>
+          {/* Filters Panel */}
+          <AnimatePresence>
+            {showFilters && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="bg-white dark:bg-gray-900 p-6 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="space-y-2">
+                      <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-1">{t('date_range')}</label>
+                      <select 
+                        value={filters.dateRange}
+                        onChange={(e) => setFilters({ ...filters, dateRange: e.target.value as any })}
+                        className="w-full px-4 py-2.5 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all"
+                      >
+                        <option value="all">{t('all_time')}</option>
+                        <option value="7">{t('last_7_days')}</option>
+                        <option value="30">{t('last_30_days')}</option>
+                        <option value="custom">{t('custom_range')}</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <ProductSearch 
+                        label={t('product')}
+                        products={products}
+                        selectedProductId={filters.productId === 'all' ? undefined : filters.productId}
+                        onSelect={(p) => setFilters({ ...filters, productId: p.id })}
+                        placeholder={t('all_products')}
+                      />
+                      {filters.productId !== 'all' && (
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="text-[10px] h-6 px-2 text-gray-400"
+                          onClick={() => setFilters({ ...filters, productId: 'all' })}
+                        >
+                          {t('clear_product_filter')}
+                        </Button>
+                      )}
+                    </div>
+
+                    <div className="flex items-end">
+                      <Button 
+                        variant="ghost" 
+                        className="w-full text-gray-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/10 rounded-xl"
+                        onClick={() => setFilters({ dateRange: 'all', customStart: '', customEnd: '', productId: 'all' })}
+                      >
+                        <X className="w-4 h-4 mr-2" />
+                        {t('clear_all_filters')}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Table Section (Desktop) / Card Section (Mobile) */}
+          <div className={cn("bg-white dark:bg-gray-900 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm overflow-hidden", mobileCompactMode ? "hidden" : "block")}>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50/50 dark:bg-gray-800/50 border-b border-gray-100 dark:border-gray-800">
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('product')}</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('supplier')}</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('qty')}</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('unit_cost')}</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('total')}</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider text-right">{t('actions')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
+                  {filteredPurchases.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
+                        {t('no_purchases_found')}
                       </td>
-                      <td className="px-6 py-4">
-                        <p className="text-sm text-gray-600 dark:text-gray-300">{purchase.proveedor}</p>
-                      </td>
-                      <td className="px-6 py-4">
-                        <p className="text-sm text-gray-600 dark:text-gray-300">{purchase.cantidad}</p>
-                      </td>
-                      <td className="px-6 py-4">
-                        <p className="text-sm text-gray-600 dark:text-gray-300">${purchase.costo}</p>
-                      </td>
-                      <td className="px-6 py-4">
-                        <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400">${purchase.total}</p>
-                      </td>
-                      <td className="px-6 py-4 text-right">
+                    </tr>
+                  ) : (
+                    filteredPurchases.map((purchase) => {
+                      let date: Date;
+                      try {
+                        date = (purchase.fecha as any)?.toDate ? (purchase.fecha as any).toDate() : new Date(purchase.fecha as any);
+                        if (isNaN(date.getTime())) date = new Date();
+                      } catch (e) {
+                        date = new Date();
+                      }
+                      return (
+                        <tr key={purchase.id} className="hover:bg-gray-50/80 dark:hover:bg-gray-800/50 transition-colors group">
+                          <td className="px-6 py-4">
+                            <p className="text-sm font-bold text-gray-900 dark:text-white">{purchase.productNombre}</p>
+                            <p className="text-xs text-gray-500 dark:text-gray-400">{date.toLocaleDateString()}</p>
+                          </td>
+                          <td className="px-6 py-4">
+                            <p className="text-sm text-gray-600 dark:text-gray-300 font-medium">{purchase.proveedor}</p>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className="px-2.5 py-1 bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 font-bold rounded-lg text-xs">
+                              {purchase.cantidad} un.
+                            </span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <p className="text-sm text-gray-600 dark:text-gray-300">${purchase.costo?.toLocaleString()}</p>
+                          </td>
+                          <td className="px-6 py-4">
+                            <p className="text-sm font-black text-emerald-600 dark:text-emerald-400">${purchase.total?.toLocaleString()}</p>
+                          </td>
+                          <td className="px-6 py-4 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="h-8 w-8 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg"
+                                onClick={() => setReceiptPurchase(purchase)}
+                                title="Ver / Imprimir Remito de Recepción"
+                              >
+                                <FileText size={16} />
+                              </Button>
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="h-8 w-8 text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg"
+                                onClick={() => confirmDelete(purchase.id)}
+                                disabled={isDeleting}
+                                title="Eliminar registro"
+                              >
+                                <Trash2 size={16} />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Mobile Card View */}
+          <div className={cn("space-y-4", mobileCompactMode ? "block" : "hidden")}>
+            {filteredPurchases.length === 0 ? (
+              <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl border border-gray-100 dark:border-gray-800 text-center text-gray-500 dark:text-gray-400">
+                {t('no_purchases_found')}
+              </div>
+            ) : (
+              filteredPurchases.map((purchase) => {
+                let date: Date;
+                try {
+                  date = (purchase.fecha as any)?.toDate ? (purchase.fecha as any).toDate() : new Date(purchase.fecha as any);
+                  if (isNaN(date.getTime())) date = new Date();
+                } catch (e) {
+                  date = new Date();
+                }
+                return (
+                  <div key={purchase.id} className="bg-white dark:bg-gray-900 p-5 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm space-y-4">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <p className="text-sm font-bold text-gray-900 dark:text-white leading-tight">{purchase.productNombre}</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{date.toLocaleDateString()} • {purchase.proveedor}</p>
+                      </div>
+                      <div className="flex items-center gap-1">
                         <Button 
                           variant="ghost" 
                           size="icon" 
-                          className="h-8 w-8 text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20"
+                          className="h-8 w-8 text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg"
+                          onClick={() => setReceiptPurchase(purchase)}
+                          title="Ver Remito"
+                        >
+                          <FileText size={16} />
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="h-8 w-8 text-rose-500 bg-rose-50 dark:bg-rose-900/20 rounded-lg"
                           onClick={() => confirmDelete(purchase.id)}
                           disabled={isDeleting}
                         >
                           <Trash2 size={16} />
                         </Button>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Mobile Card View */}
-      <div className={cn("space-y-4", mobileCompactMode ? "block" : "hidden")}>
-        {filteredPurchases.length === 0 ? (
-          <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl border border-gray-100 dark:border-gray-800 text-center text-gray-500 dark:text-gray-400">
-            {t('no_purchases_found')}
-          </div>
-        ) : (
-          filteredPurchases.map((purchase) => {
-            let date: Date;
-            try {
-              date = (purchase.fecha as any)?.toDate ? (purchase.fecha as any).toDate() : new Date(purchase.fecha as any);
-              if (isNaN(date.getTime())) date = new Date();
-            } catch (e) {
-              date = new Date();
-            }
-            return (
-              <div key={purchase.id} className="bg-white dark:bg-gray-900 p-5 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm space-y-4">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p className="text-sm font-bold text-gray-900 dark:text-white leading-tight">{purchase.productNombre}</p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{date.toLocaleDateString()} • {purchase.proveedor}</p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-4 pt-4 border-t border-gray-50 dark:border-gray-800">
+                      <div>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase">{t('qty_short')}</p>
+                        <p className="text-sm font-bold text-gray-900 dark:text-white">{purchase.cantidad}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase">{t('cost')}</p>
+                        <p className="text-sm font-bold text-gray-900 dark:text-white">${purchase.costo?.toLocaleString()}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[10px] text-gray-400 font-bold uppercase">{t('total')}</p>
+                        <p className="text-sm font-black text-emerald-600 dark:text-emerald-400">${purchase.total?.toLocaleString()}</p>
+                      </div>
+                    </div>
                   </div>
-                  <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    className="h-8 w-8 text-rose-500 bg-rose-50 dark:bg-rose-900/20 rounded-lg"
-                    onClick={() => confirmDelete(purchase.id)}
-                    disabled={isDeleting}
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* TAB 2: PURCHASE ORDERS (ÓRDENES DE COMPRA)               */}
+      {/* ========================================================= */}
+      {activeTab === 'orders' && (
+        <div className="space-y-6">
+          {/* Order Filters & Search */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex flex-1 items-center gap-3 max-w-xl">
+              <div className="relative flex-1">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-indigo-500 w-5 h-5 pointer-events-none" />
+                <Input 
+                  placeholder="Buscar por N° de orden, proveedor o producto..." 
+                  className="pl-12" 
+                  value={orderSearchTerm}
+                  onChange={(e) => setOrderSearchTerm(e.target.value)}
+                />
+              </div>
+            </div>
+
+            {/* Status pills */}
+            <div className="flex flex-wrap items-center gap-1.5 bg-gray-100 dark:bg-gray-800/60 p-1 rounded-2xl border border-gray-200 dark:border-gray-700">
+              {(['all', 'borrador', 'enviada', 'parcial', 'recibida', 'cancelada'] as const).map(st => {
+                const isSelected = orderStatusFilter === st;
+                const labelMap: Record<string, string> = {
+                  all: 'Todas',
+                  borrador: 'Borrador',
+                  enviada: 'Enviadas',
+                  parcial: 'Parcial',
+                  recibida: 'Recibidas',
+                  cancelada: 'Canceladas'
+                };
+                return (
+                  <button
+                    key={st}
+                    type="button"
+                    onClick={() => setOrderStatusFilter(st)}
+                    className={cn(
+                      "px-3 py-1 rounded-xl text-xs font-bold transition-all",
+                      isSelected
+                        ? "bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-300 shadow-sm"
+                        : "text-gray-500 hover:text-gray-900 dark:hover:text-gray-200"
+                    )}
                   >
-                    <Trash2 size={16} />
+                    {labelMap[st]}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Orders Grid */}
+          {filteredOrders.length === 0 ? (
+            <div className="bg-white dark:bg-gray-900 p-12 rounded-3xl border border-gray-100 dark:border-gray-800 text-center space-y-4">
+              <div className="w-14 h-14 bg-amber-50 dark:bg-amber-900/20 text-amber-600 rounded-2xl flex items-center justify-center mx-auto">
+                <FileText size={28} />
+              </div>
+              <div>
+                <h4 className="text-base font-bold text-gray-900 dark:text-white">No se encontraron órdenes de compra</h4>
+                <p className="text-xs text-gray-500 mt-1 max-w-sm mx-auto">
+                  Crea una orden formal para solicitar stock a tus proveedores y realizar seguimiento hasta su entrega.
+                </p>
+              </div>
+              <Button 
+                onClick={() => {
+                  setOrderToEdit(null);
+                  setIsOrderModalOpen(true);
+                }}
+                className="rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white"
+              >
+                <Plus size={16} className="mr-1.5" />
+                Crear Primera Orden de Compra
+              </Button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {filteredOrders.map(order => {
+                const dateStr = new Date(order.fechaEmision).toLocaleDateString('es-AR');
+                const totalUnits = (order.items || []).reduce((acc, it) => acc + (Number(it.cantidad) || 0), 0);
+
+                const statusBg: Record<PurchaseOrderStatus, string> = {
+                  borrador: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
+                  enviada: 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 border border-sky-200',
+                  parcial: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-200',
+                  recibida: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200',
+                  cancelada: 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                };
+
+                return (
+                  <div 
+                    key={order.id} 
+                    className="bg-white dark:bg-gray-900 rounded-3xl p-5 border border-gray-100 dark:border-gray-800 shadow-sm flex flex-col justify-between hover:border-indigo-200 dark:hover:border-indigo-800 transition-all group"
+                  >
+                    <div>
+                      {/* Top bar */}
+                      <div className="flex items-start justify-between gap-2 mb-3">
+                        <div>
+                          <span className="text-xs font-black text-indigo-600 dark:text-indigo-400">
+                            {order.numero}
+                          </span>
+                          <h4 className="text-base font-bold text-gray-900 dark:text-white leading-tight mt-0.5">
+                            {order.proveedor}
+                          </h4>
+                          <p className="text-[11px] text-gray-400">
+                            Emisión: {dateStr}
+                            {order.fechaEsperada && ` • Entrega: ${order.fechaEsperada}`}
+                          </p>
+                        </div>
+                        <span className={cn("text-[10px] font-black uppercase px-2.5 py-1 rounded-full", statusBg[order.estado])}>
+                          {order.estado}
+                        </span>
+                      </div>
+
+                      {/* Items list preview */}
+                      <div className="bg-gray-50 dark:bg-gray-800/50 rounded-2xl p-3 my-3 space-y-1.5 border border-gray-100 dark:border-gray-800">
+                        <div className="flex justify-between text-[10px] font-black uppercase text-gray-400 tracking-wider">
+                          <span>Artículos ({order.items.length})</span>
+                          <span>{totalUnits} un. totales</span>
+                        </div>
+                        <div className="divide-y divide-gray-100 dark:divide-gray-800 max-h-24 overflow-y-auto pr-1">
+                          {order.items.slice(0, 3).map((it, idx) => (
+                            <div key={idx} className="py-1 flex justify-between items-center text-xs">
+                              <span className="truncate pr-2 font-medium text-gray-700 dark:text-gray-300">
+                                <strong className="text-gray-900 dark:text-white">{it.cantidad}x</strong> {it.productNombre}
+                              </span>
+                              <span className="font-bold text-gray-900 dark:text-white shrink-0">
+                                ${(it.subtotal || it.cantidad * it.costoEstimado).toLocaleString()}
+                              </span>
+                            </div>
+                          ))}
+                          {order.items.length > 3 && (
+                            <p className="text-[10px] text-gray-400 italic pt-1">
+                              + {order.items.length - 3} artículos más...
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Total and condition */}
+                      <div className="flex items-baseline justify-between pt-1 mb-4">
+                        <span className="text-xs text-gray-400">
+                          {order.condicionPago || 'Contado'}
+                        </span>
+                        <div className="text-right">
+                          <span className="text-[10px] text-gray-400 block uppercase">Total Orden</span>
+                          <span className="text-lg font-black text-emerald-600 dark:text-emerald-400">
+                            ${order.total.toLocaleString()}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Actions toolbar */}
+                    <div className="pt-3 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between gap-1.5">
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setOrderToPrint(order)}
+                          className="h-8 px-2 text-xs font-bold text-gray-700 dark:text-gray-300 rounded-xl"
+                          title="Imprimir / Ver Comprobante formal"
+                        >
+                          <Printer size={14} className="mr-1" />
+                          Imprimir
+                        </Button>
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const url = purchaseOrderService.getWhatsAppMessage(order);
+                            window.open(url, '_blank');
+                          }}
+                          className="h-8 px-2 text-xs font-bold text-emerald-600 border-emerald-200 dark:border-emerald-800 hover:bg-emerald-50 rounded-xl"
+                          title="Enviar Orden a Proveedor por WhatsApp"
+                        >
+                          <MessageCircle size={14} className="mr-1" />
+                          WhatsApp
+                        </Button>
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        {order.estado !== 'recibida' && (
+                          <Button
+                            size="sm"
+                            onClick={() => handleReceiveGoods(order)}
+                            className="h-8 px-2.5 text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-sm"
+                            title="Recibir e ingresar artículos directamente al inventario"
+                          >
+                            <FileCheck size={14} className="mr-1" />
+                            Recibir
+                          </Button>
+                        )}
+
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            setOrderToEdit(order);
+                            setIsOrderModalOpen(true);
+                          }}
+                          className="h-8 w-8 text-gray-500 hover:text-indigo-600 rounded-xl"
+                          title="Editar orden"
+                        >
+                          <Edit3 size={15} />
+                        </Button>
+
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            setOrderToDelete(order.id);
+                            setIsDeleteOrderModalOpen(true);
+                          }}
+                          className="h-8 w-8 text-gray-400 hover:text-rose-600 rounded-xl"
+                          title="Eliminar orden"
+                        >
+                          <Trash2 size={15} />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* TAB 3: SUPPLIERS DIRECTORY (DIRECTORIO DE PROVEEDORES)   */}
+      {/* ========================================================= */}
+      {activeTab === 'suppliers' && (
+        <div className="space-y-6">
+          <div className="bg-white dark:bg-gray-900 p-6 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-bold text-gray-900 dark:text-white">Directorio de Proveedores & Métricas</h3>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Historial de compras acumuladas, volumen suministrado y generación directa de nuevas órdenes.
+              </p>
+            </div>
+            <Button
+              onClick={() => {
+                setOrderToEdit(null);
+                setIsOrderModalOpen(true);
+              }}
+              className="rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
+            >
+              <Plus size={15} className="mr-1.5" />
+              Nueva Orden a Proveedor
+            </Button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {suppliersDirectory.map(sup => (
+              <div 
+                key={sup.name}
+                className="bg-white dark:bg-gray-900 p-5 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm flex flex-col justify-between hover:border-indigo-200 transition-all"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="p-2.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-2xl">
+                      <Building2 size={22} />
+                    </div>
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 rounded-full">
+                      {sup.purchasesCount} compras
+                    </span>
+                  </div>
+
+                  <h4 className="text-base font-bold text-gray-900 dark:text-white leading-tight">
+                    {sup.name}
+                  </h4>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Última compra: {sup.lastDate.toLocaleDateString('es-AR')}
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-3 mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
+                    <div>
+                      <span className="text-[10px] font-bold text-gray-400 uppercase block">Total Invertido</span>
+                      <span className="text-base font-black text-emerald-600 dark:text-emerald-400">
+                        ${sup.totalInvested.toLocaleString()}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-bold text-gray-400 uppercase block">Unidades Suministradas</span>
+                      <span className="text-base font-bold text-gray-800 dark:text-white">
+                        {sup.totalUnits} un.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-4 mt-4 border-t border-gray-100 dark:border-gray-800">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setOrderToEdit({
+                        id: '',
+                        numero: '',
+                        proveedor: sup.name,
+                        fechaEmision: new Date().toISOString(),
+                        estado: 'borrador',
+                        items: [],
+                        subtotal: 0,
+                        total: 0,
+                        createdBy: 'admin'
+                      });
+                      setIsOrderModalOpen(true);
+                    }}
+                    className="w-full text-xs font-bold rounded-xl border-indigo-200 text-indigo-600 hover:bg-indigo-50"
+                  >
+                    <Plus size={14} className="mr-1" />
+                    Crear Orden para {sup.name}
                   </Button>
                 </div>
-                <div className="grid grid-cols-3 gap-4 pt-4 border-t border-gray-50 dark:border-gray-800">
-                  <div>
-                    <p className="text-[10px] text-gray-400 font-bold uppercase">{t('qty_short')}</p>
-                    <p className="text-sm font-bold text-gray-900 dark:text-white">{purchase.cantidad}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-gray-400 font-bold uppercase">{t('cost')}</p>
-                    <p className="text-sm font-bold text-gray-900 dark:text-white">${purchase.costo}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-[10px] text-gray-400 font-bold uppercase">{t('total')}</p>
-                    <p className="text-sm font-black text-emerald-600 dark:text-emerald-400">${purchase.total}</p>
-                  </div>
-                </div>
               </div>
-            );
-          })
-        )}
-      </div>
+            ))}
+          </div>
+        </div>
+      )}
 
+      {/* ========================================================= */}
+      {/* TAB 4: RESTOCK ASSISTANT (REPOSICIÓN INTELIGENTE)        */}
+      {/* ========================================================= */}
+      {activeTab === 'restock' && (
+        <RestockAssistant
+          products={products}
+          onGeneratePurchaseOrder={handleGeneratePurchaseOrderFromRestock}
+        />
+      )}
+
+      {/* ========================================================= */}
+      {/* TAB 5: SUPPLIER PAYABLES (CUENTAS POR PAGAR PROVEEDORES) */}
+      {/* ========================================================= */}
+      {activeTab === 'payables' && (
+        <SupplierPayablesTab
+          orders={purchaseOrders}
+          onOpenPaymentModal={handleOpenPaymentModal}
+          onViewReceipt={(order) => setOrderToPrint(order)}
+        />
+      )}
+
+      {/* ========================================================= */}
+      {/* MODALS                                                    */}
+      {/* ========================================================= */}
+
+      {/* Add Single Purchase Modal */}
       <Modal
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
@@ -628,7 +1373,7 @@ export default function Purchases() {
                           {selectedBaseProduct.representative.procedencia}
                         </span>
                       </div>
-                      <h3 className="text-4xl font-black text-gray-900 dark:text-white uppercase tracking-tight leading-tight">
+                      <h3 className="text-2xl font-black text-gray-900 dark:text-white uppercase tracking-tight leading-tight">
                         {selectedBaseProduct.representative.descripcion}
                       </h3>
                     </div>
@@ -716,7 +1461,7 @@ export default function Purchases() {
                 <>
                   <Input 
                     label={t('supplier')} 
-                    placeholder="Ej: Apple Distributor" 
+                    placeholder="Ej: Distribuidora Central" 
                     className="md:col-span-2 shadow-sm" 
                     required
                     value={formData.proveedor}
@@ -886,7 +1631,7 @@ export default function Purchases() {
         </div>
       </Modal>
 
-      {/* Confirmation Modal */}
+      {/* Delete Purchase Confirmation Modal */}
       <ConfirmationModal 
         isOpen={isDeleteModalOpen}
         onClose={() => setIsDeleteModalOpen(false)}
@@ -897,6 +1642,58 @@ export default function Purchases() {
         cancelLabel={t('cancel')}
         isLoading={isDeleting}
       />
+
+      {/* Delete Purchase Order Confirmation Modal */}
+      <ConfirmationModal 
+        isOpen={isDeleteOrderModalOpen}
+        onClose={() => setIsDeleteOrderModalOpen(false)}
+        onConfirm={handleDeleteOrder}
+        title="Eliminar Orden de Compra"
+        message="¿Estás seguro de que deseas eliminar esta orden de compra? Esta acción no se puede deshacer."
+        confirmLabel="Eliminar Orden"
+        cancelLabel="Cancelar"
+        isLoading={isDeletingOrder}
+      />
+
+      {/* Goods Receipt / Remito Modal */}
+      <GoodsReceiptModal 
+        purchase={receiptPurchase}
+        onClose={() => setReceiptPurchase(null)}
+      />
+
+      {/* Purchase Order Create / Edit Modal */}
+      <PurchaseOrderModal 
+        isOpen={isOrderModalOpen}
+        orderToEdit={orderToEdit}
+        initialItems={orderInitialItems}
+        initialSupplier={orderInitialSupplier}
+        onClose={() => {
+          setIsOrderModalOpen(false);
+          setOrderToEdit(null);
+          setOrderInitialItems(undefined);
+          setOrderInitialSupplier(undefined);
+        }}
+        onSave={handleSavePurchaseOrder}
+      />
+
+      {/* Supplier Payables Registration Modal */}
+      <SupplierPayablesModal
+        isOpen={isPayableModalOpen}
+        order={payableOrderToEdit}
+        onClose={() => {
+          setIsPayableModalOpen(false);
+          setPayableOrderToEdit(null);
+        }}
+        onSavePayment={handleSaveSupplierPayment}
+      />
+
+      {/* Purchase Order Formal Print Ticket */}
+      {orderToPrint && (
+        <PurchaseOrderPrintTicket 
+          order={orderToPrint}
+          onClose={() => setOrderToPrint(null)}
+        />
+      )}
     </div>
   );
 }

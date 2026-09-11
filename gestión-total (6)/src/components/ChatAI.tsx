@@ -19,9 +19,10 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { geminiService } from '../services/geminiService';
 import { inventoryService } from '../services/inventoryService';
+import { workOrderService } from '../services/workOrderService';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Product, Sale, Purchase, Movement } from '../types';
+import { Product, Sale, Purchase, Movement, WorkOrder, RepairQuote } from '../types';
 import { useSettings } from '../contexts/SettingsContext';
 
 interface Message {
@@ -79,7 +80,9 @@ export function ChatAI() {
         currentMovements,
         currentClients,
         currentSuppliers,
-        currentWarehouses
+        currentWarehouses,
+        currentWorkOrders,
+        currentRepairQuotes
       ] = await Promise.all([
         inventoryService.getProducts(),
         inventoryService.getSales(1825), // Fetch last 5 years of sales
@@ -87,7 +90,9 @@ export function ChatAI() {
         inventoryService.getMovements(1000), // Fetch last 1000 movements
         inventoryService.getClients(),
         inventoryService.getSuppliers(),
-        inventoryService.getWarehouses()
+        inventoryService.getWarehouses(),
+        workOrderService.getWorkOrders().catch(() => []),
+        workOrderService.getRepairQuotes().catch(() => [])
       ]);
 
       const response = await geminiService.askAboutBusiness(input, {
@@ -97,7 +102,9 @@ export function ChatAI() {
         movements: currentMovements,
         clients: currentClients,
         suppliers: currentSuppliers,
-        warehouses: currentWarehouses
+        warehouses: currentWarehouses,
+        workOrders: currentWorkOrders,
+        repairQuotes: currentRepairQuotes
       });
 
       const aiMessage: Message = {

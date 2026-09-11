@@ -1,6 +1,6 @@
 import express from "express";
 import path from "path";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -16,33 +16,58 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  // Initialize Gemini AI
-  const apiKey = process.env.GEMINI_API_KEY;
-  const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
+  // Lazy initialization of Gemini client
+  const getGenAI = () => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return null;
+    return new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+  };
 
-  // AI API Route
+  // AI API Route with resilient fallback
   app.post("/api/ai/ask", async (req, res) => {
-    if (!genAI) {
+    const ai = getGenAI();
+    if (!ai) {
       return res.status(400).json({ 
-        error: "El asistente IA no está configurado correctamente. Por favor, verifica que has añadido tu clave de API (GEMINI_API_KEY) en el panel de Secretos de AI Studio." 
+        error: "El asistente IA no está configurado correctamente. Por favor, verifica que la clave GEMINI_API_KEY esté presente en AI Studio." 
       });
     }
 
     const { prompt, systemInstruction } = req.body;
+    // Prioritize gemini-3.6-flash (recommended by Google API, ultra-fast 1.5s latency)
+    // with fallbacks for maximum resilience
+    const modelsToTry = ["gemini-3.6-flash", "gemini-3.8-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
+    let lastError: any = null;
 
-    try {
-      const model = genAI.getGenerativeModel({ 
-        model: "gemini-1.5-flash",
-        systemInstruction: systemInstruction,
-      });
+    for (const model of modelsToTry) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: prompt,
+          config: {
+            systemInstruction: systemInstruction || "Eres un asistente experto para Gestión Total y PulseStore.",
+          }
+        });
 
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      res.json({ text: response.text() });
-    } catch (error) {
-      console.error("Error calling Gemini API:", error);
-      res.status(500).json({ error: "Lo siento, hubo un error al procesar tu solicitud con la IA. Asegúrate de que la clave de API sea válida." });
+        const text = response.text || "No se obtuvo respuesta del modelo.";
+        return res.json({ text });
+      } catch (error: any) {
+        console.warn(`Model ${model} failed, trying fallback if available:`, error?.message || error);
+        lastError = error;
+        // Continue to fallback model
+      }
     }
+
+    console.error("All Gemini models failed:", lastError);
+    res.status(500).json({ 
+      error: lastError?.message || "Lo siento, hubo un error al procesar tu solicitud con la IA. Por favor, intenta de nuevo más tarde." 
+    });
   });
 
   // Vite middleware for development

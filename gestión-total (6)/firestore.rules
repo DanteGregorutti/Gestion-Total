@@ -275,15 +275,25 @@ service cloud.firestore {
 
     // Work Orders (Taller de Reparaciones y Órdenes de Trabajo)
     match /work_orders/{orderId} {
-      // Allow public read for tracking with order ID, and full read for authenticated staff
-      allow read: if true;
-      allow create, update, delete: if isAuthenticated();
+      allow get: if true;
+      allow list: if isAuthenticated() && (isAdmin() || isEmployee() || resource.data.get('createdBy', '') == request.auth.uid);
+      allow create: if isAuthenticated() && (isAdmin() || isEmployee() || request.resource.data.get('createdBy', '') == request.auth.uid);
+      allow update, delete: if isAuthenticated() && (isAdmin() || isDocOwner());
     }
 
     // Repair Quotes (Cotizaciones y Presupuestos de Reparación de Taller)
     match /repair_quotes/{quoteId} {
-      allow read: if true;
-      allow create, update, delete: if isAuthenticated();
+      allow get: if true;
+      allow list: if isAuthenticated() && (isAdmin() || isEmployee() || resource.data.get('createdBy', '') == request.auth.uid);
+      allow create: if isAuthenticated() && (isAdmin() || isEmployee() || request.resource.data.get('createdBy', '') == request.auth.uid);
+      allow update, delete: if isAuthenticated() && (isAdmin() || isDocOwner());
+    }
+
+    // Purchase Orders (Órdenes de Compra a Proveedores)
+    match /purchase_orders/{orderId} {
+      allow read: if isAuthenticated() && (isAdmin() || isEmployee() || resource.data.get('createdBy', '') == request.auth.uid);
+      allow create: if isAuthenticated() && (isAdmin() || isEmployee() || request.resource.data.get('createdBy', '') == request.auth.uid);
+      allow update, delete: if isAuthenticated() && (isAdmin() || isDocOwner());
     }
 
     // Users

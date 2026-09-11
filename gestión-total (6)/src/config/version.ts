@@ -19,11 +19,43 @@ export interface VersionRelease {
  * - Actualizaciones Menores (ej: 2.0 -> 2.1): Nuevas herramientas, funcionalidades y módulos complementarios.
  * - Parches / Revisiones (ej: 2.1.1): Optimizaciones, ajustes de diseño o correcciones específicas.
  */
-export const APP_VERSION = '2.1.0';
-export const APP_VERSION_NAME = 'PulseStore & Taller Pro';
+export const APP_VERSION = '2.3.0';
+export const APP_VERSION_NAME = 'PulseStore & Taller Pro (Estilos de Cotización & Órdenes de Compra)';
 export const APP_VERSION_DATE = 'Septiembre 2026';
 
 export const APP_VERSION_HISTORY: VersionRelease[] = [
+  {
+    version: '2.3.0',
+    date: 'Septiembre 2026',
+    title: 'Selector de Estilos de Cotización & Suite Avanzada de Órdenes de Compra (OC)',
+    type: 'minor',
+    description: 'Incorporación de 5 estilos profesionales de cotización para ventas (Moderno, Clásico, Minimalista, Técnico y Ticket 80mm), suite completa de Órdenes de Compra con seguimiento a proveedores, generación de remitos de recepción y verificación de eliminación de registros.',
+    highlights: [
+      'Selector interactivo de estilos de presupuesto en Ventas: Moderno, Clásico Ejecutivo, Minimalista, Ficha Técnica y Ticket Térmico 80mm',
+      'Nueva suite de Órdenes de Compra (OC) con numeración correlativa automática, cálculo de flete y condiciones de pago',
+      'Seguimiento por etapas de compras: Borrador, Enviada, Recepción Parcial, Recibida y Cancelada',
+      'Recepción de mercadería con 1 clic que ingresa automáticamente los artículos al stock del inventario',
+      'Envío instantáneo de órdenes de compra a proveedores por WhatsApp con detalle estructurado y comprobante imprimible',
+      'Generación de Comprobantes de Recepción / Remitos formales para todas las entradas de mercadería',
+      'Directorio analítico de proveedores con métricas de inversión acumulada y botón de pedido rápido',
+      'Verificación y soporte robusto en los botones de eliminación del módulo de taller con modales de confirmación'
+    ]
+  },
+  {
+    version: '2.2.0',
+    date: 'Septiembre 2026',
+    title: 'Rediseño Ergonómico de Taller & Activación de Asistente IA con Gemini 3.8 Flash',
+    type: 'minor',
+    description: 'Reingeniería visual y funcional de la sección de Taller y Reparaciones con Kanban fluido, además de la activación y migración del Asistente IA a Google GenAI SDK con soporte de datos de taller.',
+    highlights: [
+      'Rediseño completo del Tablero Kanban de Taller con desplazamiento horizontal fluido y columnas sin compresión',
+      'Nuevos filtros rápidos por etapa del taller (Ingresado, Diagnóstico, En Taller, Repuestos, Listo, Entregados)',
+      'Tarjetas de Órdenes de Trabajo rediseñadas con información clara de equipo, diagnóstico, saldo y acceso directo a WhatsApp',
+      'Botón de creación rápida (+) directa por etapa en el encabezado de cada columna',
+      'Migración de la IA al SDK oficial @google/genai con modelo Gemini 3.8 Flash y tolerancia a picos de demanda',
+      'El Asistente IA ahora responde consultas sobre órdenes de trabajo, equipos en taller, saldos por cobrar y cotizaciones'
+    ]
+  },
   {
     version: '2.1.0',
     date: 'Septiembre 2026',

@@ -7,23 +7,25 @@ import {
   collection, 
   getDocs, 
   addDoc, 
+  setDoc,
   updateDoc, 
   deleteDoc, 
   doc, 
   orderBy, 
   query, 
+  where,
   onSnapshot 
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { WorkOrder, WorkOrderStatus, WorkOrderItem, RepairQuote } from '../types';
 import { inventoryService } from './inventoryService';
 
-const STORAGE_KEY = 'taller_work_orders';
-const REPAIR_QUOTES_KEY = 'taller_repair_quotes';
+const getStorageKey = () => `taller_work_orders_${auth.currentUser?.uid || 'anon'}`;
+const getQuotesStorageKey = () => `taller_repair_quotes_${auth.currentUser?.uid || 'anon'}`;
 
 const getLocalOrders = (): WorkOrder[] => {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(getStorageKey());
     if (!raw) return [];
     return JSON.parse(raw);
   } catch (e) {
@@ -34,7 +36,7 @@ const getLocalOrders = (): WorkOrder[] => {
 
 const setLocalOrders = (orders: WorkOrder[]) => {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
+    localStorage.setItem(getStorageKey(), JSON.stringify(orders));
   } catch (e) {
     console.error('Error saving work orders to localStorage:', e);
   }
@@ -42,7 +44,7 @@ const setLocalOrders = (orders: WorkOrder[]) => {
 
 const getLocalRepairQuotes = (): RepairQuote[] => {
   try {
-    const raw = localStorage.getItem(REPAIR_QUOTES_KEY);
+    const raw = localStorage.getItem(getQuotesStorageKey());
     if (!raw) return [];
     return JSON.parse(raw);
   } catch (e) {
@@ -53,190 +55,42 @@ const getLocalRepairQuotes = (): RepairQuote[] => {
 
 const setLocalRepairQuotes = (quotes: RepairQuote[]) => {
   try {
-    localStorage.setItem(REPAIR_QUOTES_KEY, JSON.stringify(quotes));
+    localStorage.setItem(getQuotesStorageKey(), JSON.stringify(quotes));
   } catch (e) {
     console.error('Error saving repair quotes to localStorage:', e);
   }
 };
 
-// Initial sample data for repair quotes
-const sampleRepairQuotes: RepairQuote[] = [
-  {
-    id: 'cot-101',
-    numero: 'COT-0001',
-    clientNombre: 'Mariano Albornoz',
-    clientTelefono: '1160255767',
-    clientEmail: 'mariano@ejemplo.com',
-    equipo: 'Hidrolavadora Industrial 180 Bar',
-    marcaModelo: 'Kärcher HD 5/11',
-    serieOPatente: 'KH-8821',
-    fallaReportada: 'Pérdida de presión intermitente y bote de agua por la parte inferior del cabezal.',
-    diagnosticoPrevio: 'Válvulas by-pass trabadas con sarro y retén de pistón de cerámica desgastado.',
-    repuestos: [
-      {
-        id: 'rep-cot-1',
-        descripcion: 'Kit retenes de agua y aceite Kärcher HD',
-        cantidad: 1,
-        precioUnitario: 18500,
-        subtotal: 18500
-      },
-      {
-        id: 'rep-cot-2',
-        descripcion: 'Válvula reguladora By-Pass reforzada',
-        cantidad: 1,
-        precioUnitario: 24000,
-        subtotal: 24000
-      }
-    ],
-    costoManoObra: 32000,
-    costoRepuestos: 42500,
-    total: 74500,
-    validezDias: 10,
-    estado: 'pendiente',
-    notas: 'Presupuesto válido por 10 días corridos. Sujeto a disponibilidad de piezas.',
-    fecha: new Date().toISOString(),
-    createdBy: 'admin'
-  }
-];
-
-// Initial sample data for demonstration if empty
-const sampleWorkOrders: WorkOrder[] = [
-  {
-    id: 'ot-1001',
-    numero: 'OT-0001',
-    clientNombre: 'Carlos Gregorutti',
-    clientTelefono: '3435123456',
-    equipo: 'Compresor de Aire 50L',
-    marcaModelo: 'Gamma CP50',
-    serieOPatente: 'SN-99824',
-    fallaReportada: 'No levanta presión y recalienta el cabezal tras 5 minutos de uso.',
-    diagnostico: 'Desgaste severo en láminas de válvula y junta de tapa soplada. Requiere cambio de aros y aceite.',
-    trabajoRealizado: 'Desarme completo, rectificado de plano, cambio de juego de válvulas y cambio de aceite de compresor.',
-    repuestos: [
-      {
-        id: 'rep-1',
-        descripcion: 'Juego de láminas de válvulas Gamma 50L',
-        cantidad: 1,
-        precioUnitario: 14500,
-        subtotal: 14500
-      },
-      {
-        id: 'rep-2',
-        descripcion: 'Aceite sintético para compresor 1L',
-        cantidad: 1,
-        precioUnitario: 8200,
-        subtotal: 8200
-      }
-    ],
-    costoManoObra: 28000,
-    costoRepuestos: 22700,
-    total: 50700,
-    anticipo: 20000,
-    saldoPendiente: 30700,
-    estado: 'listo',
-    prioridad: 'urgente',
-    fechaIngreso: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-    fechaPrometida: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString(),
-    notasInternas: 'Cliente habitual del taller. Prioridad alta.',
-    createdBy: 'admin'
-  },
-  {
-    id: 'ot-1002',
-    numero: 'OT-0002',
-    clientNombre: 'Esteban Martínez',
-    clientTelefono: '3434991122',
-    equipo: 'Generador Eléctrico 3500W',
-    marcaModelo: 'Honda GX200',
-    serieOPatente: 'GX-4412',
-    fallaReportada: 'Tira explosiones por el carburador y se apaga al meterle carga.',
-    diagnostico: 'Chicler sucio con sedimentos de nafta vieja, filtro de aire tapado y bujía en corto.',
-    trabajoRealizado: 'Limpieza ultrasónica de carburador, regulación de válvulas y bujía NGK nueva.',
-    repuestos: [
-      {
-        id: 'rep-3',
-        descripcion: 'Bujía NGK BPR6ES',
-        cantidad: 1,
-        precioUnitario: 6500,
-        subtotal: 6500
-      },
-      {
-        id: 'rep-4',
-        descripcion: 'Filtro de aire esponja Honda',
-        cantidad: 1,
-        precioUnitario: 7800,
-        subtotal: 7800
-      }
-    ],
-    costoManoObra: 22000,
-    costoRepuestos: 14300,
-    total: 36300,
-    anticipo: 15000,
-    saldoPendiente: 21300,
-    estado: 'en_reparacion',
-    prioridad: 'normal',
-    fechaIngreso: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
-    notasInternas: 'Esperar a regular antes de llamar.',
-    createdBy: 'admin'
-  },
-  {
-    id: 'ot-1003',
-    numero: 'OT-0003',
-    clientNombre: 'Agropecuaria El Trébol',
-    clientTelefono: '3436882233',
-    equipo: 'Bomba Centrífuga 2HP',
-    marcaModelo: 'Rotor Pump 200',
-    fallaReportada: 'Hace zumbido fuerte pero el eje no gira. Salta la térmica.',
-    diagnostico: 'Rodamientos delanteros y traseros clavados por humedad. Capacitor desvalorizado.',
-    repuestos: [],
-    costoManoObra: 18000,
-    costoRepuestos: 0,
-    total: 18000,
-    anticipo: 0,
-    saldoPendiente: 18000,
-    estado: 'en_diagnostico',
-    prioridad: 'normal',
-    fechaIngreso: new Date().toISOString(),
-    createdBy: 'admin'
-  }
-];
+// Initial sample data (empty to avoid cross-user pollution)
+const sampleRepairQuotes: RepairQuote[] = [];
+const sampleWorkOrders: WorkOrder[] = [];
 
 export const workOrderService = {
   async getWorkOrders(): Promise<WorkOrder[]> {
-    let local = getLocalOrders();
-    if (local.length === 0) {
-      setLocalOrders(sampleWorkOrders);
-      local = sampleWorkOrders;
-    }
+    if (!auth.currentUser) return [];
+    const uid = auth.currentUser.uid;
+    const local = getLocalOrders();
 
     try {
-      const q = query(collection(db, 'work_orders'), orderBy('fechaIngreso', 'desc'));
+      const q = query(
+        collection(db, 'work_orders'),
+        where('createdBy', '==', uid)
+      );
       const snapshot = await getDocs(q);
-      if (!snapshot.empty) {
-        const remoteOrders = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        })) as WorkOrder[];
+      const remoteOrders = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as WorkOrder[];
 
-        // Merge keeping remote as priority
-        const map = new Map<string, WorkOrder>();
-        remoteOrders.forEach(o => map.set(o.id, o));
-        local.forEach(o => {
-          if (!map.has(o.id)) map.set(o.id, o);
-        });
-
-        const merged = Array.from(map.values()).sort(
-          (a, b) => new Date(b.fechaIngreso).getTime() - new Date(a.fechaIngreso).getTime()
-        );
-        setLocalOrders(merged);
-        return merged;
-      }
+      const sorted = remoteOrders.sort(
+        (a, b) => new Date(b.fechaIngreso || b.createdAt || 0).getTime() - new Date(a.fechaIngreso || a.createdAt || 0).getTime()
+      );
+      setLocalOrders(sorted);
+      return sorted;
     } catch (e) {
       console.warn('Firestore getWorkOrders fallback to local:', e);
+      return local;
     }
-
-    return local.sort(
-      (a, b) => new Date(b.fechaIngreso).getTime() - new Date(a.fechaIngreso).getTime()
-    );
   },
 
   async getWorkOrderById(id: string): Promise<WorkOrder | null> {
@@ -302,7 +156,7 @@ export const workOrderService = {
 
     // Save to Firestore asynchronously
     try {
-      await addDoc(collection(db, 'work_orders'), newOrder);
+      await setDoc(doc(db, 'work_orders', id), newOrder);
     } catch (e) {
       console.warn('Firestore createWorkOrder fallback:', e);
     }
@@ -358,32 +212,60 @@ export const workOrderService = {
   },
 
   async deleteWorkOrder(id: string): Promise<void> {
-    const current = await this.getWorkOrders();
-    const filtered = current.filter(o => o.id !== id);
+    const current = getLocalOrders();
+    const filtered = current.filter(o => o.id !== id && o.numero !== id);
     setLocalOrders(filtered);
 
     try {
       await deleteDoc(doc(db, 'work_orders', id));
     } catch (e) {
-      console.warn('Firestore deleteWorkOrder fallback:', e);
+      console.warn('Firestore direct deleteWorkOrder fallback:', e);
     }
+
+    try {
+      const q = query(collection(db, 'work_orders'), where('id', '==', id));
+      const snap = await getDocs(q);
+      for (const d of snap.docs) {
+        await deleteDoc(doc(db, 'work_orders', d.id));
+      }
+    } catch (e) {
+      console.warn('Firestore query deleteWorkOrder fallback:', e);
+    }
+
+    try {
+      const qNum = query(collection(db, 'work_orders'), where('numero', '==', id));
+      const snapNum = await getDocs(qNum);
+      for (const d of snapNum.docs) {
+        await deleteDoc(doc(db, 'work_orders', d.id));
+      }
+    } catch (e) {}
   },
 
   subscribeToWorkOrders(callback: (orders: WorkOrder[]) => void) {
-    // Initial emit
-    this.getWorkOrders().then(callback);
+    if (!auth.currentUser) {
+      callback([]);
+      return () => {};
+    }
+    const uid = auth.currentUser.uid;
+    const local = getLocalOrders();
+    callback(local);
 
     try {
-      const q = query(collection(db, 'work_orders'), orderBy('fechaIngreso', 'desc'));
+      const q = query(
+        collection(db, 'work_orders'),
+        where('createdBy', '==', uid)
+      );
       return onSnapshot(q, (snapshot) => {
-        if (!snapshot.empty) {
-          const orders = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          })) as WorkOrder[];
-          setLocalOrders(orders);
-          callback(orders);
-        }
+        const orders = snapshot.docs.map(doc => ({
+          ...doc.data(),
+          id: doc.id
+        })) as WorkOrder[];
+
+        const sorted = orders.sort(
+          (a, b) => new Date(b.fechaIngreso || b.createdAt || 0).getTime() - new Date(a.fechaIngreso || a.createdAt || 0).getTime()
+        );
+        setLocalOrders(sorted);
+        callback(sorted);
       }, (err) => {
         console.warn('Snapshot listener for work_orders:', err);
       });
@@ -509,47 +391,59 @@ export const workOrderService = {
    * REPAIR QUOTES (PRESUPUESTOS DE TALLER)
    */
   async getRepairQuotes(): Promise<RepairQuote[]> {
-    let local = getLocalRepairQuotes();
-    if (local.length === 0) {
-      local = sampleRepairQuotes;
-      setLocalRepairQuotes(local);
-    }
+    if (!auth.currentUser) return [];
+    const uid = auth.currentUser.uid;
+    const local = getLocalRepairQuotes();
+
     try {
-      const q = query(collection(db, 'repair_quotes'), orderBy('createdAt', 'desc'));
+      const q = query(
+        collection(db, 'repair_quotes'),
+        where('createdBy', '==', uid)
+      );
       const snap = await getDocs(q);
-      if (!snap.empty) {
-        const firestoreQuotes: RepairQuote[] = snap.docs.map(doc => ({
-          ...(doc.data() as RepairQuote),
-          id: doc.id
-        }));
-        setLocalRepairQuotes(firestoreQuotes);
-        return firestoreQuotes;
-      }
+      const firestoreQuotes: RepairQuote[] = snap.docs.map(doc => ({
+        ...(doc.data() as RepairQuote),
+        id: doc.id
+      }));
+      const sorted = firestoreQuotes.sort((a, b) => {
+        const dateA = new Date(a.createdAt || a.fecha || 0).getTime();
+        const dateB = new Date(b.createdAt || b.fecha || 0).getTime();
+        return dateB - dateA;
+      });
+      setLocalRepairQuotes(sorted);
+      return sorted;
     } catch (e) {
       console.warn('Firestore repair quotes fallback to local:', e);
+      return local;
     }
-    return local;
   },
 
   subscribeToRepairQuotes(callback: (quotes: RepairQuote[]) => void) {
-    let local = getLocalRepairQuotes();
-    if (local.length === 0) {
-      local = sampleRepairQuotes;
-      setLocalRepairQuotes(local);
+    if (!auth.currentUser) {
+      callback([]);
+      return () => {};
     }
+    const uid = auth.currentUser.uid;
+    const local = getLocalRepairQuotes();
     callback(local);
 
     try {
-      const q = query(collection(db, 'repair_quotes'), orderBy('createdAt', 'desc'));
+      const q = query(
+        collection(db, 'repair_quotes'),
+        where('createdBy', '==', uid)
+      );
       const unsubscribe = onSnapshot(q, (snapshot) => {
-        if (!snapshot.empty) {
-          const quotes: RepairQuote[] = snapshot.docs.map(doc => ({
-            ...(doc.data() as RepairQuote),
-            id: doc.id
-          }));
-          setLocalRepairQuotes(quotes);
-          callback(quotes);
-        }
+        const quotes: RepairQuote[] = snapshot.docs.map(doc => ({
+          ...(doc.data() as RepairQuote),
+          id: doc.id
+        }));
+        const sorted = quotes.sort((a, b) => {
+          const dateA = new Date(a.createdAt || a.fecha || 0).getTime();
+          const dateB = new Date(b.createdAt || b.fecha || 0).getTime();
+          return dateB - dateA;
+        });
+        setLocalRepairQuotes(sorted);
+        callback(sorted);
       }, (error) => {
         console.warn('Repair quotes snapshot error, using local:', error);
       });
@@ -610,7 +504,7 @@ export const workOrderService = {
     setLocalRepairQuotes(updated);
 
     try {
-      await addDoc(collection(db, 'repair_quotes'), newQuote);
+      await setDoc(doc(db, 'repair_quotes', id), newQuote);
     } catch (e) {
       console.warn('Firestore createRepairQuote fallback:', e);
     }
@@ -651,15 +545,33 @@ export const workOrderService = {
   },
 
   async deleteRepairQuote(id: string): Promise<void> {
-    const current = await this.getRepairQuotes();
-    const filtered = current.filter(q => q.id !== id);
+    const current = getLocalRepairQuotes();
+    const filtered = current.filter(q => q.id !== id && q.numero !== id);
     setLocalRepairQuotes(filtered);
 
     try {
       await deleteDoc(doc(db, 'repair_quotes', id));
     } catch (e) {
-      console.warn('Firestore deleteRepairQuote fallback:', e);
+      console.warn('Firestore direct deleteRepairQuote fallback:', e);
     }
+
+    try {
+      const q = query(collection(db, 'repair_quotes'), where('id', '==', id));
+      const snap = await getDocs(q);
+      for (const d of snap.docs) {
+        await deleteDoc(doc(db, 'repair_quotes', d.id));
+      }
+    } catch (e) {
+      console.warn('Firestore query deleteRepairQuote fallback:', e);
+    }
+
+    try {
+      const qNum = query(collection(db, 'repair_quotes'), where('numero', '==', id));
+      const snapNum = await getDocs(qNum);
+      for (const d of snapNum.docs) {
+        await deleteDoc(doc(db, 'repair_quotes', d.id));
+      }
+    } catch (e) {}
   },
 
   async convertRepairQuoteToWorkOrder(quote: RepairQuote): Promise<WorkOrder> {
