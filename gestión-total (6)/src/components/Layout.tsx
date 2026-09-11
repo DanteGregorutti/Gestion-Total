@@ -37,7 +37,6 @@ import { cn } from '../utils/cn';
 import { useSettings } from '../contexts/SettingsContext';
 import { NotificationCenter } from './NotificationCenter';
 import { ChatAI } from './ChatAI';
-import { QuickMode } from './QuickMode';
 import { TelegramBotModal } from './telegram/TelegramBotModal';
 import { CompanyBrandingModal } from './CompanyBrandingModal';
 import { telegramBot } from '../services/telegramBotManager';
@@ -54,7 +53,6 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
   const location = useLocation();
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(window.innerWidth > 1024);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
-  const [isQuickModeOpen, setIsQuickModeOpen] = React.useState(false);
   const [isTelegramModalOpen, setIsTelegramModalOpen] = React.useState(false);
   const [isBrandingModalOpen, setIsBrandingModalOpen] = React.useState(false);
   const navigate = useNavigate();
@@ -196,22 +194,6 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
             {isSidebarOpen || isMobileMenuOpen ? <X size={18} /> : <Menu size={18} />}
           </button>
         </div>
-
-        {/* Quick Sale Action Button */}
-        {(isSidebarOpen || isMobileMenuOpen) && (
-          <div className="px-4 pt-3 shrink-0">
-            <button
-              onClick={() => { setIsQuickModeOpen(true); closeMobileMenu(); }}
-              className="w-full flex items-center justify-between p-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl shadow-md shadow-emerald-600/20 active:scale-95 transition-all text-xs font-black tracking-wide"
-            >
-              <div className="flex items-center gap-2">
-                <Zap size={16} className="animate-pulse text-emerald-200" />
-                <span>VENTA RÁPIDA</span>
-              </div>
-              <span className="bg-white/20 px-1.5 py-0.5 rounded text-[10px] font-mono">F2</span>
-            </button>
-          </div>
-        )}
 
         {/* Navigation Sections */}
         <nav className="flex-1 px-3 py-3 space-y-4 w-full overflow-y-auto custom-scrollbar">
@@ -459,6 +441,40 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
           )}
         </button>
 
+        {/* Taller */}
+        <button
+          onClick={() => { navigate('/taller'); closeMobileMenu(); }}
+          className={cn(
+            "flex flex-col items-center justify-center w-12 h-12 rounded-xl transition-all relative_item",
+            location.pathname === '/taller' 
+              ? "text-indigo-600 dark:text-indigo-400 font-bold" 
+              : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400"
+          )}
+        >
+          <Wrench size={18} />
+          <span className="text-[9px] tracking-tight mt-0.5 uppercase">Taller</span>
+          {location.pathname === '/taller' && (
+            <motion.div layoutId="mobileNavActiveIndicator" className="absolute bottom-1 w-1 h-1 bg-indigo-600 dark:bg-indigo-400 rounded-full" />
+          )}
+        </button>
+
+        {/* Ventas */}
+        <button
+          onClick={() => { navigate('/ventas'); closeMobileMenu(); }}
+          className={cn(
+            "flex flex-col items-center justify-center w-12 h-12 rounded-xl transition-all relative_item",
+            location.pathname === '/ventas' 
+              ? "text-indigo-600 dark:text-indigo-400 font-bold" 
+              : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400"
+          )}
+        >
+          <TrendingUp size={18} />
+          <span className="text-[9px] tracking-tight mt-0.5 uppercase">Ventas</span>
+          {location.pathname === '/ventas' && (
+            <motion.div layoutId="mobileNavActiveIndicator" className="absolute bottom-1 w-1 h-1 bg-indigo-600 dark:bg-indigo-400 rounded-full" />
+          )}
+        </button>
+
         {/* Stock */}
         <button
           onClick={() => { navigate('/inventario'); closeMobileMenu(); }}
@@ -472,32 +488,6 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
           <Package size={18} />
           <span className="text-[9px] tracking-tight mt-0.5 uppercase">Stock</span>
           {location.pathname === '/inventario' && (
-            <motion.div layoutId="mobileNavActiveIndicator" className="absolute bottom-1 w-1 h-1 bg-indigo-600 dark:bg-indigo-400 rounded-full" />
-          )}
-        </button>
-
-        {/* Venta Rápida Central Pulse Button */}
-        <button
-          onClick={() => { setIsQuickModeOpen(true); closeMobileMenu(); }}
-          className="flex flex-col items-center justify-center w-14 h-14 bg-gradient-to-tr from-emerald-500 to-teal-500 text-white rounded-full transition-all relative shadow-lg shadow-emerald-500/20 active:scale-90 hover:scale-105 hover:shadow-emerald-500/30 font-black shrink-0 -translate-y-2 border-4 border-gray-50 dark:border-black"
-        >
-          <Zap size={20} className="text-white animate-pulse" />
-          <span className="text-[8px] tracking-tight font-bold uppercase">Vender</span>
-        </button>
-
-        {/* Compras */}
-        <button
-          onClick={() => { navigate('/compras'); closeMobileMenu(); }}
-          className={cn(
-            "flex flex-col items-center justify-center w-12 h-12 rounded-xl transition-all relative_item",
-            location.pathname === '/compras' 
-              ? "text-indigo-600 dark:text-indigo-400 font-bold" 
-              : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400"
-          )}
-        >
-          <ShoppingCart size={18} />
-          <span className="text-[9px] tracking-tight mt-0.5 uppercase">Compras</span>
-          {location.pathname === '/compras' && (
             <motion.div layoutId="mobileNavActiveIndicator" className="absolute bottom-1 w-1 h-1 bg-indigo-600 dark:bg-indigo-400 rounded-full" />
           )}
         </button>
@@ -519,12 +509,6 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
           )}
         </button>
       </div>
-
-      <AnimatePresence>
-        {isQuickModeOpen && (
-          <QuickMode onClose={() => setIsQuickModeOpen(false)} />
-        )}
-      </AnimatePresence>
 
       <TelegramBotModal 
         isOpen={isTelegramModalOpen}

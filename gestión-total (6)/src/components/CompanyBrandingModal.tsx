@@ -21,6 +21,7 @@ import {
 import { Button } from './ui';
 import { useSettings, CompanyProfile } from '../contexts/SettingsContext';
 import { toast } from 'sonner';
+import { compressImageFile } from '../utils/imageCompressor';
 
 interface CompanyBrandingModalProps {
   isOpen: boolean;
@@ -47,7 +48,7 @@ export function CompanyBrandingModal({ isOpen, onClose }: CompanyBrandingModalPr
 
   if (!isOpen) return null;
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -56,21 +57,19 @@ export function CompanyBrandingModal({ isOpen, onClose }: CompanyBrandingModalPr
       return;
     }
 
-    if (file.size > 2.5 * 1024 * 1024) {
-      toast.error('La imagen no debe superar los 2.5MB para garantizar impresiones y carga rápidas');
-      return;
+    try {
+      toast.info('Optimizando imagen...');
+      const compressedDataUrl = await compressImageFile(file, {
+        maxWidth: 360,
+        maxHeight: 360,
+        quality: 0.85
+      });
+      setForm(prev => ({ ...prev, logoUrl: compressedDataUrl }));
+      toast.success('Logotipo optimizado y cargado correctamente.');
+    } catch (err) {
+      console.error(err);
+      toast.error('Error al procesar y optimizar la imagen');
     }
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const base64 = event.target?.result as string;
-      setForm(prev => ({ ...prev, logoUrl: base64 }));
-      toast.success('Logotipo cargado correctamente. Haz clic en "Guardar y Aplicar" para confirmar');
-    };
-    reader.onerror = () => {
-      toast.error('Error al procesar la imagen');
-    };
-    reader.readAsDataURL(file);
   };
 
   const handleRemoveLogo = () => {

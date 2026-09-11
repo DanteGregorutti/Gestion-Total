@@ -481,7 +481,9 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   });
 
   useEffect(() => {
-    localStorage.setItem('theme', theme);
+    try {
+      localStorage.setItem('theme', theme);
+    } catch {}
     const root = document.documentElement;
     
     if (theme === 'dark') {
@@ -492,20 +494,40 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   }, [theme]);
 
   useEffect(() => {
-    localStorage.setItem('interface_preferences', JSON.stringify(preferences));
+    try {
+      localStorage.setItem('interface_preferences', JSON.stringify(preferences));
+    } catch {}
   }, [preferences]);
 
   const [mobileCompactMode, setMobileCompactMode] = useState<boolean>(() => {
-    const saved = localStorage.getItem('mobile_compact_mode');
-    if (saved !== null) {
-      return saved === 'true';
-    }
+    try {
+      const saved = localStorage.getItem('mobile_compact_mode');
+      if (saved !== null) {
+        return saved === 'true';
+      }
+    } catch {}
     return window.innerWidth < 1024;
   });
 
   useEffect(() => {
-    localStorage.setItem('mobile_compact_mode', String(mobileCompactMode));
+    try {
+      localStorage.setItem('mobile_compact_mode', String(mobileCompactMode));
+    } catch {}
   }, [mobileCompactMode]);
+
+  const safePersistProfile = (key: string, profile: CompanyProfile) => {
+    try {
+      localStorage.setItem(key, JSON.stringify(profile));
+    } catch (err) {
+      console.warn(`LocalStorage quota exceeded saving ${key}. Falling back to saving without large logo.`, err);
+      try {
+        const { logoUrl, ...rest } = profile;
+        localStorage.setItem(key, JSON.stringify(rest));
+      } catch (fallbackErr) {
+        console.warn(`Could not save profile to ${key} even without logo.`, fallbackErr);
+      }
+    }
+  };
 
   const defaultProfile: CompanyProfile = {
     name: 'PulseStore',
@@ -534,12 +556,12 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!user?.uid) return;
     const userKey = `company_profile_${user.uid}`;
-    const savedLocal = localStorage.getItem(userKey);
-    if (savedLocal) {
-      try {
+    try {
+      const savedLocal = localStorage.getItem(userKey);
+      if (savedLocal) {
         setCompanyProfile(prev => ({ ...prev, ...JSON.parse(savedLocal) }));
-      } catch (e) {}
-    }
+      }
+    } catch (e) {}
 
     const loadFromFirestore = async () => {
       try {
@@ -549,8 +571,8 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
           const remote = snap.data().companyProfile as Partial<CompanyProfile>;
           setCompanyProfile(prev => {
             const merged = { ...prev, ...remote };
-            localStorage.setItem(userKey, JSON.stringify(merged));
-            localStorage.setItem('company_profile', JSON.stringify(merged));
+            safePersistProfile(userKey, merged);
+            safePersistProfile('company_profile', merged);
             return merged;
           });
         }
@@ -565,12 +587,10 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     let nextState: CompanyProfile = { ...companyProfile, ...partial };
     setCompanyProfile(prev => {
       nextState = { ...prev, ...partial };
-      try {
-        if (user?.uid) {
-          localStorage.setItem(`company_profile_${user.uid}`, JSON.stringify(nextState));
-        }
-        localStorage.setItem('company_profile', JSON.stringify(nextState));
-      } catch (e) {}
+      if (user?.uid) {
+        safePersistProfile(`company_profile_${user.uid}`, nextState);
+      }
+      safePersistProfile('company_profile', nextState);
       return nextState;
     });
 

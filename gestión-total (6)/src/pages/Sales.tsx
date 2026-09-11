@@ -41,7 +41,6 @@ import { toast } from 'sonner';
 import { useSettings } from '../contexts/SettingsContext';
 import { useProducts } from '../contexts/ProductsContext';
 import { motion, AnimatePresence } from 'motion/react';
-import { QuickMode } from '../components/QuickMode';
 import { ReceiptModal } from '../components/ReceiptModal';
 import { NewQuoteModal } from '../components/NewQuoteModal';
 import { QuotesView } from '../components/QuotesView';
@@ -71,7 +70,6 @@ export default function Sales() {
   const [isSaveComboModalOpen, setIsSaveComboModalOpen] = React.useState(false);
   const [comboName, setComboName] = React.useState('');
   const [isComboSale, setIsComboSale] = React.useState(false);
-  const [isLocalQuickModeOpen, setIsLocalQuickModeOpen] = React.useState(false);
   const [comboSaleName, setComboSaleName] = React.useState('');
   const [filters, setFilters] = React.useState({
     dateRange: 'all' as 'all' | '7' | '14' | '30' | 'custom',
@@ -669,11 +667,7 @@ export default function Sales() {
 
           <Button 
             onClick={() => {
-              if (mobileCompactMode) {
-                setIsLocalQuickModeOpen(true);
-              } else {
-                setIsAddModalOpen(true);
-              }
+              setIsAddModalOpen(true);
             }}
             className="rounded-xl shadow-lg shadow-indigo-200 dark:shadow-none font-bold"
           >
@@ -781,11 +775,7 @@ export default function Sales() {
         </div>
         <Button 
           onClick={() => {
-            if (mobileCompactMode) {
-              setIsLocalQuickModeOpen(true);
-            } else {
-              setIsAddModalOpen(true);
-            }
+            setIsAddModalOpen(true);
           }}
           className="rounded-xl shadow-lg shadow-indigo-200 dark:shadow-none"
         >
@@ -1753,12 +1743,6 @@ export default function Sales() {
           setIsReceiptModalOpen(true);
         }}
       />
-
-      <AnimatePresence>
-        {isLocalQuickModeOpen && (
-          <QuickMode onClose={() => { setIsLocalQuickModeOpen(false); refreshData(); }} />
-        )}
-      </AnimatePresence>
     </div>
   );
 }

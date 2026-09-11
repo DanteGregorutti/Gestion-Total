@@ -23,6 +23,7 @@ import {
 import { Button } from '../ui';
 import { useSettings, CompanyProfile } from '../../contexts/SettingsContext';
 import { toast } from 'sonner';
+import { compressImageFile } from '../../utils/imageCompressor';
 
 export function CompanyBrandingSection() {
   const { companyProfile, updateCompanyProfile } = useSettings();
@@ -57,7 +58,7 @@ export function CompanyBrandingSection() {
     });
   }, [companyProfile]);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -66,21 +67,19 @@ export function CompanyBrandingSection() {
       return;
     }
 
-    if (file.size > 2.5 * 1024 * 1024) {
-      toast.error('La imagen no debe superar los 2.5MB');
-      return;
+    try {
+      toast.info('Optimizando imagen...');
+      const compressedDataUrl = await compressImageFile(file, {
+        maxWidth: 360,
+        maxHeight: 360,
+        quality: 0.85
+      });
+      setForm(prev => ({ ...prev, logoUrl: compressedDataUrl }));
+      toast.success('¡Logotipo optimizado y cargado! Recuerda hacer clic en "Guardar Cambios de Marca".');
+    } catch (err) {
+      console.error(err);
+      toast.error('Error al optimizar la imagen');
     }
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const base64 = event.target?.result as string;
-      setForm(prev => ({ ...prev, logoUrl: base64 }));
-      toast.success('¡Logotipo cargado! Recuerda hacer clic en "Guardar Cambios de Marca".');
-    };
-    reader.onerror = () => {
-      toast.error('Error al procesar la imagen');
-    };
-    reader.readAsDataURL(file);
   };
 
   const handleRemoveLogo = () => {
