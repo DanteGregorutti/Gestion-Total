@@ -218,7 +218,14 @@ export default function Sales() {
       setSales(s);
       setClients(c);
       setCombos(co);
-      setQuotes(q);
+      setQuotes(prev => {
+        const map = new Map<string, Quote>();
+        (q || []).forEach(item => map.set(item.id, item));
+        prev.forEach(item => {
+          if (!map.has(item.id)) map.set(item.id, item);
+        });
+        return Array.from(map.values());
+      });
     } catch (error) {
       console.error('Error refreshing data:', error);
     } finally {
@@ -233,7 +240,6 @@ export default function Sales() {
         setQuotes(prev => [created, ...prev.filter(q => q.id !== created.id)]);
       }
       setActiveTab('cotizaciones');
-      refreshData();
       return created;
     } catch (e) {
       console.error('Error saving quote:', e);

@@ -2157,13 +2157,52 @@ export const inventoryService = {
 
   // Quotes / Presupuestos (Documento no válido como factura)
   getQuotes: async () => {
-    if (!auth.currentUser) return [];
-    const cacheKey = `cached_quotes_${auth.currentUser.uid}`;
+    const userId = auth.currentUser?.uid || 'user_offline';
+    const cacheKey = `cached_quotes_${userId}`;
     let localQuotes: Quote[] = [];
+    
+    // 1. Gather all local cached quotes
+    const candidateKeys = [cacheKey, 'cached_quotes_user_offline', 'cached_quotes_default'];
+    for (const key of candidateKeys) {
+      try {
+        const cached = localStorage.getItem(key);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed)) {
+            const map = new Map<string, Quote>();
+            localQuotes.forEach(q => map.set(q.id, q));
+            parsed.forEach(q => {
+              if (q && q.id) map.set(q.id, q);
+            });
+            localQuotes = Array.from(map.values());
+          }
+        }
+      } catch (e) {}
+    }
+
+    // 2. Fetch from Supabase service if available
     try {
-      const cached = localStorage.getItem(cacheKey);
-      if (cached) localQuotes = JSON.parse(cached);
-    } catch (e) {}
+      const sbQuotes = await supabaseService.getQuotes();
+      if (sbQuotes && sbQuotes.length > 0) {
+        const map = new Map<string, Quote>();
+        localQuotes.forEach(q => map.set(q.id, q));
+        sbQuotes.forEach(q => {
+          if (q && q.id) map.set(q.id, q);
+        });
+        localQuotes = Array.from(map.values());
+      }
+    } catch (e) {
+      console.warn('Supabase getQuotes fallback:', e);
+    }
+
+    // If not authenticated in Firebase, return merged local & Supabase quotes
+    if (!auth.currentUser) {
+      return localQuotes.sort((a, b) => {
+        const dateA = new Date((a.fecha as any)?.toDate ? (a.fecha as any).toDate() : (a.fecha || 0)).getTime();
+        const dateB = new Date((b.fecha as any)?.toDate ? (b.fecha as any).toDate() : (b.fecha || 0)).getTime();
+        return dateB - dateA;
+      });
+    }
 
     const path = 'quotes';
 
@@ -2176,7 +2215,12 @@ export const inventoryService = {
       const firestoreQuotes = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() } as Quote));
 
-      const merged = firestoreQuotes.sort((a, b) => {
+      // Merge Firestore quotes with local quotes (never overwrite local quotes that are pending sync)
+      const map = new Map<string, Quote>();
+      localQuotes.forEach(q => map.set(q.id, q));
+      firestoreQuotes.forEach(q => map.set(q.id, q));
+
+      const merged = Array.from(map.values()).sort((a, b) => {
         const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
         const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
         return dateB.getTime() - dateA.getTime();
@@ -2184,35 +2228,81 @@ export const inventoryService = {
 
       try {
         localStorage.setItem(cacheKey, JSON.stringify(merged));
+        localStorage.setItem('cached_quotes_default', JSON.stringify(merged));
       } catch (e) {}
       return merged;
     } catch (error) {
       console.warn('Firestore quote fetch fallback to local storage:', error);
-      return localQuotes;
+      return localQuotes.sort((a, b) => {
+        const dateA = new Date((a.fecha as any)?.toDate ? (a.fecha as any).toDate() : (a.fecha || 0)).getTime();
+        const dateB = new Date((b.fecha as any)?.toDate ? (b.fecha as any).toDate() : (b.fecha || 0)).getTime();
+        return dateB - dateA;
+      });
     }
   },
 
   subscribeToQuotes: (callback: (quotes: Quote[]) => void) => {
+    const userId = auth.currentUser?.uid || 'user_offline';
+    const cacheKey = `cached_quotes_${userId}`;
+
+    // Immediately deliver cached quotes so UI renders without delay
+    const initialList: Quote[] = [];
+    const map = new Map<string, Quote>();
+    for (const key of [cacheKey, 'cached_quotes_user_offline', 'cached_quotes_default']) {
+      try {
+        const cached = localStorage.getItem(key);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed)) {
+            parsed.forEach(q => { if (q && q.id) map.set(q.id, q); });
+          }
+        }
+      } catch (e) {}
+    }
+    if (map.size > 0) {
+      const sorted = Array.from(map.values()).sort((a, b) => {
+        const dateA = new Date((a.fecha as any)?.toDate ? (a.fecha as any).toDate() : (a.fecha || 0)).getTime();
+        const dateB = new Date((b.fecha as any)?.toDate ? (b.fecha as any).toDate() : (b.fecha || 0)).getTime();
+        return dateB - dateA;
+      });
+      callback(sorted);
+    }
+
     if (!auth.currentUser) {
-      callback([]);
       return () => {};
     }
+
     const path = 'quotes';
-    const cacheKey = `cached_quotes_${auth.currentUser.uid}`;
     const q = query(
       collection(db, path),
       where('createdBy', '==', auth.currentUser.uid)
     );
     return onSnapshot(q, (snapshot) => {
-      const quotes = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Quote))
-        .sort((a, b) => {
-          const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
-          const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
-          return dateB.getTime() - dateA.getTime();
-        });
+      const firestoreQuotes = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Quote));
+
+      // Read local cache to retain any unsynced local quotes
+      let localQuotes: Quote[] = [];
+      try {
+        const cached = localStorage.getItem(cacheKey) || localStorage.getItem('cached_quotes_default');
+        if (cached) localQuotes = JSON.parse(cached);
+      } catch (e) {}
+
+      const mergedMap = new Map<string, Quote>();
+      localQuotes.forEach(q => {
+        if (q.id.startsWith('local_')) mergedMap.set(q.id, q);
+      });
+      firestoreQuotes.forEach(q => mergedMap.set(q.id, q));
+
+      const quotes = Array.from(mergedMap.values()).sort((a, b) => {
+        const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
+        const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
+        return dateB.getTime() - dateA.getTime();
+      });
+
       try {
         localStorage.setItem(cacheKey, JSON.stringify(quotes));
+        localStorage.setItem('cached_quotes_default', JSON.stringify(quotes));
       } catch (e) {}
       callback(quotes);
     }, (error) => {
@@ -2221,9 +2311,9 @@ export const inventoryService = {
   },
 
   createQuote: async (quoteData: Omit<Quote, 'id' | 'fecha' | 'createdBy' | 'numero'> & { numero?: string }) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
+    const userId = auth.currentUser?.uid || 'user_offline';
     const path = 'quotes';
-    const cacheKey = `cached_quotes_${auth.currentUser.uid}`;
+    const cacheKey = `cached_quotes_${userId}`;
     
     // Generate clean quote number e.g. COT-1042
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
@@ -2237,60 +2327,71 @@ export const inventoryService = {
       validezFecha,
       estado: quoteData.estado || 'pendiente',
       fecha: new Date().toISOString(),
-      createdBy: auth.currentUser.uid
+      createdBy: userId
     };
 
-    // Persist to Supabase
+    // Helper to persist into all local caches
+    const saveToCaches = (quote: Quote) => {
+      const keys = [cacheKey, 'cached_quotes_user_offline', 'cached_quotes_default'];
+      for (const k of keys) {
+        try {
+          const cached = localStorage.getItem(k);
+          const list: Quote[] = cached ? JSON.parse(cached) : [];
+          const updated = [quote, ...list.filter(q => q.id !== quote.id)];
+          localStorage.setItem(k, JSON.stringify(updated));
+        } catch (e) {}
+      }
+    };
+
+    // First, persist to Supabase if available
     try {
       await supabaseService.createQuote(newQuote);
     } catch (e) {
       console.warn('Supabase createQuote fallback:', e);
     }
 
-    try {
-      const docRef = await addDoc(collection(db, path), sanitizeData(newQuote));
-      const created: Quote = { id: docRef.id, ...newQuote };
-      
-      // Update local storage immediately
+    // If authenticated in Firebase, attempt Firestore persistence
+    if (auth.currentUser) {
       try {
-        const cached = localStorage.getItem(cacheKey);
-        const list: Quote[] = cached ? JSON.parse(cached) : [];
-        const updated = [created, ...list.filter(q => q.id !== created.id)];
-        localStorage.setItem(cacheKey, JSON.stringify(updated));
-      } catch (e) {}
-      
-      return created;
-    } catch (error) {
-      console.warn('Fallback: saving quote locally due to firestore error:', error);
-      const localId = `local_quote_${Date.now()}`;
-      const created: Quote = { id: localId, ...newQuote };
-      try {
-        const cached = localStorage.getItem(cacheKey);
-        const list: Quote[] = cached ? JSON.parse(cached) : [];
-        const updated = [created, ...list.filter(q => q.id !== created.id)];
-        localStorage.setItem(cacheKey, JSON.stringify(updated));
-      } catch (e) {}
-      return created;
+        const docRef = await addDoc(collection(db, path), sanitizeData(newQuote));
+        const created: Quote = { id: docRef.id, ...newQuote };
+        saveToCaches(created);
+        return created;
+      } catch (error) {
+        console.warn('Fallback: saving quote locally due to firestore error:', error);
+      }
     }
+
+    // Local / Offline fallback (always succeeds)
+    const localId = `local_quote_${Date.now()}`;
+    const created: Quote = { id: localId, ...newQuote };
+    saveToCaches(created);
+    return created;
   },
 
   updateQuote: async (id: string, updates: Partial<Quote>) => {
     try {
-      // If needed, update in supabase
+      if ('updateQuote' in supabaseService) {
+        await (supabaseService as any).updateQuote(id, updates);
+      }
     } catch (e) {}
 
     const path = `quotes/${id}`;
-    const cacheKey = auth.currentUser ? `cached_quotes_${auth.currentUser.uid}` : 'cached_quotes_default';
+    const userId = auth.currentUser?.uid || 'user_offline';
+    const cacheKey = `cached_quotes_${userId}`;
 
-    // Update local cache
-    try {
-      const cached = localStorage.getItem(cacheKey);
-      if (cached) {
-        const list: Quote[] = JSON.parse(cached);
-        const updatedList = list.map(q => q.id === id ? { ...q, ...updates } : q);
-        localStorage.setItem(cacheKey, JSON.stringify(updatedList));
-      }
-    } catch (e) {}
+    // Update all local caches
+    const keys = [cacheKey, 'cached_quotes_user_offline', 'cached_quotes_default'];
+    for (const k of keys) {
+      try {
+        const cached = localStorage.getItem(k);
+        if (cached) {
+          const list: Quote[] = JSON.parse(cached);
+          const updatedList = list.map(q => q.id === id ? { ...q, ...updates } : q);
+          localStorage.setItem(k, JSON.stringify(updatedList));
+        }
+      } catch (e) {}
+    }
 
     if (auth.currentUser && !id.startsWith('local_')) {
       try {
@@ -2309,17 +2410,21 @@ export const inventoryService = {
     }
 
     const path = `quotes/${id}`;
-    const cacheKey = auth.currentUser ? `cached_quotes_${auth.currentUser.uid}` : 'cached_quotes_default';
+    const userId = auth.currentUser?.uid || 'user_offline';
+    const cacheKey = `cached_quotes_${userId}`;
 
-    // Update local cache
-    try {
-      const cached = localStorage.getItem(cacheKey);
-      if (cached) {
-        const list: Quote[] = JSON.parse(cached);
-        const filtered = list.filter(q => q.id !== id);
-        localStorage.setItem(cacheKey, JSON.stringify(filtered));
-      }
-    } catch (e) {}
+    // Update all local caches
+    const keys = [cacheKey, 'cached_quotes_user_offline', 'cached_quotes_default'];
+    for (const k of keys) {
+      try {
+        const cached = localStorage.getItem(k);
+        if (cached) {
+          const list: Quote[] = JSON.parse(cached);
+          const filtered = list.filter(q => q.id !== id);
+          localStorage.setItem(k, JSON.stringify(filtered));
+        }
+      } catch (e) {}
+    }
 
     if (auth.currentUser && !id.startsWith('local_')) {
       try {
@@ -2331,8 +2436,6 @@ export const inventoryService = {
   },
 
   convertQuoteToSale: async (quote: Quote) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    
     // Register items as real sales which reduces inventory stock
     const salesToRegister = quote.items.map(item => ({
       productId: item.productId,

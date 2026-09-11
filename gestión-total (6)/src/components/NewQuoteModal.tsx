@@ -14,7 +14,9 @@ import {
   AlertCircle,
   X,
   Calculator,
-  Tag
+  Tag,
+  PenLine,
+  Layers
 } from 'lucide-react';
 import { Product, Quote, QuoteItem } from '../types';
 import { Button, Input } from './ui';
@@ -51,6 +53,10 @@ export function NewQuoteModal({
 
   // Cart / Items in Quote
   const [items, setItems] = useState<QuoteItem[]>([]);
+
+  // Item entry mode: 'catalog' vs 'manual'
+  const [entryMode, setEntryMode] = useState<'catalog' | 'manual'>('catalog');
+  const [manualDescription, setManualDescription] = useState('');
 
   // Price Mode: 'unit' (price per unit) vs 'total' (total price for the batch/item)
   const [priceMode, setPriceMode] = useState<'unit' | 'total'>('unit');
@@ -137,6 +143,8 @@ export function NewQuoteModal({
     setItems([]);
     setSelectedBaseProduct(null);
     setPriceMode('unit');
+    setEntryMode('catalog');
+    setManualDescription('');
     setCurrentItem({
       productId: '',
       productNombre: '',
@@ -145,6 +153,14 @@ export function NewQuoteModal({
       total: 0
     });
   };
+
+  const hasItemsReady = useMemo(() => {
+    if (items.length > 0) return true;
+    const desc = (entryMode === 'manual' ? manualDescription : currentItem.productNombre).trim();
+    const hasProduct = !!currentItem.productId || !!desc;
+    const hasPrice = currentItem.total > 0 || currentItem.precioUnitario > 0;
+    return hasProduct && hasPrice;
+  }, [items, currentItem, entryMode, manualDescription]);
 
   React.useEffect(() => {
     if (isOpen) {
@@ -206,8 +222,13 @@ export function NewQuoteModal({
   };
 
   const handleAddItem = () => {
-    if (!currentItem.productId) {
-      toast.error('Selecciona un producto o variante');
+    const itemName = (entryMode === 'manual' 
+      ? manualDescription 
+      : (currentItem.productNombre || selectedBaseProduct?.representative.descripcion || '')
+    ).trim();
+
+    if (!currentItem.productId && !itemName) {
+      toast.error(entryMode === 'manual' ? 'Escribe una descripción del artículo o servicio' : 'Selecciona un producto o variante');
       return;
     }
     if (currentItem.cantidad <= 0) {
@@ -228,17 +249,18 @@ export function NewQuoteModal({
       : currentItem.precioUnitario;
 
     const newItem: QuoteItem = {
-      productId: currentItem.productId,
-      productNombre: currentItem.productNombre,
+      productId: currentItem.productId || `manual_${Date.now()}`,
+      productNombre: itemName || 'Artículo / Servicio',
       variantId: currentItem.variantId,
       variantNombre: currentItem.variantNombre,
-      cantidad: currentItem.cantidad,
+      cantidad: currentItem.cantidad > 0 ? currentItem.cantidad : 1,
       precio: unitPrice,
       total: calculatedTotal
     };
 
     setItems([...items, newItem]);
     setSelectedBaseProduct(null);
+    setManualDescription('');
     setCurrentItem({
       productId: '',
       productNombre: '',
@@ -254,19 +276,49 @@ export function NewQuoteModal({
   };
 
   const buildQuotePayload = () => {
-    if (items.length === 0) {
-      toast.error('Agrega al menos un artículo a la cotización');
+    let finalItems = [...items];
+
+    // If user typed or picked an item but forgot to click "+ Agregar", automatically include it!
+    const activeItemName = (entryMode === 'manual' 
+      ? manualDescription 
+      : (currentItem.productNombre || selectedBaseProduct?.representative.descripcion || '')
+    ).trim();
+    const hasValidPrice = currentItem.total > 0 || currentItem.precioUnitario > 0;
+
+    if ((currentItem.productId || activeItemName) && hasValidPrice) {
+      const calculatedTotal = currentItem.total > 0 
+        ? currentItem.total 
+        : (currentItem.cantidad * currentItem.precioUnitario);
+      const unitPrice = currentItem.cantidad > 0 
+        ? Math.round(calculatedTotal / currentItem.cantidad) 
+        : currentItem.precioUnitario;
+
+      finalItems.push({
+        productId: currentItem.productId || `manual_${Date.now()}`,
+        productNombre: activeItemName || 'Artículo / Servicio',
+        variantId: currentItem.variantId,
+        variantNombre: currentItem.variantNombre,
+        cantidad: currentItem.cantidad > 0 ? currentItem.cantidad : 1,
+        precio: unitPrice,
+        total: calculatedTotal
+      });
+    }
+
+    if (finalItems.length === 0) {
+      toast.error('Agrega al menos un artículo o servicio a la cotización');
       return null;
     }
 
+    const calculatedSubtotal = finalItems.reduce((acc, it) => acc + (Number(it.total) || 0), 0);
+    const calculatedTotal = Math.max(0, calculatedSubtotal - discountAmount);
     const displayName = clientReference.trim() || 'Consumidor Final';
 
     return {
       clientNombre: displayName,
-      items,
-      subtotal,
+      items: finalItems,
+      subtotal: calculatedSubtotal,
       descuento: discountAmount,
-      total: finalTotal,
+      total: calculatedTotal,
       validezDias: Number(validityDays) || 7,
       estado: 'pendiente' as const,
       notas: notes.trim()
@@ -300,9 +352,9 @@ export function NewQuoteModal({
       toast.success(`Comprobante ${quoteNum} guardado con éxito`);
       resetForm();
       onClose();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error al guardar presupuesto:', error);
-      toast.error('Error al guardar la cotización');
+      toast.error(error?.message || 'Error al guardar la cotización');
     } finally {
       setIsSubmitting(false);
     }
@@ -336,15 +388,16 @@ export function NewQuoteModal({
       }
 
       const savedQuote = await onSaveQuote(payload);
-      if (savedQuote && typeof savedQuote === 'object' && 'numero' in savedQuote) {
-        toast.success(`Comprobante ${(savedQuote as Quote).numero} guardado con éxito`);
-        onSaveAndOpenReceipt(savedQuote as Quote);
+      if (savedQuote && typeof savedQuote === 'object') {
+        const quoteObj = savedQuote as Quote;
+        toast.success(`Comprobante ${quoteObj.numero || 'emitido'} guardado con éxito`);
+        onSaveAndOpenReceipt(quoteObj);
       }
       resetForm();
       onClose();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error al generar comprobante:', error);
-      toast.error('Error al generar la cotización');
+      toast.error(error?.message || 'Error al generar la cotización');
     } finally {
       setIsSubmitting(false);
     }
@@ -426,103 +479,164 @@ export function NewQuoteModal({
 
         {/* Product Selection Section */}
         <div className="p-4 sm:p-5 border-2 border-dashed border-gray-200 dark:border-gray-800 rounded-3xl space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Package size={16} className="text-indigo-600 dark:text-indigo-400" />
               <h4 className="text-xs font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest">
                 Agregar Artículos al Presupuesto
               </h4>
             </div>
-            {selectedBaseProduct && (
+
+            {/* Entry Mode Toggle: Catalog vs Manual Service */}
+            <div className="flex items-center gap-1 p-1 bg-gray-100 dark:bg-gray-800 rounded-xl">
               <button
                 type="button"
-                onClick={() => setSelectedBaseProduct(null)}
-                className="text-xs font-bold text-gray-400 hover:text-rose-500 flex items-center gap-1 transition-colors"
+                onClick={() => {
+                  setEntryMode('catalog');
+                  setManualDescription('');
+                }}
+                className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all",
+                  entryMode === 'catalog'
+                    ? "bg-white dark:bg-gray-900 text-indigo-600 dark:text-indigo-400 shadow-sm"
+                    : "text-gray-500 hover:text-gray-900 dark:hover:text-white"
+                )}
               >
-                <X size={14} /> Cambiar Producto
+                <Layers size={13} />
+                <span>Desde Catálogo</span>
               </button>
-            )}
+              <button
+                type="button"
+                onClick={() => {
+                  setEntryMode('manual');
+                  setSelectedBaseProduct(null);
+                  setCurrentItem({
+                    productId: '',
+                    productNombre: '',
+                    cantidad: 1,
+                    precioUnitario: 0,
+                    total: 0
+                  });
+                }}
+                className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all",
+                  entryMode === 'manual'
+                    ? "bg-white dark:bg-gray-900 text-indigo-600 dark:text-indigo-400 shadow-sm"
+                    : "text-gray-500 hover:text-gray-900 dark:hover:text-white"
+                )}
+              >
+                <PenLine size={13} />
+                <span>Concepto Libre / Servicio</span>
+              </button>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start">
-            {/* Base Product Search */}
-            <div className="md:col-span-5">
-              <ProductSearch 
-                label="Buscar Producto / Código"
-                products={representativeProducts}
-                selectedProductId={selectedBaseProduct?.representative.id}
-                onSelect={(p) => {
-                  const group = groupedProducts.find(g => 
-                    g.codigo === p.codigo && 
-                    g.descripcion === p.descripcion && 
-                    g.procedencia === p.procedencia
-                  );
-                  setSelectedBaseProduct(group || null);
-                  setCurrentItem({
-                    productId: p.id,
-                    productNombre: p.descripcion || p.codigo,
-                    cantidad: 1,
-                    precioUnitario: p.precio || 0,
-                    total: p.precio || 0
-                  });
+          {entryMode === 'catalog' ? (
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start">
+              {/* Base Product Search */}
+              <div className="md:col-span-5">
+                <ProductSearch 
+                  label="Buscar Producto / Código"
+                  products={representativeProducts}
+                  selectedProductId={selectedBaseProduct?.representative.id}
+                  onSelect={(p) => {
+                    const group = groupedProducts.find(g => 
+                      g.codigo === p.codigo && 
+                      g.descripcion === p.descripcion && 
+                      g.procedencia === p.procedencia
+                    );
+                    setSelectedBaseProduct(group || null);
+                    setCurrentItem({
+                      productId: p.id,
+                      productNombre: p.descripcion || p.codigo,
+                      cantidad: 1,
+                      precioUnitario: p.precio || 0,
+                      total: p.precio || 0
+                    });
+                  }}
+                />
+              </div>
+
+              {/* Variant / Talle selection */}
+              {selectedBaseProduct && (
+                <div className="md:col-span-7 space-y-2 animate-in fade-in duration-200">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest block">
+                      Seleccionar Variante / Talle:
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedBaseProduct(null)}
+                      className="text-xs font-bold text-gray-400 hover:text-rose-500 flex items-center gap-1 transition-colors"
+                    >
+                      <X size={14} /> Cambiar
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-40 overflow-y-auto pr-1">
+                    {selectedBaseProduct.originalProducts.map((variant) => (
+                      <button
+                        key={variant.id}
+                        type="button"
+                        onClick={() => {
+                          const unitPrice = variant.precio || 0;
+                          setCurrentItem({
+                            ...currentItem,
+                            productId: variant.id,
+                            productNombre: `${variant.descripcion || variant.codigo} (${variant.talle || 'Único'})`,
+                            variantId: variant.id,
+                            variantNombre: variant.talle || 'Único',
+                            precioUnitario: unitPrice,
+                            total: currentItem.cantidad * unitPrice
+                          });
+                        }}
+                        className={cn(
+                          "p-2.5 rounded-xl border text-left text-xs transition-all",
+                          currentItem.productId === variant.id
+                            ? "bg-indigo-600 border-indigo-600 text-white shadow-sm"
+                            : "bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 hover:border-indigo-300"
+                        )}
+                      >
+                        <div className="font-bold flex items-center justify-between">
+                          <span>{variant.talle || 'Único'}</span>
+                          <span className={cn(
+                            "text-[10px]",
+                            currentItem.productId === variant.id ? "text-indigo-100" : "text-indigo-600 font-black"
+                          )}>
+                            ${variant.precio?.toLocaleString('es-AR')}
+                          </span>
+                        </div>
+                        <span className={cn(
+                          "text-[9px] block",
+                          currentItem.productId === variant.id ? "text-indigo-200" : "text-gray-400"
+                        )}>
+                          Stock: {variant.cantidad}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <Input
+                label="Descripción del Artículo o Servicio"
+                placeholder="Ej: Cambio de pantalla iPhone 13, Mano de obra técnica, Funda personalizada..."
+                value={manualDescription}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setManualDescription(val);
+                  setCurrentItem(prev => ({
+                    ...prev,
+                    productNombre: val
+                  }));
                 }}
               />
             </div>
-
-            {/* Variant / Talle selection */}
-            {selectedBaseProduct && (
-              <div className="md:col-span-7 space-y-2 animate-in fade-in duration-200">
-                <label className="text-xs font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest block">
-                  Seleccionar Variante / Talle:
-                </label>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-40 overflow-y-auto pr-1">
-                  {selectedBaseProduct.originalProducts.map((variant) => (
-                    <button
-                      key={variant.id}
-                      type="button"
-                      onClick={() => {
-                        const unitPrice = variant.precio || 0;
-                        setCurrentItem({
-                          ...currentItem,
-                          productId: variant.id,
-                          productNombre: `${variant.descripcion || variant.codigo} (${variant.talle || 'Único'})`,
-                          variantId: variant.id,
-                          variantNombre: variant.talle || 'Único',
-                          precioUnitario: unitPrice,
-                          total: currentItem.cantidad * unitPrice
-                        });
-                      }}
-                      className={cn(
-                        "p-2.5 rounded-xl border text-left text-xs transition-all",
-                        currentItem.productId === variant.id
-                          ? "bg-indigo-600 border-indigo-600 text-white shadow-sm"
-                          : "bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 hover:border-indigo-300"
-                      )}
-                    >
-                      <div className="font-bold flex items-center justify-between">
-                        <span>{variant.talle || 'Único'}</span>
-                        <span className={cn(
-                          "text-[10px]",
-                          currentItem.productId === variant.id ? "text-indigo-100" : "text-indigo-600 font-black"
-                        )}>
-                          ${variant.precio?.toLocaleString('es-AR')}
-                        </span>
-                      </div>
-                      <span className={cn(
-                        "text-[9px] block",
-                        currentItem.productId === variant.id ? "text-indigo-200" : "text-gray-400"
-                      )}>
-                        Stock: {variant.cantidad}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+          )}
 
           {/* Pricing Controls: Total Price vs Unit Price option */}
-          {currentItem.productId && (
+          {(currentItem.productId || (entryMode === 'manual' && manualDescription.trim().length > 0)) && (
             <div className="pt-3 border-t border-gray-100 dark:border-gray-800 space-y-3 animate-in fade-in duration-200">
               
               {/* Option Selector: Unit Price vs Total Price */}
@@ -710,7 +824,7 @@ export function NewQuoteModal({
             <Button
               type="button"
               onClick={handleSaveOnly}
-              disabled={items.length === 0 || isSubmitting}
+              disabled={!hasItemsReady || isSubmitting}
               className="rounded-xl font-bold text-xs bg-gray-900 text-white hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900"
             >
               {isSubmitting ? 'Guardando...' : (quoteToEdit ? 'Guardar Cambios' : 'Guardar Comprobante')}
@@ -718,7 +832,7 @@ export function NewQuoteModal({
             <Button
               type="button"
               onClick={handleSaveAndOpen}
-              disabled={items.length === 0 || isSubmitting}
+              disabled={!hasItemsReady || isSubmitting}
               className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black text-xs shadow-md shadow-emerald-200 dark:shadow-none"
             >
               <Send size={14} className="mr-1.5" />

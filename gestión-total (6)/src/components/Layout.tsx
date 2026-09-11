@@ -120,8 +120,8 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
       <motion.aside
         initial={false}
         animate={{ 
-          width: (window.innerWidth <= 1024) ? 270 : (isSidebarOpen ? 270 : 80),
-          x: (window.innerWidth <= 1024 && !isMobileMenuOpen) ? -270 : 0
+          width: (window.innerWidth <= 1024) ? 280 : (isSidebarOpen ? 280 : 84),
+          x: (window.innerWidth <= 1024 && !isMobileMenuOpen) ? -280 : 0
         }}
         className={cn(
           "bg-white dark:bg-gray-900 border-r border-gray-200/80 dark:border-gray-800 flex flex-col transition-all duration-300 z-[70] fixed lg:relative h-full shadow-2xl lg:shadow-none",
@@ -129,7 +129,7 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
         )}
       >
         {/* Sidebar Header with Brand Identity */}
-        <div className="p-4 sm:p-5 flex items-center justify-between w-full border-b border-gray-100 dark:border-gray-800 shrink-0">
+        <div className="p-4 flex items-center justify-between w-full border-b border-gray-100 dark:border-gray-800/80 shrink-0">
           <AnimatePresence mode="wait">
             {(isSidebarOpen || isMobileMenuOpen) ? (
               <motion.div
@@ -137,28 +137,28 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -10 }}
-                className="flex items-center gap-3 min-w-0 cursor-pointer group"
+                className="flex items-center gap-3 min-w-0 cursor-pointer group flex-1"
                 onClick={() => setIsBrandingModalOpen(true)}
                 title="Hacer clic para editar marca y logotipo de PulseStore"
               >
                 {storeLogo ? (
-                  <div className="w-10 h-10 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-1 flex items-center justify-center shrink-0 shadow-sm group-hover:border-indigo-500 transition-colors">
-                    <img src={storeLogo} alt={storeName} className="w-full h-full object-contain" />
+                  <div className="w-10 h-10 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200/80 dark:border-gray-700 p-1 flex items-center justify-center shrink-0 shadow-sm group-hover:border-indigo-500 group-hover:shadow-md group-hover:shadow-indigo-500/10 transition-all">
+                    <img src={storeLogo} alt={storeName} className="w-full h-full object-contain rounded-xl" />
                   </div>
                 ) : (
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-purple-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-indigo-500/20 group-hover:scale-105 transition-transform">
+                  <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-purple-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-indigo-500/25 group-hover:scale-105 transition-all">
                     <Store size={20} />
                   </div>
                 )}
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
                     <h1 className="text-sm font-black text-gray-900 dark:text-white tracking-tight truncate group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
                       {storeName}
                     </h1>
-                    <Sparkles size={13} className="text-amber-500 shrink-0 opacity-80" />
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 animate-pulse" title="Sistema online" />
                   </div>
-                  <p className="text-[10px] text-gray-400 dark:text-gray-500 truncate font-medium">
-                    {storeSlogan}
+                  <p className="text-[10px] text-gray-400 dark:text-gray-500 truncate font-medium flex items-center gap-1">
+                    <span>{storeSlogan}</span>
                   </p>
                 </div>
               </motion.div>
@@ -169,11 +169,11 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.8 }}
                 onClick={() => setIsSidebarOpen(true)}
-                className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 text-white flex items-center justify-center cursor-pointer shadow-md shadow-indigo-500/20"
+                className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-600 to-purple-600 text-white flex items-center justify-center cursor-pointer shadow-md shadow-indigo-500/20 hover:scale-105 transition-transform"
                 title={storeName}
               >
                 {storeLogo ? (
-                  <img src={storeLogo} alt={storeName} className="w-8 h-8 object-contain rounded-lg p-0.5" />
+                  <img src={storeLogo} alt={storeName} className="w-8 h-8 object-contain rounded-xl p-0.5" />
                 ) : (
                   <Store size={20} />
                 )}
@@ -188,15 +188,39 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
                 setIsSidebarOpen(!isSidebarOpen);
               }
             }}
-            className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 active:bg-gray-200 dark:active:bg-gray-700 active:scale-90 rounded-lg transition-all"
+            className="p-2 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 active:bg-gray-200 dark:active:bg-gray-700 active:scale-90 rounded-xl transition-all shrink-0 ml-1"
             title={isSidebarOpen ? "Colapsar barra lateral" : "Expandir barra lateral"}
           >
             {isSidebarOpen || isMobileMenuOpen ? <X size={18} /> : <Menu size={18} />}
           </button>
         </div>
 
+        {/* Quick Action Button */}
+        {(isSidebarOpen || isMobileMenuOpen) ? (
+          <div className="px-4 pt-3 pb-1 shrink-0">
+            <button
+              onClick={() => { navigate('/ventas'); closeMobileMenu(); }}
+              className="w-full flex items-center justify-center gap-2 py-2.5 px-3 bg-gradient-to-r from-indigo-600 via-indigo-700 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl font-bold text-xs shadow-md shadow-indigo-500/20 active:scale-[0.98] transition-all group"
+              title="Ir a registrar ventas o emitir presupuestos"
+            >
+              <Plus size={15} className="group-hover:rotate-90 transition-transform duration-200" />
+              <span>Nueva Venta / Cotización</span>
+            </button>
+          </div>
+        ) : (
+          <div className="py-2 shrink-0">
+            <button
+              onClick={() => { navigate('/ventas'); }}
+              className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 text-white flex items-center justify-center shadow-md shadow-indigo-500/20 hover:scale-105 transition-all"
+              title="Nueva Venta / Cotización"
+            >
+              <Plus size={18} />
+            </button>
+          </div>
+        )}
+
         {/* Navigation Sections */}
-        <nav className="flex-1 px-3 py-3 space-y-4 w-full overflow-y-auto custom-scrollbar">
+        <nav className="flex-1 px-3 py-2 space-y-4 w-full overflow-y-auto custom-scrollbar">
           
           {/* Section: Operaciones */}
           <div className="space-y-1">
@@ -211,21 +235,21 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
                 to={item.path}
                 onClick={closeMobileMenu}
                 className={({ isActive }) => cn(
-                  "flex items-center p-2.5 rounded-xl transition-all duration-200 group text-xs sm:text-sm font-medium",
+                  "flex items-center p-2.5 rounded-xl transition-all duration-200 group text-xs sm:text-sm font-medium relative",
                   isActive 
-                    ? "bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 font-bold shadow-xs border-l-4 border-indigo-600 dark:border-indigo-400 pl-2.5" 
+                    ? "bg-indigo-50/90 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 font-bold shadow-xs border-l-4 border-indigo-600 dark:border-indigo-400 pl-3" 
                     : "text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-gray-800/80 hover:text-gray-900 dark:hover:text-white"
                 )}
                 title={item.name}
               >
-                <item.icon className={cn("w-4 h-4 sm:w-5 sm:h-5 shrink-0", (isSidebarOpen || isMobileMenuOpen) && "mr-3")} />
+                <item.icon className={cn("w-4 h-4 sm:w-5 sm:h-5 shrink-0 group-hover:scale-110 transition-transform", (isSidebarOpen || isMobileMenuOpen) && "mr-3")} />
                 {(isSidebarOpen || isMobileMenuOpen) && <span className="truncate">{item.name}</span>}
               </NavLink>
             ))}
           </div>
 
           {/* Section: Gestión */}
-          <div className="space-y-1 pt-1 border-t border-gray-100 dark:border-gray-800/80">
+          <div className="space-y-1 pt-2 border-t border-gray-100 dark:border-gray-800/80">
             {(isSidebarOpen || isMobileMenuOpen) && (
               <span className="text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider px-3 mb-1 block">
                 Gestión & Finanzas
@@ -237,24 +261,24 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
                 to={item.path}
                 onClick={closeMobileMenu}
                 className={({ isActive }) => cn(
-                  "flex items-center p-2.5 rounded-xl transition-all duration-200 group text-xs sm:text-sm font-medium",
+                  "flex items-center p-2.5 rounded-xl transition-all duration-200 group text-xs sm:text-sm font-medium relative",
                   isActive 
-                    ? "bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 font-bold shadow-xs border-l-4 border-indigo-600 dark:border-indigo-400 pl-2.5" 
+                    ? "bg-indigo-50/90 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 font-bold shadow-xs border-l-4 border-indigo-600 dark:border-indigo-400 pl-3" 
                     : "text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-gray-800/80 hover:text-gray-900 dark:hover:text-white"
                 )}
                 title={item.name}
               >
-                <item.icon className={cn("w-4 h-4 sm:w-5 sm:h-5 shrink-0", (isSidebarOpen || isMobileMenuOpen) && "mr-3")} />
+                <item.icon className={cn("w-4 h-4 sm:w-5 sm:h-5 shrink-0 group-hover:scale-110 transition-transform", (isSidebarOpen || isMobileMenuOpen) && "mr-3")} />
                 {(isSidebarOpen || isMobileMenuOpen) && <span className="truncate">{item.name}</span>}
               </NavLink>
             ))}
           </div>
 
           {/* Section: Sistema */}
-          <div className="space-y-1 pt-1 border-t border-gray-100 dark:border-gray-800/80">
+          <div className="space-y-1 pt-2 border-t border-gray-100 dark:border-gray-800/80">
             {(isSidebarOpen || isMobileMenuOpen) && (
               <span className="text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider px-3 mb-1 block">
-                Sistema
+                Sistema & Config
               </span>
             )}
             {systemItems.map((item) => (
@@ -263,14 +287,14 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
                 to={item.path}
                 onClick={closeMobileMenu}
                 className={({ isActive }) => cn(
-                  "flex items-center p-2.5 rounded-xl transition-all duration-200 group text-xs sm:text-sm font-medium",
+                  "flex items-center p-2.5 rounded-xl transition-all duration-200 group text-xs sm:text-sm font-medium relative",
                   isActive 
-                    ? "bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 font-bold shadow-xs border-l-4 border-indigo-600 dark:border-indigo-400 pl-2.5" 
+                    ? "bg-indigo-50/90 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 font-bold shadow-xs border-l-4 border-indigo-600 dark:border-indigo-400 pl-3" 
                     : "text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-gray-800/80 hover:text-gray-900 dark:hover:text-white"
                 )}
                 title={item.name}
               >
-                <item.icon className={cn("w-4 h-4 sm:w-5 sm:h-5 shrink-0", (isSidebarOpen || isMobileMenuOpen) && "mr-3")} />
+                <item.icon className={cn("w-4 h-4 sm:w-5 sm:h-5 shrink-0 group-hover:scale-110 transition-transform", (isSidebarOpen || isMobileMenuOpen) && "mr-3")} />
                 {(isSidebarOpen || isMobileMenuOpen) && <span className="truncate">{item.name}</span>}
               </NavLink>
             ))}
@@ -278,34 +302,36 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
         </nav>
 
         {/* Sidebar Footer */}
-        <div className="p-3 border-t border-gray-100 dark:border-gray-800 w-full shrink-0">
+        <div className="p-3 border-t border-gray-100 dark:border-gray-800/80 w-full shrink-0">
           {(isSidebarOpen || isMobileMenuOpen) ? (
             <div className="space-y-2">
               {/* User & Store Card */}
-              <div className="p-2.5 bg-gray-50 dark:bg-gray-800/60 rounded-xl border border-gray-200/60 dark:border-gray-700/60">
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                    <span className="text-[11px] font-bold text-gray-800 dark:text-gray-200 truncate">
+              <div className="p-2.5 bg-gray-50 dark:bg-gray-800/60 rounded-2xl border border-gray-200/60 dark:border-gray-700/60">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 text-white flex items-center justify-center text-[10px] font-black shrink-0">
+                      {(user?.displayName || storeName || 'P').charAt(0).toUpperCase()}
+                    </div>
+                    <span className="text-xs font-bold text-gray-800 dark:text-gray-200 truncate">
                       {user?.displayName || storeName}
                     </span>
                   </div>
                   <button
                     onClick={() => setIsBrandingModalOpen(true)}
-                    className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold hover:underline flex items-center gap-0.5"
+                    className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold hover:underline flex items-center gap-0.5 shrink-0"
                     title="Editar marca y logo de PulseStore"
                   >
                     <Sparkles size={11} />
                     Marca
                   </button>
                 </div>
-                <p className="text-[10px] text-gray-500 dark:text-gray-400 truncate">
-                  {user?.email || 'Sesión activa'}
+                <p className="text-[10px] text-gray-500 dark:text-gray-400 truncate pl-8">
+                  {user?.email || 'Sistema conectado'}
                 </p>
               </div>
 
               {/* Action Buttons */}
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => { onLogout(); closeMobileMenu(); }}
                   className="flex-1 flex items-center justify-center gap-1.5 p-2 text-xs font-semibold text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-xl transition-colors"
@@ -316,7 +342,7 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
                 <NavLink 
                   to="/configuracion"
                   onClick={closeMobileMenu}
-                  className="px-2 py-1.5 text-[10px] font-mono font-bold text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                  className="px-2.5 py-1.5 text-[10px] font-mono font-bold text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                   title="Versión del sistema"
                 >
                   v{APP_VERSION}
