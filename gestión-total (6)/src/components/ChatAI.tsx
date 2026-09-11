@@ -14,9 +14,11 @@ import {
   Sparkles,
   ChevronDown,
   Minimize2,
-  Maximize2
+  Maximize2,
+  GripVertical
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { cn } from '../utils/cn';
 import { geminiService } from '../services/geminiService';
 import { inventoryService } from '../services/inventoryService';
 import { workOrderService } from '../services/workOrderService';
@@ -47,6 +49,118 @@ export function ChatAI() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Floating bubble draggable position (persisted in localStorage)
+  const [bubblePos, setBubblePos] = useState<{ x: number; y: number }>(() => {
+    try {
+      const saved = localStorage.getItem('ai_bubble_pos');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed?.x === 'number' && typeof parsed?.y === 'number') {
+          const maxX = typeof window !== 'undefined' ? Math.max(8, window.innerWidth - 68) : 500;
+          const maxY = typeof window !== 'undefined' ? Math.max(8, window.innerHeight - 68) : 700;
+          return {
+            x: Math.min(Math.max(8, parsed.x), maxX),
+            y: Math.min(Math.max(8, parsed.y), maxY)
+          };
+        }
+      }
+    } catch (e) {}
+    // Default initial position: bottom right with safety margins
+    const defaultX = typeof window !== 'undefined' ? Math.max(16, window.innerWidth - 76) : 300;
+    const defaultY = typeof window !== 'undefined' ? Math.max(16, window.innerHeight - 90) : 500;
+    return { x: defaultX, y: defaultY };
+  });
+
+  const [isDragging, setIsDragging] = useState(false);
+  const dragRef = useRef({
+    startX: 0,
+    startY: 0,
+    initialX: 0,
+    initialY: 0,
+    hasMoved: false,
+    active: false,
+  });
+
+  // Keep bubble inside screen bounds on resize
+  useEffect(() => {
+    const handleResize = () => {
+      setBubblePos(prev => {
+        const maxX = Math.max(8, window.innerWidth - 68);
+        const maxY = Math.max(8, window.innerHeight - 68);
+        const nextX = Math.min(Math.max(8, prev.x), maxX);
+        const nextY = Math.min(Math.max(8, prev.y), maxY);
+        if (nextX !== prev.x || nextY !== prev.y) {
+          return { x: nextX, y: nextY };
+        }
+        return prev;
+      });
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (e.button !== 0) return;
+    dragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      initialX: bubblePos.x,
+      initialY: bubblePos.y,
+      hasMoved: false,
+      active: true,
+    };
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch (err) {}
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!dragRef.current.active) return;
+    const dx = e.clientX - dragRef.current.startX;
+    const dy = e.clientY - dragRef.current.startY;
+
+    if (!dragRef.current.hasMoved && Math.hypot(dx, dy) > 5) {
+      dragRef.current.hasMoved = true;
+      setIsDragging(true);
+    }
+
+    if (dragRef.current.hasMoved) {
+      const maxX = Math.max(8, window.innerWidth - 68);
+      const maxY = Math.max(8, window.innerHeight - 68);
+      const newX = Math.min(Math.max(8, dragRef.current.initialX + dx), maxX);
+      const newY = Math.min(Math.max(8, dragRef.current.initialY + dy), maxY);
+      setBubblePos({ x: newX, y: newY });
+    }
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!dragRef.current.active) return;
+    dragRef.current.active = false;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch (err) {}
+
+    if (dragRef.current.hasMoved) {
+      setIsDragging(false);
+      try {
+        localStorage.setItem('ai_bubble_pos', JSON.stringify(bubblePos));
+      } catch (err) {}
+    } else {
+      // Tap or click without drag -> toggle chat window
+      setIsOpen(prev => !prev);
+    }
+  };
+
+  const handlePointerCancel = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (dragRef.current.active) {
+      dragRef.current.active = false;
+      setIsDragging(false);
+      try {
+        (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch (err) {}
+    }
+  };
 
   useEffect(() => {
     scrollToBottom();
@@ -130,23 +244,26 @@ export function ChatAI() {
   };
 
   return (
-    <div className="fixed bottom-6 right-6 z-[100] flex flex-col items-end">
+    <>
+      {/* Chat Window Modal */}
       <AnimatePresence>
         {isOpen && (
           <motion.div
-            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            initial={{ opacity: 0, y: 15, scale: 0.96 }}
             animate={{ 
               opacity: 1, 
               y: 0, 
               scale: 1,
-              height: isMinimized ? '64px' : '650px',
-              width: isMinimized ? (window.innerWidth < 640 ? '320px' : '384px') : (window.innerWidth < 1024 ? '95vw' : '500px')
+              height: isMinimized ? '64px' : 'min(620px, 85vh)'
             }}
-            exit={{ opacity: 0, y: 20, scale: 0.95 }}
-            className="mb-4 bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border dark:border-slate-800 flex flex-col overflow-hidden fixed bottom-24 right-0 sm:right-6 lg:right-10 origin-bottom-right"
+            exit={{ opacity: 0, y: 15, scale: 0.96 }}
+            className={cn(
+              "fixed z-[105] bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-gray-200 dark:border-slate-800 flex flex-col overflow-hidden",
+              "left-3 right-3 bottom-4 sm:left-auto sm:right-6 sm:bottom-6 sm:w-[480px]"
+            )}
           >
             {/* Header */}
-            <div className="p-4 bg-indigo-600 text-white flex items-center justify-between">
+            <div className="p-4 bg-indigo-600 text-white flex items-center justify-between select-none">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 bg-white/20 rounded-full flex items-center justify-center">
                   <Bot className="w-5 h-5" />
@@ -161,14 +278,18 @@ export function ChatAI() {
               </div>
               <div className="flex items-center gap-1">
                 <button 
+                  type="button"
                   onClick={() => setIsMinimized(!isMinimized)}
                   className="p-1.5 hover:bg-white/10 rounded-lg transition-colors"
+                  title={isMinimized ? "Expandir" : "Minimizar"}
                 >
                   {isMinimized ? <Maximize2 className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />}
                 </button>
                 <button 
+                  type="button"
                   onClick={() => setIsOpen(false)}
                   className="p-1.5 hover:bg-white/10 rounded-lg transition-colors"
+                  title="Cerrar chat"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -261,15 +382,47 @@ export function ChatAI() {
         )}
       </AnimatePresence>
 
+      {/* Draggable AI Floating Bubble ("la bolita de la IA") */}
       <motion.button
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.95 }}
-        onClick={() => setIsOpen(!isOpen)}
-        className="w-14 h-14 bg-indigo-600 text-white rounded-full shadow-2xl flex items-center justify-center relative group"
+        type="button"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
+        style={{
+          left: `${bubblePos.x}px`,
+          top: `${bubblePos.y}px`,
+          touchAction: 'none'
+        }}
+        className={cn(
+          "fixed z-[110] w-14 h-14 rounded-full flex items-center justify-center select-none shadow-2xl transition-[box-shadow,background-color] duration-150",
+          isOpen
+            ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 ring-2 ring-indigo-500/50"
+            : "bg-gradient-to-tr from-indigo-600 via-indigo-700 to-purple-600 text-white",
+          isDragging
+            ? "scale-110 cursor-grabbing ring-4 ring-indigo-400/50 shadow-indigo-500/50 shadow-2xl"
+            : "cursor-grab hover:scale-105 active:scale-95"
+        )}
+        title={isOpen ? "Cerrar asistente IA" : "Asistente IA (Arrastrá para mover la bolita a cualquier lugar de la pantalla)"}
       >
-        <div className="absolute inset-0 bg-indigo-600 rounded-full animate-ping opacity-20 group-hover:opacity-40 transition-opacity" />
-        {isOpen ? <ChevronDown className="w-6 h-6" /> : <Sparkles className="w-6 h-6" />}
+        {!isOpen && (
+          <div className="absolute inset-0 bg-indigo-600 rounded-full animate-ping opacity-20 pointer-events-none" />
+        )}
+
+        {/* Live status dot */}
+        <div className="absolute top-0 right-0 w-3 h-3 bg-emerald-400 border-2 border-white dark:border-slate-900 rounded-full animate-pulse pointer-events-none" />
+
+        {/* Mini drag grip indicator */}
+        <div className="absolute -bottom-1 px-1.5 py-0.5 rounded-full bg-slate-900/80 text-[8px] font-semibold text-white/90 tracking-tighter opacity-0 hover:opacity-100 transition-opacity pointer-events-none">
+          Mover
+        </div>
+
+        {isOpen ? (
+          <ChevronDown className="w-6 h-6 pointer-events-none" />
+        ) : (
+          <Sparkles className="w-6 h-6 pointer-events-none" />
+        )}
       </motion.button>
-    </div>
+    </>
   );
 }
