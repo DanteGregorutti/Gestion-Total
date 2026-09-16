@@ -4,6 +4,7 @@
  */
 
 import React from 'react';
+import { RefreshCw } from 'lucide-react';
 import { cn } from '../../utils/cn';
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -91,3 +92,65 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
 );
 
 Input.displayName = 'Input';
+
+export interface RefreshButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  onRefresh: () => Promise<void> | void;
+  isLoading?: boolean;
+  label?: string;
+  className?: string;
+  title?: string;
+}
+
+export const RefreshButton: React.FC<RefreshButtonProps> = ({
+  onRefresh,
+  isLoading = false,
+  label = 'Actualizar',
+  className,
+  title = 'Actualizar datos',
+  disabled,
+  ...props
+}) => {
+  const [internalLoading, setInternalLoading] = React.useState(false);
+  const activeLoading = isLoading || internalLoading;
+
+  const handleClick = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    if (activeLoading) return;
+    try {
+      setInternalLoading(true);
+      await Promise.resolve(onRefresh());
+    } catch (err) {
+      console.error('Refresh failed:', err);
+    } finally {
+      setTimeout(() => setInternalLoading(false), 500);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={activeLoading || disabled}
+      title={title}
+      className={cn(
+        "inline-flex items-center justify-center gap-2 px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl font-bold text-xs sm:text-sm select-none transition-all duration-200",
+        "border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300",
+        "hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 dark:hover:bg-indigo-950/40 dark:hover:text-indigo-400 dark:hover:border-indigo-800/60",
+        "shadow-xs active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed",
+        className
+      )}
+      {...props}
+    >
+      <RefreshCw 
+        className={cn(
+          "w-4 h-4 shrink-0 transition-transform duration-500",
+          activeLoading && "animate-spin text-indigo-600 dark:text-indigo-400"
+        )} 
+      />
+      {label && (
+        <span className="hidden sm:inline">
+          {activeLoading ? 'Actualizando...' : label}
+        </span>
+      )}
+    </button>
+  );
+};

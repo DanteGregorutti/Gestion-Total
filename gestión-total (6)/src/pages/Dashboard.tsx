@@ -45,7 +45,13 @@ import {
   Loader2,
   Wallet,
   Wrench,
-  MessageCircle
+  MessageCircle,
+  ChevronUp,
+  ChevronDown,
+  EyeOff,
+  RotateCcw,
+  Check,
+  LayoutGrid
 } from 'lucide-react';
 import { DailyReportModal } from '../components/finances/DailyReportModal';
 import { 
@@ -72,8 +78,19 @@ import { useNavigate } from 'react-router-dom';
 import { useSettings } from '../contexts/SettingsContext';
 import { useProducts } from '../contexts/ProductsContext';
 import { GoalsWidget } from '../components/GoalsWidget';
-import { Button } from '../components/ui';
+import { Button, RefreshButton } from '../components/ui';
 import StockValuationModal from '../components/StockValuationModal';
+
+export const DEFAULT_DASHBOARD_WIDGETS = ['stats', 'secondary_stats', 'charts', 'recommendations', 'goals', 'movements'];
+
+export const WIDGET_METADATA: Record<string, { label: string; desc: string; icon: string }> = {
+  stats: { label: 'Métricas Principales', desc: 'Ingresos, ganancia y valorización de inventario', icon: '💰' },
+  secondary_stats: { label: 'Alertas & Resumen', desc: 'Stock bajo y productos sin costo cargado', icon: '⚠️' },
+  charts: { label: 'Gráficos Interactivos', desc: 'Ventas vs Compras, flujo de stock y productos top', icon: '📊' },
+  recommendations: { label: 'Recomendaciones IA', desc: 'Consejos de reposición e inteligencia de stock', icon: '✨' },
+  goals: { label: 'Metas del Mes', desc: 'Objetivos mensuales de ventas y progreso', icon: '🎯' },
+  movements: { label: 'Últimos Movimientos', desc: 'Historial reciente de entradas y salidas', icon: '📦' }
+};
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -93,9 +110,19 @@ export default function Dashboard() {
   const [isDailyReportOpen, setIsDailyReportOpen] = React.useState(false);
 
   const getInitialWidgets = () => {
-    const saved = localStorage.getItem('dashboard_widgets');
-    const defaultWidgets = ['stats', 'secondary_stats', 'charts', 'recommendations', 'goals', 'movements'];
-    return saved ? JSON.parse(saved) : defaultWidgets;
+    try {
+      const saved = localStorage.getItem('dashboard_widgets');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const valid = parsed.filter(w => DEFAULT_DASHBOARD_WIDGETS.includes(w));
+          if (valid.length > 0) return valid;
+        }
+      }
+    } catch (e) {
+      console.error('Error parsing dashboard widgets:', e);
+    }
+    return DEFAULT_DASHBOARD_WIDGETS;
   };
 
   const [visibleWidgets, setVisibleWidgets] = React.useState<string[]>(getInitialWidgets);
@@ -107,6 +134,34 @@ export default function Dashboard() {
   React.useEffect(() => {
     localStorage.setItem('dashboard_widgets', JSON.stringify(visibleWidgets));
   }, [visibleWidgets]);
+
+  const moveWidget = (id: string, direction: 'up' | 'down') => {
+    const currentIndex = visibleWidgets.indexOf(id);
+    if (currentIndex === -1) return;
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= visibleWidgets.length) return;
+    setVisibleWidgets(arrayMove(visibleWidgets, currentIndex, targetIndex));
+  };
+
+  const toggleWidget = (id: string) => {
+    if (visibleWidgets.includes(id)) {
+      setVisibleWidgets(visibleWidgets.filter(w => w !== id));
+    } else {
+      const targetIndex = DEFAULT_DASHBOARD_WIDGETS.indexOf(id);
+      const newWidgets = [...visibleWidgets];
+      const nextVisible = newWidgets.findIndex(w => DEFAULT_DASHBOARD_WIDGETS.indexOf(w) > targetIndex);
+      if (nextVisible !== -1) {
+        newWidgets.splice(nextVisible, 0, id);
+      } else {
+        newWidgets.push(id);
+      }
+      setVisibleWidgets(newWidgets);
+    }
+  };
+
+  const resetWidgets = () => {
+    setVisibleWidgets(DEFAULT_DASHBOARD_WIDGETS);
+  };
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -499,21 +554,62 @@ export default function Dashboard() {
 
   const renderControls = (id: string, attributes?: any, listeners?: any) => {
     if (!isEditMode) return null;
+    const meta = WIDGET_METADATA[id] || { label: 'Bloque', icon: '📦' };
+    const currentIndex = visibleWidgets.indexOf(id);
+    const isFirst = currentIndex === 0;
+    const isLast = currentIndex === visibleWidgets.length - 1;
+
     return (
-      <div className="absolute top-4 right-4 z-30 flex items-center space-x-2">
-        <div 
-          {...attributes} 
-          {...listeners}
-          className="p-3 bg-white dark:bg-gray-800 border-2 border-indigo-100 dark:border-indigo-900/50 rounded-2xl shadow-xl cursor-grab active:cursor-grabbing hover:scale-110 transition-all text-indigo-600 dark:text-indigo-400"
-        >
-          <GripVertical size={20} />
+      <div className="mb-4 p-2.5 sm:p-3 bg-white/95 dark:bg-gray-900/95 border-2 border-indigo-200 dark:border-indigo-800 rounded-2xl flex flex-wrap items-center justify-between gap-2 shadow-md z-30">
+        <div className="flex items-center gap-2 pl-1">
+          <span className="text-base sm:text-lg">{meta.icon}</span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs sm:text-sm font-black text-gray-900 dark:text-white">
+              {meta.label}
+            </span>
+            <span className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded-md border border-indigo-100 dark:border-indigo-900/50">
+              #{currentIndex + 1} de {visibleWidgets.length}
+            </span>
+          </div>
         </div>
-        <button 
-          onClick={() => setVisibleWidgets(visibleWidgets.filter(w => w !== id))}
-          className="p-3 bg-rose-50 dark:bg-rose-900/20 border-2 border-rose-100 dark:border-rose-900/30 text-rose-600 dark:text-rose-400 rounded-2xl shadow-xl hover:scale-110 transition-all"
-        >
-          <X size={20} />
-        </button>
+        <div className="flex items-center gap-1.5 ml-auto">
+          <button
+            type="button"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); moveWidget(id, 'up'); }}
+            disabled={isFirst}
+            className="p-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 rounded-xl hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-950/50 dark:hover:text-indigo-400 disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-xs"
+            title="Subir bloque una posición"
+          >
+            <ChevronUp size={16} />
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); moveWidget(id, 'down'); }}
+            disabled={isLast}
+            className="p-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 rounded-xl hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-950/50 dark:hover:text-indigo-400 disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-xs"
+            title="Bajar bloque una posición"
+          >
+            <ChevronDown size={16} />
+          </button>
+          <div 
+            {...attributes} 
+            {...listeners}
+            className="p-2 px-3 bg-indigo-50 dark:bg-indigo-900/40 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 rounded-xl cursor-grab active:cursor-grabbing hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-all flex items-center gap-1.5 text-xs font-bold select-none shadow-xs"
+            title="Presionar y arrastrar para ordenar"
+          >
+            <GripVertical size={16} />
+            <span className="hidden sm:inline">Arrastrar</span>
+          </div>
+          <button 
+            type="button"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleWidget(id); }}
+            className="p-2 px-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 text-rose-600 dark:text-rose-400 rounded-xl hover:bg-rose-100 dark:hover:bg-rose-900/50 transition-all flex items-center gap-1.5 text-xs font-bold shadow-xs"
+            title="Ocultar este bloque"
+          >
+            <EyeOff size={14} />
+            <span className="hidden sm:inline">Ocultar</span>
+          </button>
+        </div>
       </div>
     );
   };
@@ -540,7 +636,8 @@ export default function Dashboard() {
         style={style} 
         className={cn(
           "relative transition-all duration-300",
-          isDragging ? "scale-[1.02] rotate-1 shadow-2xl opacity-80" : "opacity-100"
+          isDragging ? "scale-[1.02] rotate-1 shadow-2xl opacity-80" : "opacity-100",
+          isEditMode && "p-3 sm:p-4 rounded-3xl border-2 border-dashed border-indigo-400/70 dark:border-indigo-600/70 bg-indigo-50/10 dark:bg-indigo-950/10 shadow-sm"
         )} 
         {...props}
       >
@@ -670,54 +767,141 @@ export default function Dashboard() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Button 
-            onClick={() => setIsDailyReportOpen(true)}
-            className="rounded-xl font-black flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm py-2 text-xs"
-            title="Generar resumen del día para compartir por WhatsApp"
-          >
-            <MessageCircle size={16} />
-            <span>Cierre WhatsApp</span>
-          </Button>
-          <Button 
-            onClick={() => navigate('/taller')}
-            className="rounded-xl font-bold flex items-center gap-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 dark:hover:bg-indigo-900/50 border border-indigo-200 dark:border-indigo-800 shadow-sm py-2 text-xs"
-          >
-            <Wrench size={16} />
-            <span>Taller</span>
-          </Button>
-          <Button 
             onClick={() => navigate('/cuentas')}
-            className="rounded-xl font-bold flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm py-2"
+            className="rounded-xl font-bold flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm py-2 text-xs sm:text-sm"
           >
             <Wallet size={16} />
             <span>{t('finances')}</span>
           </Button>
           <Button 
             onClick={() => navigate('/catalogo')}
-            className="rounded-xl font-bold flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-500 border-none shadow-lg shadow-emerald-500/10 hover:shadow-emerald-500/20 py-2"
+            className="rounded-xl font-bold flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-500 border-none shadow-lg shadow-emerald-500/10 hover:shadow-emerald-500/20 py-2 text-xs sm:text-sm"
           >
             <Share2 size={16} />
-            <span className="hidden lg:inline">Publicar Stock</span>
-            <span className="lg:hidden">Publicar</span>
+            <span className="hidden sm:inline">Publicar Stock</span>
+            <span className="sm:hidden">Publicar</span>
           </Button>
-          <Button 
-            variant="outline"
-            onClick={refreshStats}
-            className="rounded-xl font-bold flex items-center gap-2 shadow-sm py-2"
-            title="Actualizar estadísticas"
-          >
-            <Clock size={16} />
-            {t('refresh') || 'Actualizar'}
-          </Button>
+          <RefreshButton 
+            onRefresh={refreshStats}
+            isLoading={isLoading}
+            label={t('refresh') || 'Actualizar'}
+            title="Actualizar estadísticas del panel"
+          />
           <Button 
             variant={isEditMode ? "primary" : "outline"}
             onClick={() => setIsEditMode(!isEditMode)}
-            className="rounded-xl font-bold flex items-center gap-2 shadow-sm py-2"
+            className="rounded-xl font-bold flex items-center gap-2 shadow-sm py-2 text-xs sm:text-sm"
           >
-            {isEditMode ? <X size={16} /> : <Settings size={16} />}
+            {isEditMode ? <Check size={16} /> : <Settings size={16} />}
             {isEditMode ? (t('finish_editing') || 'Finalizar') : (t('dashboard_edit_mode') || 'Modo Edición')}
           </Button>
         </div>
       </div>
+
+      {/* Dedicated Edit Mode Toolbar */}
+      <AnimatePresence>
+        {isEditMode && (
+          <motion.div
+            initial={{ opacity: 0, y: -12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            className="p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-indigo-500/10 border-2 border-indigo-500/30 dark:border-indigo-500/40 backdrop-blur-xs space-y-4 shadow-sm"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center font-bold shadow-md shadow-indigo-500/20 shrink-0">
+                  <LayoutGrid size={20} />
+                </div>
+                <div>
+                  <h3 className="font-black text-gray-900 dark:text-white text-base flex items-center gap-2 flex-wrap">
+                    <span>Modo Edición del Panel de Control</span>
+                    <span className="text-[11px] font-black bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 px-2.5 py-0.5 rounded-full border border-indigo-200 dark:border-indigo-800">
+                      {visibleWidgets.length} de {DEFAULT_DASHBOARD_WIDGETS.length} bloques activos
+                    </span>
+                  </h3>
+                  <p className="text-xs text-gray-600 dark:text-gray-300">
+                    Podés reorganizar las secciones con las flechas o arrastrándolas. Tocá los botones de abajo para activar u ocultar bloques.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                <Button
+                  variant="outline"
+                  onClick={resetWidgets}
+                  className="rounded-xl text-xs font-bold flex items-center gap-1.5 border-gray-300 dark:border-gray-700 h-9"
+                  title="Restablecer todos los bloques en su orden original"
+                >
+                  <RotateCcw size={14} />
+                  <span>Restablecer</span>
+                </Button>
+                <Button
+                  onClick={() => setIsEditMode(false)}
+                  className="rounded-xl text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm flex items-center gap-1.5 h-9"
+                >
+                  <Check size={14} />
+                  <span>Finalizar</span>
+                </Button>
+              </div>
+            </div>
+
+            {/* Quick Toggle Widget Badges */}
+            <div className="pt-3 border-t border-indigo-100 dark:border-indigo-900/40">
+              <p className="text-[11px] font-bold text-gray-500 dark:text-gray-400 mb-2 uppercase tracking-wider">
+                Bloques del Panel (tocá para activar u ocultar):
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {DEFAULT_DASHBOARD_WIDGETS.map((widgetId) => {
+                  const meta = WIDGET_METADATA[widgetId] || { label: widgetId, icon: '📦' };
+                  const isVisible = visibleWidgets.includes(widgetId);
+                  return (
+                    <button
+                      key={widgetId}
+                      type="button"
+                      onClick={() => toggleWidget(widgetId)}
+                      className={cn(
+                        "px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all select-none border",
+                        isVisible
+                          ? "bg-indigo-600 text-white border-indigo-600 shadow-xs hover:bg-indigo-700"
+                          : "bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-dashed border-gray-300 dark:border-gray-700 hover:border-indigo-400 hover:text-indigo-600"
+                      )}
+                      title={isVisible ? "Clic para ocultar" : "Clic para activar"}
+                    >
+                      <span>{meta.icon}</span>
+                      <span>{meta.label}</span>
+                      {isVisible ? (
+                        <Check size={13} className="text-white" />
+                      ) : (
+                        <Plus size={13} className="text-gray-400" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Empty State when all widgets are hidden */}
+      {visibleWidgets.length === 0 && (
+        <div className="text-center py-16 px-6 bg-white dark:bg-gray-900 rounded-3xl border-2 border-dashed border-gray-200 dark:border-gray-800 space-y-4">
+          <div className="w-14 h-14 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto text-2xl">
+            🧩
+          </div>
+          <div>
+            <h3 className="text-lg font-black text-gray-900 dark:text-white">Todos los bloques están ocultos</h3>
+            <p className="text-sm text-gray-500 max-w-md mx-auto mt-1">
+              Podés reactivar los bloques que quieras desde el modo edición o restablecer el diseño inicial con un solo clic.
+            </p>
+          </div>
+          <Button onClick={resetWidgets} className="rounded-xl font-bold">
+            <RotateCcw size={16} className="mr-2" />
+            Restablecer Bloques Predeterminados
+          </Button>
+        </div>
+      )}
+
       <div className="flex flex-col gap-8">
         <DndContext 
           sensors={sensors}

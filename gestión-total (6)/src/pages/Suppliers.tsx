@@ -19,7 +19,7 @@ import {
   Clock
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { Button } from '../components/ui';
+import { Button, RefreshButton } from '../components/ui';
 import { motion, AnimatePresence } from 'motion/react';
 import { Supplier, Purchase } from '../types';
 import { inventoryService } from '../services/inventoryService';
@@ -170,15 +170,11 @@ export default function Suppliers() {
           <p className="text-slate-500">{t('suppliers_desc') || 'Administra tus proveedores de mercadería'}</p>
         </div>
         <div className="flex items-center gap-3">
-          <Button 
-            variant="outline" 
-            onClick={refreshSuppliers}
-            className="rounded-xl border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/50"
-            title="Actualizar datos"
-          >
-            <Clock className="w-5 h-5 mr-2" />
-            {t('refresh') || 'Actualizar'}
-          </Button>
+          <RefreshButton 
+            onRefresh={refreshSuppliers}
+            label={t('refresh') || 'Actualizar'}
+            title="Actualizar datos de proveedores"
+          />
           <button
             onClick={() => { resetForm(); setIsModalOpen(true); }}
             className="flex items-center justify-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-2xl font-bold shadow-lg shadow-indigo-500/20 hover:bg-indigo-700 transition-all active:scale-95"

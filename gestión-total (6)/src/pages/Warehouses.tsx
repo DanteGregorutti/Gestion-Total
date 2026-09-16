@@ -16,7 +16,7 @@ import {
   Clock,
   Edit2
 } from 'lucide-react';
-import { Button, Input } from '../components/ui';
+import { Button, Input, RefreshButton } from '../components/ui';
 import Modal from '../components/Modal';
 import ConfirmationModal from '../components/ConfirmationModal';
 import { Warehouse as WarehouseType, Product } from '../types';
@@ -168,15 +168,12 @@ export default function Warehouses() {
           <p className="text-sm text-gray-500 dark:text-gray-400">{t('warehouse_management_desc')}</p>
         </div>
         <div className="flex items-center gap-3">
-          <Button 
-            variant="outline" 
-            onClick={refreshData}
-            className="rounded-xl border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/50"
-            title="Actualizar datos"
-          >
-            <Clock className="w-5 h-5 mr-2" />
-            {t('refresh') || 'Actualizar'}
-          </Button>
+          <RefreshButton 
+            onRefresh={refreshData}
+            isLoading={isLoading}
+            label={t('refresh') || 'Actualizar'}
+            title="Actualizar depósitos"
+          />
           <Button onClick={() => setIsAddModalOpen(true)}>
             <Plus className="w-5 h-5 mr-2" />
             {t('new_warehouse')}

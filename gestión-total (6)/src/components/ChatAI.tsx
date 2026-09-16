@@ -101,6 +101,7 @@ export function ChatAI() {
   }, []);
 
   const handlePointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (e.pointerType === 'touch') return; // Let touch events handle touch devices smoothly
     if (e.button !== 0) return;
     dragRef.current = {
       startX: e.clientX,
@@ -116,11 +117,12 @@ export function ChatAI() {
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (e.pointerType === 'touch') return;
     if (!dragRef.current.active) return;
     const dx = e.clientX - dragRef.current.startX;
     const dy = e.clientY - dragRef.current.startY;
 
-    if (!dragRef.current.hasMoved && Math.hypot(dx, dy) > 5) {
+    if (!dragRef.current.hasMoved && Math.hypot(dx, dy) > 4) {
       dragRef.current.hasMoved = true;
       setIsDragging(true);
     }
@@ -135,6 +137,7 @@ export function ChatAI() {
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (e.pointerType === 'touch') return;
     if (!dragRef.current.active) return;
     dragRef.current.active = false;
     try {
@@ -153,12 +156,65 @@ export function ChatAI() {
   };
 
   const handlePointerCancel = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (e.pointerType === 'touch') return;
     if (dragRef.current.active) {
       dragRef.current.active = false;
       setIsDragging(false);
       try {
         (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
       } catch (err) {}
+    }
+  };
+
+  // Dedicated touch handlers for mobile to guarantee 100% responsiveness without page scroll interference
+  const handleTouchStart = (e: React.TouchEvent<HTMLButtonElement>) => {
+    const touch = e.touches[0];
+    if (!touch) return;
+    dragRef.current = {
+      startX: touch.clientX,
+      startY: touch.clientY,
+      initialX: bubblePos.x,
+      initialY: bubblePos.y,
+      hasMoved: false,
+      active: true,
+    };
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLButtonElement>) => {
+    if (!dragRef.current.active) return;
+    const touch = e.touches[0];
+    if (!touch) return;
+    const dx = touch.clientX - dragRef.current.startX;
+    const dy = touch.clientY - dragRef.current.startY;
+
+    if (!dragRef.current.hasMoved && Math.hypot(dx, dy) > 4) {
+      dragRef.current.hasMoved = true;
+      setIsDragging(true);
+    }
+
+    if (dragRef.current.hasMoved) {
+      if (e.cancelable) {
+        e.preventDefault();
+      }
+      const maxX = Math.max(8, window.innerWidth - 68);
+      const maxY = Math.max(8, window.innerHeight - 68);
+      const newX = Math.min(Math.max(8, dragRef.current.initialX + dx), maxX);
+      const newY = Math.min(Math.max(8, dragRef.current.initialY + dy), maxY);
+      setBubblePos({ x: newX, y: newY });
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent<HTMLButtonElement>) => {
+    if (!dragRef.current.active) return;
+    dragRef.current.active = false;
+
+    if (dragRef.current.hasMoved) {
+      setIsDragging(false);
+      try {
+        localStorage.setItem('ai_bubble_pos', JSON.stringify(bubblePos));
+      } catch (err) {}
+    } else {
+      setIsOpen(prev => !prev);
     }
   };
 
@@ -389,10 +445,15 @@ export function ChatAI() {
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerCancel}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
         style={{
           left: `${bubblePos.x}px`,
           top: `${bubblePos.y}px`,
-          touchAction: 'none'
+          touchAction: 'none',
+          userSelect: 'none',
+          WebkitUserSelect: 'none'
         }}
         className={cn(
           "fixed z-[110] w-14 h-14 rounded-full flex items-center justify-center select-none shadow-2xl transition-[box-shadow,background-color] duration-150",

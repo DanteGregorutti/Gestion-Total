@@ -34,7 +34,7 @@ import {
   Edit3
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Input } from '../components/ui';
+import { Button, Input, RefreshButton } from '../components/ui';
 import Modal from '../components/Modal';
 import ConfirmationModal from '../components/ConfirmationModal';
 import ProductSearch from '../components/ProductSearch';
@@ -766,15 +766,12 @@ export default function Purchases() {
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
               </div>
-              <Button 
-                variant="outline" 
-                onClick={refreshData}
-                className="rounded-xl border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/50"
-                title="Actualizar datos"
-              >
-                <Clock className="w-5 h-5 sm:mr-2" />
-                <span className="hidden sm:inline">Actualizar</span>
-              </Button>
+              <RefreshButton 
+                onRefresh={refreshData}
+                isLoading={isLoading}
+                label={t('refresh') || 'Actualizar'}
+                title="Actualizar datos de compras"
+              />
               <Button 
                 variant="outline" 
                 onClick={() => setShowFilters(!showFilters)}

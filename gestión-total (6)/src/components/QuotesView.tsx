@@ -25,7 +25,7 @@ import {
   Edit
 } from 'lucide-react';
 import { Quote } from '../types';
-import { Button, Input } from './ui';
+import { Button, Input, RefreshButton } from './ui';
 import { cn } from '../utils/cn';
 
 interface QuotesViewProps {
@@ -195,15 +195,12 @@ export function QuotesView({
             />
           </div>
 
-          <Button 
-            variant="outline" 
-            onClick={onRefresh}
-            className="rounded-xl border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/50 h-10 px-3"
+          <RefreshButton 
+            onRefresh={onRefresh}
+            label="Actualizar"
             title="Actualizar cotizaciones"
-          >
-            <Clock className="w-4 h-4 sm:mr-1.5" />
-            <span className="hidden sm:inline text-xs">Actualizar</span>
-          </Button>
+            className="h-10 px-3 text-xs"
+          />
         </div>
 
         {/* Status Filters */}

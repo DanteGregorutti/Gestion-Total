@@ -19,8 +19,6 @@ import {
 import { Product, Client, Sale, Combo } from '../types';
 import { inventoryService } from '../services/inventoryService';
 import { useSettings } from '../contexts/SettingsContext';
-import { useProducts } from '../contexts/ProductsContext';
-import { cn } from '../utils/cn';
 import { toast } from 'sonner';
 
 interface QuickModeProps {
@@ -29,8 +27,7 @@ interface QuickModeProps {
 
 export function QuickMode({ onClose }: QuickModeProps) {
   const { t } = useSettings();
-  const { products, refreshProducts } = useProducts();
-  const [activeTab, setActiveTab] = useState<'products' | 'cart'>('products');
+  const [products, setProducts] = useState<Product[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [combos, setCombos] = useState<Combo[]>([]);
   const [search, setSearch] = useState('');
@@ -39,13 +36,12 @@ export function QuickMode({ onClose }: QuickModeProps) {
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [showClientSelector, setShowClientSelector] = useState(false);
   const [saleTotalOverride, setSaleTotalOverride] = useState<number | null>(null);
-  const [clientSearch, setClientSearch] = useState('');
   const [isSaveComboModalOpen, setIsSaveComboModalOpen] = useState(false);
   const [comboName, setComboName] = useState('');
   const [isComboSale, setIsComboSale] = useState(false);
   const [comboSaleName, setComboSaleName] = useState('');
 
-  const cartTotal = cart.reduce((acc, item) => acc + ((Number(item.product?.precio) || 0) * (Number(item.quantity) || 0)), 0);
+  const cartTotal = cart.reduce((acc, item) => acc + (item.product.precio * item.quantity), 0);
 
   useEffect(() => {
     setSaleTotalOverride(cartTotal);
@@ -53,10 +49,12 @@ export function QuickMode({ onClose }: QuickModeProps) {
 
   useEffect(() => {
     const loadData = async () => {
-      const [c, co] = await Promise.all([
+      const [p, c, co] = await Promise.all([
+        inventoryService.getProducts(),
         inventoryService.getClients(),
         inventoryService.getCombos()
       ]);
+      setProducts(p);
       setClients(c);
       setCombos(co);
     };
@@ -190,7 +188,6 @@ export function QuickMode({ onClose }: QuickModeProps) {
       setIsComboSale(false);
       setComboSaleName('');
       toast.success(t('sale_success'));
-      await refreshProducts();
       onClose();
     } catch (error) {
       console.error(error);
@@ -217,54 +214,15 @@ export function QuickMode({ onClose }: QuickModeProps) {
           <ShoppingCart className="w-6 h-6" />
           {cart.length > 0 && (
             <span className="absolute -top-2 -right-2 bg-blue-600 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">
-              {cart.reduce((acc, item) => acc + (Number(item.quantity) || 0), 0)}
+              {cart.reduce((acc, item) => acc + item.quantity, 0)}
             </span>
           )}
         </div>
       </div>
 
-      {/* Tab Switcher for mobile devices */}
-      <div className="flex border-b border-slate-200 dark:border-slate-850 md:hidden bg-slate-50 dark:bg-slate-900/60 p-1 gap-1 shrink-0">
-        <button
-          type="button"
-          onClick={() => setActiveTab('products')}
-          className={cn(
-            "flex-1 py-2.5 text-xs font-black tracking-widest text-center uppercase rounded-xl transition-all active:scale-95",
-            activeTab === 'products'
-              ? "bg-blue-600 text-white shadow-md shadow-blue-500/10"
-              : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/50"
-          )}
-        >
-          {t('products') || 'Productos'}
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('cart')}
-          className={cn(
-            "flex-1 py-2.5 text-xs font-black tracking-widest text-center uppercase rounded-xl transition-all active:scale-95 flex items-center justify-center gap-1.5",
-            activeTab === 'cart'
-              ? "bg-blue-600 text-white shadow-md shadow-blue-500/10"
-              : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/50"
-          )}
-        >
-          <span>{t('cart') || 'Carrito'}</span>
-          {cart.length > 0 && (
-            <span className={cn(
-              "px-2 py-0.5 text-[10px] font-black rounded-full leading-none",
-              activeTab === 'cart' ? "bg-white text-blue-600" : "bg-blue-600 text-white"
-            )}>
-              {cart.reduce((acc, item) => acc + (Number(item.quantity) || 0), 0)}
-            </span>
-          )}
-        </button>
-      </div>
-
       <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
         {/* Product List */}
-        <div className={cn(
-          "flex-1 flex flex-col border-r dark:border-slate-800",
-          activeTab !== 'products' && "hidden md:flex"
-        )}>
+        <div className="flex-1 flex flex-col border-r dark:border-slate-800">
           <div className="p-4">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
@@ -278,65 +236,27 @@ export function QuickMode({ onClose }: QuickModeProps) {
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 pb-32 md:pb-4">
-            {filteredProducts.map(product => {
-              const cartItem = cart.find(item => item.product.id === product.id);
-              const qtyInCart = cartItem?.quantity || 0;
-              return (
-                <div
-                  key={product.id}
-                  className={cn(
-                    "p-4 bg-white dark:bg-slate-800 border rounded-2xl text-left transition-all relative overflow-hidden flex flex-col justify-between min-h-[148px] shadow-sm hover:shadow-md",
-                    qtyInCart > 0 
-                      ? "border-blue-500 dark:border-blue-500 bg-blue-50/10 dark:bg-blue-900/10 ring-2 ring-blue-500/10" 
-                      : "border-slate-200 dark:border-slate-700"
-                  )}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="font-bold text-base mb-1 truncate text-slate-800 dark:text-slate-100">{product.descripcion}</div>
-                    <div className="text-blue-600 dark:text-blue-400 font-extrabold text-base">${product.precio.toFixed(2)}</div>
-                    <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">Stock: {product.cantidad}</div>
-                  </div>
-                  
-                  {qtyInCart > 0 ? (
-                    <div className="flex items-center justify-between mt-3 pt-2 border-t border-blue-100/30 dark:border-blue-900/30">
-                      <button
-                        type="button"
-                        onClick={() => removeFromCart(product.id)}
-                        className="p-1 px-2.5 bg-blue-100 hover:bg-blue-200 dark:bg-blue-950/50 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-lg text-sm font-bold active:scale-90 transition-transform"
-                      >
-                        <Minus className="w-3.5 h-3.5" />
-                      </button>
-                      <span className="font-extrabold text-sm text-slate-800 dark:text-slate-100">{qtyInCart}</span>
-                      <button
-                        type="button"
-                        onClick={() => addToCart(product)}
-                        className="p-1 px-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold active:scale-90 transition-transform"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => addToCart(product)}
-                      className="mt-3 w-full py-1.5 bg-slate-50 dark:bg-slate-900/30 hover:bg-blue-50 dark:hover:bg-blue-950/30 border border-slate-200 dark:border-slate-700 hover:border-blue-300 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:text-blue-600 flex items-center justify-center gap-1 active:scale-95 transition-all"
-                    >
-                      <Plus className="w-3 h-3" />
-                      Agregar
-                    </button>
-                  )}
+          <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+            {filteredProducts.map(product => (
+              <motion.button
+                key={product.id}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => addToCart(product)}
+                className="p-4 bg-white dark:bg-slate-800 border dark:border-slate-700 rounded-2xl text-left hover:shadow-lg transition-shadow relative overflow-hidden group"
+              >
+                <div className="font-bold text-lg mb-1 truncate">{product.descripcion}</div>
+                <div className="text-blue-600 dark:text-blue-400 font-bold">${product.precio.toFixed(2)}</div>
+                <div className="text-xs text-slate-500 mt-2">Stock: {product.cantidad}</div>
+                <div className="absolute right-2 bottom-2 bg-blue-100 dark:bg-blue-900/30 p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Plus className="w-4 h-4 text-blue-600" />
                 </div>
-              );
-            })}
+              </motion.button>
+            ))}
           </div>
         </div>
 
         {/* Cart / Checkout */}
-        <div className={cn(
-          "w-full md:w-96 bg-slate-50 dark:bg-slate-900/50 flex flex-col border-t md:border-t-0",
-          activeTab !== 'cart' && "hidden md:flex"
-        )}>
+        <div className="w-full md:w-96 bg-slate-50 dark:bg-slate-900/50 flex flex-col border-t md:border-t-0">
           <div className="p-4 border-b dark:border-slate-800 flex items-center justify-between">
             <div className="flex flex-col">
               <h3 className="font-bold">{t('current_sale')}</h3>
@@ -547,53 +467,32 @@ export function QuickMode({ onClose }: QuickModeProps) {
               className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl shadow-2xl overflow-hidden"
             >
               <div className="p-6 border-b dark:border-slate-800 flex items-center justify-between">
-                <div>
-                  <h3 className="text-xl font-bold">{t('select_client')}</h3>
-                  <p className="text-xs text-slate-400 mt-0.5">Opcional — podés dejarlo como Consumidor Final</p>
-                </div>
+                <h3 className="text-xl font-bold">{t('select_client')}</h3>
                 <button onClick={() => setShowClientSelector(false)}>
                   <X className="w-6 h-6" />
                 </button>
               </div>
-              <div className="p-4 border-b dark:border-slate-800">
-                <input
-                  type="text"
-                  placeholder="Buscar cliente..."
-                  value={clientSearch}
-                  onChange={(e) => setClientSearch(e.target.value)}
-                  className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:outline-none"
-                />
-              </div>
-              <div className="p-4 max-h-[50vh] overflow-y-auto space-y-2">
+              <div className="p-4 max-h-[60vh] overflow-y-auto space-y-2">
                 <button
                   onClick={() => {
                     setSelectedClient(null);
                     setShowClientSelector(false);
                   }}
-                  className={`w-full p-3.5 text-left rounded-2xl border-2 transition-all flex items-center justify-between ${!selectedClient ? 'border-blue-600 bg-blue-50 dark:bg-blue-900/20' : 'border-transparent hover:bg-slate-50 dark:hover:bg-slate-800'}`}
+                  className={`w-full p-4 text-left rounded-2xl border-2 transition-all ${!selectedClient ? 'border-blue-600 bg-blue-50 dark:bg-blue-900/20' : 'border-transparent hover:bg-slate-50 dark:hover:bg-slate-800'}`}
                 >
-                  <div>
-                    <div className="font-bold">{t('anonymous_client')}</div>
-                    <div className="text-xs text-slate-400">Venta sin cliente registrado</div>
-                  </div>
-                  {!selectedClient && <Check className="w-5 h-5 text-blue-600" />}
+                  <div className="font-bold">{t('anonymous_client')}</div>
                 </button>
-                {clients
-                  .filter(c => !clientSearch || c.nombre.toLowerCase().includes(clientSearch.toLowerCase()) || (c.telefono && c.telefono.includes(clientSearch)))
-                  .map(client => (
+                {clients.map(client => (
                   <button
                     key={client.id}
                     onClick={() => {
                       setSelectedClient(client);
                       setShowClientSelector(false);
                     }}
-                    className={`w-full p-3.5 text-left rounded-2xl border-2 transition-all flex items-center justify-between ${selectedClient?.id === client.id ? 'border-blue-600 bg-blue-50 dark:bg-blue-900/20' : 'border-transparent hover:bg-slate-50 dark:hover:bg-slate-800'}`}
+                    className={`w-full p-4 text-left rounded-2xl border-2 transition-all ${selectedClient?.id === client.id ? 'border-blue-600 bg-blue-50 dark:bg-blue-900/20' : 'border-transparent hover:bg-slate-50 dark:hover:bg-slate-800'}`}
                   >
-                    <div>
-                      <div className="font-bold">{client.nombre}</div>
-                      <div className="text-sm text-slate-500">{client.telefono || client.email || 'Sin contacto'}</div>
-                    </div>
-                    {selectedClient?.id === client.id && <Check className="w-5 h-5 text-blue-600" />}
+                    <div className="font-bold">{client.nombre}</div>
+                    <div className="text-sm text-slate-500">{client.telefono || client.email}</div>
                   </button>
                 ))}
               </div>

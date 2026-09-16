@@ -36,9 +36,19 @@ import {
   Image as ImageIcon,
   CheckSquare,
   Square,
-  Sparkles
+  Sparkles,
+  Wand2,
+  ChevronDown,
+  ChevronUp,
+  TrendingUp,
+  Tag,
+  RotateCcw,
+  Check,
+  Info,
+  Barcode,
+  DollarSign
 } from 'lucide-react';
-import { Button, Input } from '../components/ui';
+import { Button, Input, RefreshButton } from '../components/ui';
 import Modal from '../components/Modal';
 import ConfirmationModal from '../components/ConfirmationModal';
 import ProductSearch from '../components/ProductSearch';
@@ -117,6 +127,9 @@ export default function Inventory() {
     ubicacion: '',
     almacenId: '',
   });
+
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+  const [isSavingProduct, setIsSavingProduct] = useState(false);
 
   useEffect(() => {
     const fetchInitialData = async () => {
@@ -349,33 +362,82 @@ export default function Inventory() {
     }
   };
 
-  const handleAddProduct = async (e: React.FormEvent, keepCode: boolean = false) => {
+  const handleAutoGenerateCode = () => {
+    let prefix = 'ART';
+    if (formData.descripcion.trim()) {
+      const words = formData.descripcion.trim().split(/\s+/);
+      if (words.length >= 2) {
+        prefix = (words[0].slice(0, 3) + words[1].slice(0, 3)).toUpperCase();
+      } else if (words.length === 1) {
+        prefix = words[0].slice(0, 4).toUpperCase();
+      }
+    }
+    const cleanPrefix = prefix.replace(/[^A-Z0-9]/g, '') || 'ART';
+    const rand = Math.floor(1000 + Math.random() * 9000);
+    const newCode = `${cleanPrefix}-${rand}`;
+    setFormData(prev => ({ ...prev, codigo: newCode }));
+    toast.success(`Código generado: ${newCode}`);
+  };
+
+  const adjustStock = (delta: number) => {
+    const current = Number(formData.cantidad) || 0;
+    const next = Math.max(0, current + delta);
+    setFormData(prev => ({ ...prev, cantidad: next.toString() }));
+  };
+
+  const handleAddProduct = async (e?: React.FormEvent, keepOpen: boolean = false) => {
     if (e) e.preventDefault();
+
+    const trimmedDesc = formData.descripcion.trim();
+    const trimmedCode = formData.codigo.trim();
+
+    if (!trimmedDesc && !trimmedCode) {
+      toast.error("Ingresá al menos el nombre o código del producto");
+      return;
+    }
+
+    const finalCode = trimmedCode || `ART-${Math.floor(1000 + Math.random() * 9000)}`;
+    const finalDesc = trimmedDesc || `Producto ${finalCode}`;
+    const defaultWarehouseId = warehouses.length > 0 ? warehouses[0].id : 'principal';
+    const finalWarehouse = formData.almacenId || defaultWarehouseId;
+
+    setIsSavingProduct(true);
     try {
       await inventoryService.addProduct({
         ...formData,
+        codigo: finalCode,
+        descripcion: finalDesc,
+        almacenId: finalWarehouse,
         cantidad: Number(formData.cantidad) || 0,
         precio: Number(formData.precio) || 0,
         costo: Number(formData.costo) || 0,
-        minStock: Number(formData.minStock) || 3,
-        talle: formData.talle,
-        genero: formData.genero,
-        imagenUrl: formData.imagenUrl
+        minStock: formData.minStock !== '' ? (Number(formData.minStock) || 0) : 3,
+        talle: formData.talle || '',
+        genero: formData.genero || '',
+        ubicacion: formData.ubicacion || '',
+        imagenUrl: formData.imagenUrl || ''
       });
       await refreshAllProducts();
-      toast.success(t('product_added_success'));
+      toast.success(t('product_added_success') || 'Producto guardado exitosamente');
       
-      if (keepCode) {
-        const currentCode = formData.codigo;
+      if (keepOpen) {
+        const currentAlmacen = formData.almacenId;
         resetForm();
-        setFormData(prev => ({ ...prev, codigo: currentCode }));
-        toast.info("Datos limpiados. Código mantenido para nueva variante.");
+        if (currentAlmacen) {
+          setFormData(prev => ({ ...prev, almacenId: currentAlmacen }));
+        }
+        setShowAdvancedOptions(false);
+        toast.info("Formulario listo para cargar el siguiente producto.");
       } else {
         setIsAddModalOpen(false);
         resetForm();
+        setShowAdvancedOptions(false);
       }
     } catch (error) {
-      toast.error(t('product_added_error'));
+      console.error('Error adding product:', error);
+      toast.error(t('product_added_error') || 'Error al guardar el producto');
+    } finally {
+      setIsSavingProduct(false);
     }
   };
 
@@ -384,16 +446,23 @@ export default function Inventory() {
     if (!selectedProduct) return;
     const wasInDetailModal = isDetailModalOpen;
     setIsLoading(true);
+    setIsSavingProduct(true);
     try {
+      const defaultWarehouseId = warehouses.length > 0 ? warehouses[0].id : 'principal';
+      const finalWarehouse = formData.almacenId || selectedProduct.almacenId || defaultWarehouseId;
       const updatedData = {
         ...formData,
+        codigo: formData.codigo.trim() || selectedProduct.codigo,
+        descripcion: formData.descripcion.trim() || selectedProduct.descripcion,
+        almacenId: finalWarehouse,
         cantidad: Number(formData.cantidad) || 0,
         precio: Number(formData.precio) || 0,
         costo: Number(formData.costo) || 0,
-        minStock: Number(formData.minStock) || 3,
-        talle: formData.talle,
-        genero: formData.genero,
-        imagenUrl: formData.imagenUrl,
+        minStock: formData.minStock !== '' ? (Number(formData.minStock) || 0) : 3,
+        talle: formData.talle || '',
+        genero: formData.genero || '',
+        ubicacion: formData.ubicacion || '',
+        imagenUrl: formData.imagenUrl || '',
       };
       
       await inventoryService.updateProduct(selectedProduct.id, updatedData);
@@ -404,7 +473,7 @@ export default function Inventory() {
       // Background refresh
       refreshProducts().catch(console.error);
       
-      toast.success(t('product_updated_success'));
+      toast.success(t('product_updated_success') || 'Producto actualizado exitosamente');
       setIsEditModalOpen(false);
       
       // If we want to return to details modal or keep it open
@@ -413,10 +482,13 @@ export default function Inventory() {
       }
       
       resetForm();
+      setShowAdvancedOptions(false);
     } catch (error) {
-      toast.error(t('product_updated_error'));
+      console.error('Error updating product:', error);
+      toast.error(t('product_updated_error') || 'Error al actualizar el producto');
     } finally {
       setIsLoading(false);
+      setIsSavingProduct(false);
     }
   };
 
@@ -468,6 +540,7 @@ export default function Inventory() {
       almacenId: warehouses.length > 0 ? warehouses[0].id : '',
       imagenUrl: '',
     });
+    setShowAdvancedOptions(false);
   };
 
   const openEditModal = (product: Product) => {
@@ -487,6 +560,10 @@ export default function Inventory() {
       almacenId: product.almacenId || '',
       imagenUrl: product.imagenUrl || '',
     });
+    const hasAdvanced = Boolean(
+      product.talle || product.genero || product.ubicacion || product.imagenUrl || (product.minStock && product.minStock !== 3) || product.procedencia !== 'Legítimo' || product.estado !== 'Nuevo'
+    );
+    setShowAdvancedOptions(hasAdvanced);
     setIsEditModalOpen(true);
   };
 
@@ -548,6 +625,22 @@ export default function Inventory() {
     );
   }
 
+  const currentPrice = Number(formData.precio) || 0;
+  const currentCost = Number(formData.costo) || 0;
+  const profitMargin = currentPrice - currentCost;
+  const profitPercentage = currentCost > 0 ? ((profitMargin / currentCost) * 100).toFixed(0) : null;
+
+  const activeAdvancedCount = [
+    Boolean(formData.almacenId && warehouses.length > 1 && formData.almacenId !== warehouses[0]?.id),
+    Boolean(formData.ubicacion?.trim()),
+    Boolean(formData.talle?.trim()),
+    Boolean(formData.genero?.trim()),
+    Boolean(formData.imagenUrl?.trim()),
+    Boolean(formData.minStock !== '' && formData.minStock !== '3' && formData.minStock !== 3),
+    formData.procedencia !== 'Legítimo',
+    formData.estado !== 'Nuevo'
+  ].filter(Boolean).length;
+
   return (
     <div className="space-y-6">
       {/* Header Actions */}
@@ -562,14 +655,13 @@ export default function Inventory() {
           />
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button 
-            variant="ghost" 
-            onClick={refreshProducts}
-            className="h-12 px-4 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-xl transition-all"
+          <RefreshButton 
+            onRefresh={refreshProducts}
+            isLoading={isLoading || productsLoading}
+            label={t('refresh') || 'Actualizar'}
             title="Actualizar inventario"
-          >
-            <Clock className={cn("w-5 h-5", isLoading && "animate-spin")} />
-          </Button>
+            className="h-12"
+          />
           <div className="h-8 w-px bg-gray-100 dark:bg-gray-800 mx-1 hidden sm:block" />
           <Button 
             id="btn-inventory-filter-toggle"
@@ -1381,10 +1473,37 @@ export default function Inventory() {
       {/* Add/Edit Modal */}
       <Modal
         isOpen={isAddModalOpen || isEditModalOpen}
-        onClose={() => { setIsAddModalOpen(false); setIsEditModalOpen(false); }}
-        title={isAddModalOpen ? t('new_product') : t('edit_product')}
+        onClose={() => { 
+          setIsAddModalOpen(false); 
+          setIsEditModalOpen(false); 
+          setShowAdvancedOptions(false);
+        }}
+        title={isAddModalOpen ? (t('new_product') || 'Nuevo Producto') : (t('edit_product') || 'Editar Producto')}
+        maxWidth="max-w-2xl sm:max-w-3xl"
       >
-        <form onSubmit={isAddModalOpen ? handleAddProduct : handleEditProduct} className="space-y-6">
+        <form onSubmit={isAddModalOpen ? (e) => handleAddProduct(e, false) : handleEditProduct} className="space-y-6">
+          {/* Helpful quick guide banner */}
+          <div className="flex items-center justify-between p-3.5 bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/40 rounded-2xl">
+            <div className="flex items-center gap-3">
+              <span className="p-2 bg-indigo-600 text-white rounded-xl shadow-xs">
+                <Sparkles size={16} />
+              </span>
+              <div>
+                <p className="text-xs font-black text-gray-900 dark:text-white">
+                  {isAddModalOpen ? 'Carga Rápida y Flexible' : 'Editar Producto'}
+                </p>
+                <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                  {isAddModalOpen 
+                    ? 'Completá solo lo que necesites. Si no tenés código, el sistema lo genera por vos.'
+                    : 'Modificá los campos necesarios y guardá los cambios.'}
+                </p>
+              </div>
+            </div>
+            <span className="text-[10px] font-bold px-2.5 py-1 bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 rounded-lg border border-emerald-200 dark:border-emerald-800">
+              Campos Opcionales
+            </span>
+          </div>
+
           {isEditModalOpen && selectedProduct && (
             <div className="p-4 bg-indigo-50/50 dark:bg-indigo-900/10 border border-indigo-100 dark:border-indigo-800 rounded-2xl space-y-4">
               <p className="text-xs font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">{t('manage_locations') || 'Gestionar Variantes y Ubicaciones'}</p>
@@ -1485,183 +1604,459 @@ export default function Inventory() {
             </motion.div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="relative">
-              <Input 
-                label={t('article_code')} 
-                placeholder="Ej: IPH-13-PRO" 
-                required
-                value={formData.codigo}
-                onChange={(e) => setFormData({...formData, codigo: e.target.value.toUpperCase()})}
-                className={cn(isAddModalOpen && duplicateProducts.length > 0 && "border-amber-500 ring-amber-500/20")}
-              />
-              {isCheckingCode && (
-                <div className="absolute right-3 bottom-3">
-                  <Loader2 size={16} className="animate-spin text-indigo-500" />
-                </div>
-              )}
-            </div>
+          {/* Core / Essential Section */}
+          <div className="space-y-4">
+            {/* Description / Product Name */}
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-300 block ml-1">{t('origin')}</label>
-              <select 
-                value={formData.procedencia}
-                onChange={(e) => setFormData({...formData, procedencia: e.target.value as any})}
-                className="w-full px-4 py-2.5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all duration-200"
-              >
-                <option value="Legítimo">{t('legitimate')}</option>
-                <option value="Genérico">{t('generic')}</option>
-                <option value="Importado">{t('imported')}</option>
-              </select>
-            </div>
-            <Input 
-              label={t('description')} 
-              placeholder="Ej: iPhone 13 Pro 256GB" 
-              className="md:col-span-2" 
-              value={formData.descripcion}
-              onChange={(e) => setFormData({...formData, descripcion: e.target.value})}
-            />
-            <Input 
-              label="Talle" 
-              placeholder="Ej: XL, 38, Niño" 
-              required
-              value={formData.talle}
-              onChange={(e) => setFormData({...formData, talle: e.target.value})}
-            />
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block ml-1">Género <span className="text-rose-500">*</span></label>
-              <select 
-                className="w-full h-12 bg-gray-50 dark:bg-gray-800 border-none rounded-2xl px-4 text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none appearance-none"
-                value={formData.genero}
-                onChange={(e) => setFormData({...formData, genero: e.target.value})}
-                required
-              >
-                <option value="">Seleccionar...</option>
-                <option value="Hombre">Hombre</option>
-                <option value="Mujer">Mujer</option>
-                <option value="Unisex">Unisex</option>
-              </select>
-            </div>
-            <Input 
-              label={t('location')} 
-              placeholder="Ej: Estante A-1" 
-              value={formData.ubicacion}
-              onChange={(e) => setFormData({...formData, ubicacion: e.target.value})}
-            />
-            <Input 
-              label={t('cost')} 
-              type="number" 
-              placeholder="0.00" 
-              value={formData.costo}
-              onChange={(e) => setFormData({...formData, costo: e.target.value})}
-            />
-            <Input 
-              label={t('price')} 
-              type="number" 
-              placeholder="0.00" 
-              value={formData.precio}
-              onChange={(e) => setFormData({...formData, precio: e.target.value})}
-            />
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block ml-1">
-                {t('min_stock')}
+              <label className="text-xs font-black text-gray-700 dark:text-gray-300 flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <Package size={15} className="text-indigo-600 dark:text-indigo-400" />
+                  Nombre o Descripción del Producto
+                </span>
+                <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 px-2 py-0.5 rounded-md">
+                  Recomendado
+                </span>
               </label>
               <Input 
-                type="number" 
-                placeholder="3" 
-                value={formData.minStock}
-                onChange={(e) => setFormData({...formData, minStock: e.target.value})}
+                placeholder="Ej: Aceite Shell Helix 10W40, Pastillas de freno Gol, Filtro de aire..." 
+                value={formData.descripcion}
+                onChange={(e) => setFormData({...formData, descripcion: e.target.value})}
+                autoFocus
+                className="text-sm font-medium"
               />
-              <p className="text-[10px] text-gray-400 font-bold ml-1">{t('min_stock_help')}</p>
+              <p className="text-[10px] text-gray-400 font-medium ml-1">
+                El nombre con el que identificarás el producto en ventas y búsquedas.
+              </p>
             </div>
-            <Input 
-              label={t('qty')} 
-              type="number" 
-              placeholder="0" 
-              value={formData.cantidad}
-              onChange={(e) => setFormData({...formData, cantidad: e.target.value})}
-            />
 
-            <div className="space-y-2 md:col-span-2">
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-1 mb-1">Imagen del Producto</label>
-              <div 
-                onClick={() => fileInputRef.current?.click()}
-                className={cn(
-                  "relative group cursor-pointer border-2 border-dashed rounded-[2rem] transition-all flex flex-col items-center justify-center min-h-[140px] overflow-hidden bg-gray-50 dark:bg-gray-900/50 hover:bg-indigo-50/50 dark:hover:bg-indigo-900/10",
-                  formData.imagenUrl ? "border-indigo-500/50" : "border-gray-200 dark:border-gray-800 hover:border-indigo-400"
-                )}
-              >
-                {formData.imagenUrl ? (
-                  <>
-                    <img 
-                      src={formData.imagenUrl} 
-                      alt="Preview" 
-                      className="w-full h-full object-cover absolute inset-0 opacity-80 group-hover:opacity-60 transition-opacity"
-                    />
-                    <div className="relative z-10 flex flex-col items-center animate-in fade-in zoom-in duration-300">
-                      <div className="p-3 bg-white/90 dark:bg-gray-900/90 rounded-2xl shadow-xl border border-white dark:border-gray-800 text-indigo-600">
-                        <Upload size={24} />
-                      </div>
-                      <span className="mt-2 text-[10px] font-black uppercase text-white drop-shadow-md">Cambiar Foto</span>
-                    </div>
-                    <button 
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setFormData({...formData, imagenUrl: ''});
-                      }}
-                      className="absolute top-4 right-4 z-20 p-2 bg-rose-500 text-white rounded-xl shadow-lg hover:bg-rose-600 transition-colors"
-                    >
-                      <X size={16} />
-                    </button>
-                  </>
-                ) : (
-                  <div className="flex flex-col items-center text-gray-400 group-hover:text-indigo-500 transition-colors">
-                    <div className="p-4 bg-gray-100 dark:bg-gray-800 rounded-3xl mb-3 group-hover:bg-indigo-100 dark:group-hover:bg-indigo-900/30">
-                      <ImageIcon size={32} />
-                    </div>
-                    <p className="text-[11px] font-bold uppercase tracking-widest">Haz clic para subir imagen</p>
-                    <p className="text-[9px] font-medium opacity-60">PNG, JPG hasta 800KB</p>
-                  </div>
-                )}
-                <input 
-                  type="file" 
-                  ref={fileInputRef}
-                  className="hidden" 
-                  accept="image/*"
-                  onChange={handleFileChange}
+            {/* Prices and live profit margin */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
+                  <DollarSign size={14} className="text-emerald-600" />
+                  Precio de Venta ($)
+                </label>
+                <Input 
+                  type="number" 
+                  step="any"
+                  placeholder="0.00" 
+                  value={formData.precio}
+                  onChange={(e) => setFormData({...formData, precio: e.target.value})}
+                  className="font-bold text-emerald-600 dark:text-emerald-400 text-sm"
                 />
-              </div>
-              
-              <div className="relative mt-4">
-                <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-100 dark:bg-gray-800" />
-                <span className="relative z-10 mx-auto block w-fit px-4 bg-white dark:bg-gray-900 text-[9px] font-black text-gray-400 uppercase tracking-widest">O pega una URL</span>
+                <p className="text-[10px] text-gray-400 ml-1">Precio al público</p>
               </div>
 
-              <Input 
-                placeholder="https://ejemplo.com/imagen.jpg" 
-                value={formData.imagenUrl && !formData.imagenUrl.startsWith('data:') ? formData.imagenUrl : ''}
-                onChange={(e) => setFormData({...formData, imagenUrl: e.target.value})}
-              />
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-700 dark:text-gray-300 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <DollarSign size={14} className="text-gray-400" />
+                    Costo de Compra ($)
+                  </span>
+                  <span className="text-[10px] text-gray-400 font-normal">Opcional</span>
+                </label>
+                <Input 
+                  type="number" 
+                  step="any"
+                  placeholder="0.00" 
+                  value={formData.costo}
+                  onChange={(e) => setFormData({...formData, costo: e.target.value})}
+                  className="text-sm"
+                />
+                <p className="text-[10px] text-gray-400 ml-1">Para calcular tus ganancias</p>
+              </div>
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-300 block ml-1">{t('warehouse')}</label>
-              <select 
-                value={formData.almacenId}
-                onChange={(e) => setFormData({...formData, almacenId: e.target.value})}
-                className="w-full px-4 py-2.5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all duration-200"
-                required
-              >
-                <option value="">{t('select_warehouse')}...</option>
-                {warehouses.map(w => (
-                  <option key={w.id} value={w.id}>{w.nombre}</option>
-                ))}
-              </select>
+            {/* Live Profit Preview */}
+            {currentPrice > 0 && currentCost > 0 && (
+              <div className={cn(
+                "p-2.5 rounded-xl border flex items-center justify-between text-xs font-bold transition-all",
+                profitMargin >= 0 
+                  ? "bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60 text-emerald-800 dark:text-emerald-300"
+                  : "bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300"
+              )}>
+                <div className="flex items-center gap-2">
+                  <TrendingUp size={15} />
+                  <span>
+                    {profitMargin >= 0 ? 'Margen estimado de ganancia:' : 'Alerta de costo:'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-black">
+                    ${profitMargin.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                  </span>
+                  {profitPercentage && (
+                    <span className="px-1.5 py-0.5 rounded-md bg-white/70 dark:bg-black/40 text-[10px]">
+                      {profitPercentage}%
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Stock and Code */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+              {/* Stock with quick step buttons */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-700 dark:text-gray-300 flex items-center justify-between">
+                  <span>Stock Actual</span>
+                  <span className="text-[10px] text-gray-400 font-normal">Opcional (Defecto: 0)</span>
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <Input 
+                    type="number" 
+                    placeholder="0" 
+                    value={formData.cantidad}
+                    onChange={(e) => setFormData({...formData, cantidad: e.target.value})}
+                    className="font-bold text-sm text-center"
+                  />
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => adjustStock(-1)}
+                      className="h-10 px-2.5 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-xs font-black text-gray-700 dark:text-gray-200 transition-colors"
+                      title="Restar 1"
+                    >
+                      -1
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => adjustStock(1)}
+                      className="h-10 px-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-xs font-black text-indigo-600 dark:text-indigo-400 transition-colors"
+                      title="Sumar 1"
+                    >
+                      +1
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => adjustStock(5)}
+                      className="h-10 px-2 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-xs font-bold text-gray-600 dark:text-gray-300 transition-colors hidden sm:block"
+                      title="Sumar 5"
+                    >
+                      +5
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Code with Auto-generator */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
+                    <Barcode size={14} className="text-gray-500" />
+                    Código / SKU
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleAutoGenerateCode}
+                    className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
+                    title="Generar código aleatorio"
+                  >
+                    <Wand2 size={11} />
+                    Generar código
+                  </button>
+                </div>
+                <div className="relative">
+                  <Input 
+                    placeholder="Ej: ART-1042 o código de barras" 
+                    value={formData.codigo}
+                    onChange={(e) => setFormData({...formData, codigo: e.target.value.toUpperCase()})}
+                    className={cn("text-xs font-mono uppercase", isAddModalOpen && duplicateProducts.length > 0 && "border-amber-500 ring-amber-500/20")}
+                  />
+                  {isCheckingCode && (
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                      <Loader2 size={14} className="animate-spin text-indigo-500" />
+                    </div>
+                  )}
+                </div>
+                <p className="text-[10px] text-gray-400 ml-1">
+                  Opcional: Si lo dejás vacío se asignará uno automáticamente.
+                </p>
+              </div>
             </div>
           </div>
-          <div className="flex justify-end gap-3 pt-6 border-t border-gray-100 dark:border-gray-800">
-            <Button variant="outline" type="button" onClick={() => { setIsAddModalOpen(false); setIsEditModalOpen(false); }}>{t('cancel')}</Button>
-            <Button type="submit">{t('save_product')}</Button>
+
+          {/* Expandable Advanced Options Section */}
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
+              className="w-full p-3 bg-gray-50 dark:bg-gray-800/60 hover:bg-indigo-50/50 dark:hover:bg-indigo-950/20 border border-gray-200 dark:border-gray-800 rounded-2xl flex items-center justify-between transition-all group"
+            >
+              <div className="flex items-center gap-2.5 text-left">
+                <div className="p-1.5 rounded-xl bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 group-hover:text-indigo-600 group-hover:bg-indigo-50 transition-colors shadow-2xs">
+                  <Layers size={15} />
+                </div>
+                <div>
+                  <span className="text-xs font-black text-gray-900 dark:text-white group-hover:text-indigo-600 transition-colors">
+                    {showAdvancedOptions ? 'Ocultar opciones adicionales' : 'Ver más opciones (Depósito, Ubicación, Alerta Stock, Foto, Talle...)'}
+                  </span>
+                  <p className="text-[10px] text-gray-400">
+                    Opcionales: Completalos únicamente si tu negocio los necesita.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {activeAdvancedCount > 0 && (
+                  <span className="text-[10px] font-black bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded-full">
+                    {activeAdvancedCount} activa{activeAdvancedCount > 1 ? 's' : ''}
+                  </span>
+                )}
+                {showAdvancedOptions ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+              </div>
+            </button>
+
+            <AnimatePresence>
+              {showAdvancedOptions && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="overflow-hidden"
+                >
+                  <div className="p-4 sm:p-5 mt-3 bg-white dark:bg-gray-800/40 border border-gray-200 dark:border-gray-800 rounded-2xl space-y-4">
+                    {/* Warehouse & Location */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-gray-700 dark:text-gray-300 block">
+                          {t('warehouse') || 'Depósito'} <span className="text-gray-400 font-normal">(Opcional)</span>
+                        </label>
+                        <select 
+                          value={formData.almacenId}
+                          onChange={(e) => setFormData({...formData, almacenId: e.target.value})}
+                          className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl text-xs font-medium text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                        >
+                          <option value="">Depósito Principal (Automático)</option>
+                          {warehouses.map(w => (
+                            <option key={w.id} value={w.id}>{w.nombre}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-gray-700 dark:text-gray-300 block">
+                          {t('location') || 'Ubicación física'} <span className="text-gray-400 font-normal">(Opcional)</span>
+                        </label>
+                        <Input 
+                          placeholder="Ej: Estante 3, Fila B, Cajón 12" 
+                          value={formData.ubicacion}
+                          onChange={(e) => setFormData({...formData, ubicacion: e.target.value})}
+                          className="text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Stock Minimo, Procedencia y Estado */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-gray-700 dark:text-gray-300 block">
+                          {t('min_stock') || 'Alerta Stock Mínimo'} <span className="text-gray-400 font-normal">(Opcional)</span>
+                        </label>
+                        <Input 
+                          type="number" 
+                          placeholder="3" 
+                          value={formData.minStock}
+                          onChange={(e) => setFormData({...formData, minStock: e.target.value})}
+                          className="text-xs"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-gray-700 dark:text-gray-300 block">
+                          {t('origin') || 'Procedencia'} <span className="text-gray-400 font-normal">(Opcional)</span>
+                        </label>
+                        <select 
+                          value={formData.procedencia}
+                          onChange={(e) => setFormData({...formData, procedencia: e.target.value as any})}
+                          className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl text-xs font-medium text-gray-900 dark:text-white outline-none"
+                        >
+                          <option value="Legítimo">{t('legitimate') || 'Legítimo'}</option>
+                          <option value="Genérico">{t('generic') || 'Genérico'}</option>
+                          <option value="Importado">{t('imported') || 'Importado'}</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-gray-700 dark:text-gray-300 block">
+                          Estado <span className="text-gray-400 font-normal">(Opcional)</span>
+                        </label>
+                        <select 
+                          value={formData.estado}
+                          onChange={(e) => setFormData({...formData, estado: e.target.value as any})}
+                          className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl text-xs font-medium text-gray-900 dark:text-white outline-none"
+                        >
+                          <option value="Nuevo">Nuevo</option>
+                          <option value="Usado">Usado</option>
+                          <option value="Reacondicionado">Reacondicionado</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Rubro Indumentaria (Completamente Opcional) */}
+                    <div className="p-3 bg-gray-50/70 dark:bg-gray-900/40 rounded-xl border border-dashed border-gray-200 dark:border-gray-800 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-black text-gray-600 dark:text-gray-300 flex items-center gap-1.5">
+                          <Tag size={13} /> Rubro Indumentaria / Ropa (100% Opcional)
+                        </span>
+                        <span className="text-[10px] text-gray-400 font-medium">Dejar vacío si no aplica</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <Input 
+                            label="Talle / Medida" 
+                            placeholder="Ej: XL, 42, S, Universal" 
+                            value={formData.talle}
+                            onChange={(e) => setFormData({...formData, talle: e.target.value})}
+                            className="text-xs"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-gray-700 dark:text-gray-300 block ml-1">
+                            Género
+                          </label>
+                          <select 
+                            className="w-full h-10 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl px-3 text-xs font-medium text-gray-900 dark:text-white outline-none"
+                            value={formData.genero}
+                            onChange={(e) => setFormData({...formData, genero: e.target.value})}
+                          >
+                            <option value="">Sin especificar</option>
+                            <option value="Hombre">Hombre</option>
+                            <option value="Mujer">Mujer</option>
+                            <option value="Unisex">Unisex</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Foto del Producto */}
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-gray-700 dark:text-gray-300 flex items-center justify-between">
+                        <span>Imagen del Producto <span className="text-gray-400 font-normal">(Opcional)</span></span>
+                      </label>
+                      <div 
+                        onClick={() => fileInputRef.current?.click()}
+                        className={cn(
+                          "relative group cursor-pointer border-2 border-dashed rounded-2xl transition-all flex flex-col items-center justify-center min-h-[120px] overflow-hidden bg-gray-50 dark:bg-gray-900/50 hover:bg-indigo-50/50 dark:hover:bg-indigo-900/10",
+                          formData.imagenUrl ? "border-indigo-500/50" : "border-gray-200 dark:border-gray-800 hover:border-indigo-400"
+                        )}
+                      >
+                        {formData.imagenUrl ? (
+                          <>
+                            <img 
+                              src={formData.imagenUrl} 
+                              alt="Preview" 
+                              className="w-full h-full object-cover absolute inset-0 opacity-80 group-hover:opacity-60 transition-opacity"
+                            />
+                            <div className="relative z-10 flex flex-col items-center animate-in fade-in zoom-in duration-300">
+                              <div className="p-2.5 bg-white/90 dark:bg-gray-900/90 rounded-xl shadow-xl border border-white dark:border-gray-800 text-indigo-600">
+                                <Upload size={20} />
+                              </div>
+                              <span className="mt-1.5 text-[10px] font-black uppercase text-white drop-shadow-md">Cambiar Foto</span>
+                            </div>
+                            <button 
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setFormData({...formData, imagenUrl: ''});
+                              }}
+                              className="absolute top-3 right-3 z-20 p-1.5 bg-rose-500 text-white rounded-xl shadow-lg hover:bg-rose-600 transition-colors"
+                            >
+                              <X size={14} />
+                            </button>
+                          </>
+                        ) : (
+                          <div className="flex flex-col items-center text-gray-400 group-hover:text-indigo-500 transition-colors py-3">
+                            <div className="p-3 bg-gray-100 dark:bg-gray-800 rounded-2xl mb-2 group-hover:bg-indigo-100 dark:group-hover:bg-indigo-900/30">
+                              <ImageIcon size={24} />
+                            </div>
+                            <p className="text-[11px] font-bold">Subir foto desde dispositivo</p>
+                            <p className="text-[9px] font-medium opacity-60">PNG, JPG</p>
+                          </div>
+                        )}
+                        <input 
+                          type="file" 
+                          ref={fileInputRef}
+                          className="hidden" 
+                          accept="image/*"
+                          onChange={handleFileChange}
+                        />
+                      </div>
+                      
+                      <div className="relative mt-2">
+                        <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-100 dark:bg-gray-800" />
+                        <span className="relative z-10 mx-auto block w-fit px-3 bg-white dark:bg-gray-900 text-[9px] font-bold text-gray-400 uppercase tracking-widest">O URL directa</span>
+                      </div>
+
+                      <Input 
+                        placeholder="https://ejemplo.com/foto.jpg" 
+                        value={formData.imagenUrl && !formData.imagenUrl.startsWith('data:') ? formData.imagenUrl : ''}
+                        onChange={(e) => setFormData({...formData, imagenUrl: e.target.value})}
+                        className="text-xs"
+                      />
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* Footer Actions */}
+          <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-3 pt-6 border-t border-gray-100 dark:border-gray-800">
+            <button 
+              type="button"
+              onClick={resetForm}
+              className="text-xs text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 flex items-center gap-1.5 justify-center py-2 transition-colors font-medium"
+            >
+              <RotateCcw size={14} />
+              <span>Limpiar datos</span>
+            </button>
+
+            <div className="flex items-center gap-2.5 justify-end">
+              <Button 
+                variant="outline" 
+                type="button" 
+                onClick={() => { 
+                  setIsAddModalOpen(false); 
+                  setIsEditModalOpen(false); 
+                  setShowAdvancedOptions(false);
+                }}
+                className="rounded-xl text-xs font-bold"
+              >
+                {t('cancel') || 'Cancelar'}
+              </Button>
+
+              {isAddModalOpen && (
+                <Button 
+                  type="button"
+                  variant="outline"
+                  disabled={isSavingProduct}
+                  onClick={() => handleAddProduct(undefined, true)}
+                  className="rounded-xl text-xs font-bold border-indigo-200 text-indigo-600 dark:border-indigo-800 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40"
+                  title="Guarda este producto y deja el formulario abierto para cargar el siguiente"
+                >
+                  <Plus size={15} className="mr-1.5" />
+                  Guardar y crear otro
+                </Button>
+              )}
+
+              <Button 
+                type="submit"
+                disabled={isSavingProduct}
+                className="rounded-xl text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm flex items-center gap-1.5 min-w-[130px] justify-center"
+              >
+                {isSavingProduct ? (
+                  <>
+                    <Loader2 size={15} className="animate-spin" />
+                    <span>Guardando...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check size={15} />
+                    <span>{isAddModalOpen ? (t('save_product') || 'Guardar Producto') : 'Guardar Cambios'}</span>
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
         </form>
       </Modal>

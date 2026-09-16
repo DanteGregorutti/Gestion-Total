@@ -1,6 +1,0 @@
-{
-  "name": "Gestión Total",
-  "description": "Sistema moderno de gestión de inventario, ventas y compras para empresas SaaS.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
