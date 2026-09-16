@@ -93,14 +93,21 @@ export const geminiService = {
         body: JSON.stringify({ prompt, systemInstruction }),
       });
 
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        const textPreview = await response.text();
+        console.error("Non-JSON response from /api/ai/ask:", textPreview.slice(0, 200));
+        return "No se pudo conectar con el endpoint de IA (/api/ai/ask). Si estás en Vercel, sube la nueva versión con la carpeta /api y agrega la variable GEMINI_API_KEY en tu panel de Vercel.";
+      }
+
       const data = await response.json();
-      if (data.error) {
-        return data.error;
+      if (!response.ok || data.error) {
+        return data.error || `Error del servidor (${response.status}): Por favor intenta de nuevo.`;
       }
       return data.text;
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error calling Gemini API proxy:", error);
-      return "Hubo un error de conexión al consultar el asistente IA. Por favor, intenta de nuevo.";
+      return `Hubo un error de conexión al consultar el asistente IA (${error?.message || 'Error de red'}). Por favor, verifica la configuración en Vercel y tu conexión.`;
     }
   }
 };
