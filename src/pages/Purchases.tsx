@@ -102,8 +102,43 @@ export default function Purchases() {
     productNombre: '',
     cantidad: '' as any,
     costo: '' as any,
+    total: '' as any,
     proveedor: ''
   });
+
+  const handleSinglePurchaseChange = (field: 'cantidad' | 'costo' | 'total', value: string) => {
+    setFormData(prev => {
+      const next = { ...prev, [field]: value };
+      const qty = Number(field === 'cantidad' ? value : next.cantidad) || 0;
+
+      if (field === 'costo') {
+        const costVal = Number(value);
+        if (value !== '' && !isNaN(costVal) && qty > 0) {
+          next.total = parseFloat((costVal * qty).toFixed(2)).toString();
+        } else if (value === '') {
+          next.total = '';
+        }
+      } else if (field === 'total') {
+        const totalVal = Number(value);
+        if (value !== '' && !isNaN(totalVal) && qty > 0) {
+          next.costo = parseFloat((totalVal / qty).toFixed(2)).toString();
+        } else if (value === '') {
+          next.costo = '';
+        }
+      } else if (field === 'cantidad') {
+        const currentCost = Number(next.costo);
+        const currentTotal = Number(next.total);
+        if (qty > 0) {
+          if (next.costo !== '' && !isNaN(currentCost) && currentCost > 0) {
+            next.total = parseFloat((currentCost * qty).toFixed(2)).toString();
+          } else if (next.total !== '' && !isNaN(currentTotal) && currentTotal > 0) {
+            next.costo = parseFloat((currentTotal / qty).toFixed(2)).toString();
+          }
+        }
+      }
+      return next;
+    });
+  };
 
   const [selectedBaseProduct, setSelectedBaseProduct] = useState<any | null>(null);
 
@@ -336,15 +371,24 @@ export default function Purchases() {
 
     setIsSubmitting(true);
     try {
+      const qty = Number(formData.cantidad) || 0;
+      const totalAmount = formData.total !== '' && !isNaN(Number(formData.total))
+        ? Number(formData.total)
+        : (qty * (Number(formData.costo) || 0));
+      const unitCost = formData.costo !== '' && !isNaN(Number(formData.costo))
+        ? Number(formData.costo)
+        : (qty > 0 ? totalAmount / qty : 0);
+
       await inventoryService.registerPurchase({
         ...formData,
-        cantidad: Number(formData.cantidad) || 0,
-        costo: Number(formData.costo) || 0,
+        cantidad: qty,
+        costo: unitCost,
+        total: totalAmount,
         productNombre: `${product.descripcion || product.codigo} (${product.talle || 'N/A'} - ${product.genero || 'N/A'})`,
       });
       toast.success(t('purchase_registered_success'));
       setIsAddModalOpen(false);
-      setFormData({ productId: '', productNombre: '', cantidad: '', costo: '', proveedor: '' });
+      setFormData({ productId: '', productNombre: '', cantidad: '', costo: '', total: '', proveedor: '' });
       await refreshData();
     } catch (error) {
       toast.error(t('purchase_registered_error'));
@@ -446,11 +490,13 @@ export default function Purchases() {
       toast.info(t('product_already_in_cart'));
       return;
     }
+    const initialCost = product.costo || 0;
     setBulkItems([...bulkItems, {
       productId: product.id,
       productNombre: `${product.descripcion || product.codigo} (${product.talle || 'N/A'} - ${product.genero || 'N/A'})`,
       cantidad: 1,
-      costo: product.costo || 0,
+      costo: initialCost || '',
+      total: initialCost || '',
       codigo: product.codigo,
       talle: product.talle,
       genero: product.genero
@@ -461,10 +507,59 @@ export default function Purchases() {
     setBulkItems(bulkItems.filter(item => item.productId !== productId));
   };
 
-  const updateBulkItem = (productId: string, field: string, value: any) => {
-    setBulkItems(bulkItems.map(item => 
-      item.productId === productId ? { ...item, [field]: value } : item
-    ));
+  const updateBulkItem = (productId: string, field: 'cantidad' | 'costo' | 'total', value: any) => {
+    setBulkItems(prev => prev.map(item => {
+      if (item.productId !== productId) return item;
+
+      if (field === 'costo') {
+        const costVal = value;
+        const qty = Number(item.cantidad) || 0;
+        const calcTotal = (costVal !== '' && !isNaN(Number(costVal)) && qty > 0)
+          ? parseFloat((Number(costVal) * qty).toFixed(2)).toString()
+          : '';
+        return {
+          ...item,
+          costo: costVal,
+          total: calcTotal
+        };
+      }
+
+      if (field === 'total') {
+        const totalVal = value;
+        const qty = Number(item.cantidad) || 0;
+        const calcCost = (totalVal !== '' && !isNaN(Number(totalVal)) && qty > 0)
+          ? parseFloat((Number(totalVal) / qty).toFixed(2)).toString()
+          : '';
+        return {
+          ...item,
+          total: totalVal,
+          costo: calcCost
+        };
+      }
+
+      if (field === 'cantidad') {
+        const qtyVal = value;
+        const qtyNum = Number(qtyVal) || 0;
+        let newTotal = item.total;
+        let newCost = item.costo;
+
+        if (qtyNum > 0) {
+          if (newCost !== '' && !isNaN(Number(newCost)) && Number(newCost) > 0) {
+            newTotal = parseFloat((Number(newCost) * qtyNum).toFixed(2)).toString();
+          } else if (newTotal !== '' && !isNaN(Number(newTotal)) && Number(newTotal) > 0) {
+            newCost = parseFloat((Number(newTotal) / qtyNum).toFixed(2)).toString();
+          }
+        }
+        return {
+          ...item,
+          cantidad: qtyVal,
+          costo: newCost,
+          total: newTotal
+        };
+      }
+
+      return { ...item, [field]: value };
+    }));
   };
 
   const handleRegisterBulkPurchase = async () => {
@@ -480,13 +575,24 @@ export default function Purchases() {
 
     setIsSubmitting(true);
     try {
-      await inventoryService.registerBulkPurchase(bulkItems.map(item => ({
-        productId: item.productId,
-        productNombre: item.productNombre,
-        cantidad: Number(item.cantidad) || 0,
-        costo: Number(item.costo) || 0,
-        proveedor: bulkProveedor
-      })));
+      await inventoryService.registerBulkPurchase(bulkItems.map(item => {
+        const qty = Number(item.cantidad) || 0;
+        const itemTotal = item.total !== '' && !isNaN(Number(item.total))
+          ? Number(item.total)
+          : (qty * (Number(item.costo) || 0));
+        const itemCost = item.costo !== '' && !isNaN(Number(item.costo))
+          ? Number(item.costo)
+          : (qty > 0 ? Number(itemTotal) / qty : 0);
+
+        return {
+          productId: item.productId,
+          productNombre: item.productNombre,
+          cantidad: qty,
+          costo: itemCost,
+          total: itemTotal,
+          proveedor: bulkProveedor
+        };
+      }));
       toast.success(t('purchase_registered_success'));
       setIsBulkModalOpen(false);
       setBulkItems([]);
@@ -1417,10 +1523,14 @@ export default function Purchases() {
                         key={variant.id}
                         type="button"
                         onClick={() => {
+                          const unitCost = variant.costo || 0;
+                          const currentQty = Number(formData.cantidad) || 1;
                           setFormData({
                             ...formData,
                             productId: variant.id,
-                            costo: variant.costo || 0
+                            costo: unitCost || '',
+                            cantidad: formData.cantidad || '1',
+                            total: unitCost ? parseFloat((unitCost * currentQty).toFixed(2)).toString() : ''
                           });
                         }}
                         className={cn(
@@ -1459,7 +1569,7 @@ export default function Purchases() {
                   <Input 
                     label={t('supplier')} 
                     placeholder="Ej: Distribuidora Central" 
-                    className="md:col-span-2 shadow-sm" 
+                    className="md:col-span-3 shadow-sm" 
                     required
                     value={formData.proveedor}
                     onChange={(e) => setFormData({...formData, proveedor: e.target.value})}
@@ -1469,19 +1579,33 @@ export default function Purchases() {
                       label={t('qty')} 
                       type="number" 
                       placeholder="0" 
+                      min="1"
                       required
                       value={formData.cantidad}
-                      onChange={(e) => setFormData({...formData, cantidad: e.target.value})}
+                      onChange={(e) => handleSinglePurchaseChange('cantidad', e.target.value)}
                     />
                   </div>
                   <div className="md:col-span-1 shadow-sm">
                     <Input 
-                      label={t('unit_cost')} 
+                      label={`${t('unit_cost')} ($)`} 
                       type="number" 
+                      step="any"
                       placeholder="0.00" 
                       required
                       value={formData.costo}
-                      onChange={(e) => setFormData({...formData, costo: e.target.value})}
+                      onChange={(e) => handleSinglePurchaseChange('costo', e.target.value)}
+                      title="Costo por unidad (se calcula solo si completas el total)"
+                    />
+                  </div>
+                  <div className="md:col-span-1 shadow-sm">
+                    <Input 
+                      label="Total de la Compra ($)" 
+                      type="number" 
+                      step="any"
+                      placeholder="0.00" 
+                      value={formData.total}
+                      onChange={(e) => handleSinglePurchaseChange('total', e.target.value)}
+                      title="Precio total de la compra (calcula el costo por unidad automáticamente)"
                     />
                   </div>
                 </>
@@ -1494,7 +1618,10 @@ export default function Purchases() {
               <div>
                 <p className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-[0.2em] mb-1">{t('total_investment')}</p>
                 <p className="text-3xl font-black text-emerald-600 dark:text-emerald-400 underline decoration-2 underline-offset-4 decoration-emerald-200">
-                  ${(Number(formData.cantidad) * Number(formData.costo)).toLocaleString()}
+                  ${(formData.total !== '' && !isNaN(Number(formData.total))
+                    ? Number(formData.total)
+                    : (Number(formData.cantidad) * Number(formData.costo))
+                  ).toLocaleString()}
                 </p>
               </div>
               <div className="flex gap-3">
@@ -1532,15 +1659,30 @@ export default function Purchases() {
             />
           </div>
 
+          <div className="flex items-center justify-between text-xs text-indigo-700 dark:text-indigo-300 bg-indigo-50/70 dark:bg-indigo-950/40 px-4 py-3 rounded-2xl border border-indigo-100 dark:border-indigo-900/40 shadow-xs">
+            <span className="font-medium flex items-center gap-2">
+              <span className="text-base">💡</span>
+              <span>Podés poner el <strong>Total</strong> pagado por producto y el sistema calculará solo el <strong>costo por unidad</strong> (o ingresar el costo unitario y calculará el total).</span>
+            </span>
+          </div>
+
           <div className="border border-gray-100 dark:border-gray-800 rounded-3xl overflow-hidden shadow-sm">
             <div className="max-h-[400px] overflow-y-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-gray-50/50 dark:bg-gray-800/50 border-b border-gray-100 dark:border-gray-800">
                     <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">{t('product')}</th>
-                    <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider w-24">{t('qty_short')}</th>
-                    <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider w-32">{t('cost')}</th>
-                    <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider w-32">{t('total')}</th>
+                    <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider w-24 text-center">{t('qty_short')}</th>
+                    <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider w-36">
+                      <span className="flex items-center gap-1" title="Costo unitario (se calcula automáticamente si ingresas el Total)">
+                        {t('cost')} <span className="text-[10px] text-gray-400 font-normal lowercase">(unit.)</span>
+                      </span>
+                    </th>
+                    <th className="px-4 py-3 text-xs font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider w-40">
+                      <span className="flex items-center gap-1" title="Precio total de la compra para este producto (calcula el costo por unidad automáticamente)">
+                        {t('total')} <span className="text-[10px] opacity-80 font-normal lowercase">(de compra)</span>
+                      </span>
+                    </th>
                     <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider text-right w-16"></th>
                   </tr>
                 </thead>
@@ -1561,27 +1703,39 @@ export default function Purchases() {
                         <td className="px-4 py-3">
                           <input 
                             type="number"
-                            className="w-full bg-transparent border-b border-gray-200 dark:border-gray-700 focus:border-indigo-500 text-sm font-bold p-1 outline-none"
+                            className="w-full bg-transparent border-b border-gray-200 dark:border-gray-700 focus:border-indigo-500 text-sm font-bold p-1 outline-none text-center"
                             value={item.cantidad}
                             onChange={(e) => updateBulkItem(item.productId, 'cantidad', e.target.value)}
                             min="1"
                           />
                         </td>
                         <td className="px-4 py-3">
-                          <div className="flex items-center gap-1">
-                            <span className="text-gray-400 text-sm">$</span>
+                          <div className="flex items-center gap-1 bg-gray-50 dark:bg-gray-800/60 rounded-xl px-2.5 py-1.5 border border-gray-200/80 dark:border-gray-700 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500">
+                            <span className="text-gray-400 text-xs font-bold">$</span>
                             <input 
                               type="number"
-                              className="w-full bg-transparent border-b border-gray-200 dark:border-gray-700 focus:border-indigo-500 text-sm font-bold p-1 outline-none"
+                              step="any"
+                              placeholder="0.00"
+                              className="w-full bg-transparent text-sm font-bold p-0 outline-none text-gray-900 dark:text-white"
                               value={item.costo}
                               onChange={(e) => updateBulkItem(item.productId, 'costo', e.target.value)}
+                              title="Costo por unidad"
                             />
                           </div>
                         </td>
                         <td className="px-4 py-3">
-                          <p className="text-sm font-black text-indigo-600 dark:text-indigo-400">
-                            ${(item.cantidad * item.costo).toLocaleString()}
-                          </p>
+                          <div className="flex items-center gap-1 bg-indigo-50/60 dark:bg-indigo-950/40 rounded-xl px-2.5 py-1.5 border border-indigo-200 dark:border-indigo-800/80 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500">
+                            <span className="text-indigo-500 dark:text-indigo-400 text-xs font-black">$</span>
+                            <input 
+                              type="number"
+                              step="any"
+                              placeholder="0.00"
+                              className="w-full bg-transparent text-sm font-black text-indigo-600 dark:text-indigo-400 p-0 outline-none placeholder:text-indigo-300 dark:placeholder:text-indigo-600"
+                              value={item.total}
+                              onChange={(e) => updateBulkItem(item.productId, 'total', e.target.value)}
+                              title="Precio total de compra de este producto: ingresalo acá y calcula el costo por unidad automáticamente"
+                            />
+                          </div>
                         </td>
                         <td className="px-4 py-3 text-right">
                           <Button 
@@ -1605,7 +1759,12 @@ export default function Purchases() {
             <div>
               <p className="text-xs font-black text-indigo-400 uppercase tracking-[0.2em] mb-1">{t('total_investment')}</p>
               <p className="text-4xl font-black text-indigo-600 dark:text-indigo-400">
-                ${bulkItems.reduce((acc, item) => acc + (item.cantidad * item.costo), 0).toLocaleString()}
+                ${bulkItems.reduce((acc, item) => {
+                  const itTotal = item.total !== '' && !isNaN(Number(item.total))
+                    ? Number(item.total)
+                    : (Number(item.cantidad) || 0) * (Number(item.costo) || 0);
+                  return acc + itTotal;
+                }, 0).toLocaleString()}
               </p>
             </div>
             <div className="flex items-center gap-3 w-full sm:w-auto">

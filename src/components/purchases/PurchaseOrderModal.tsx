@@ -60,6 +60,7 @@ export function PurchaseOrderModal({
   const [productSearch, setProductSearch] = useState('');
   const [addItemQty, setAddItemQty] = useState(1);
   const [addItemCost, setAddItemCost] = useState<number | ''>('');
+  const [addItemTotal, setAddItemTotal] = useState<number | ''>('');
 
   useEffect(() => {
     if (orderToEdit) {
@@ -101,8 +102,46 @@ export function PurchaseOrderModal({
     setSelectedProductId(prodId);
     const p = products.find(prod => prod.id === prodId);
     if (p) {
-      setAddItemCost(p.costo || 0);
+      const cost = p.costo || 0;
+      setAddItemCost(cost);
+      setAddItemTotal(cost ? parseFloat((cost * addItemQty).toFixed(2)) : '');
       setProductSearch(`${p.codigo} - ${p.descripcion}`);
+    }
+  };
+
+  const handleQtyChange = (val: number) => {
+    const qty = Math.max(1, val);
+    setAddItemQty(qty);
+    if (addItemCost !== '') {
+      setAddItemTotal(parseFloat((Number(addItemCost) * qty).toFixed(2)));
+    } else if (addItemTotal !== '') {
+      setAddItemCost(parseFloat((Number(addItemTotal) / qty).toFixed(2)));
+    }
+  };
+
+  const handleCostChange = (val: string) => {
+    if (val === '') {
+      setAddItemCost('');
+      setAddItemTotal('');
+      return;
+    }
+    const cost = parseFloat(val);
+    setAddItemCost(cost);
+    if (!isNaN(cost)) {
+      setAddItemTotal(parseFloat((cost * addItemQty).toFixed(2)));
+    }
+  };
+
+  const handleTotalChange = (val: string) => {
+    if (val === '') {
+      setAddItemTotal('');
+      setAddItemCost('');
+      return;
+    }
+    const tot = parseFloat(val);
+    setAddItemTotal(tot);
+    if (!isNaN(tot) && addItemQty > 0) {
+      setAddItemCost(parseFloat((tot / addItemQty).toFixed(2)));
     }
   };
 
@@ -117,7 +156,8 @@ export function PurchaseOrderModal({
       toast.error('La cantidad debe ser mayor a 0');
       return;
     }
-    const cost = Number(addItemCost) || 0;
+    const cost = Number(addItemCost) || (addItemTotal !== '' ? Number(addItemTotal) / qty : 0);
+    const itemSubtotal = addItemTotal !== '' ? Number(addItemTotal) : qty * cost;
 
     const existingIndex = items.findIndex(it => it.productId === p.id);
     if (existingIndex >= 0) {
@@ -137,7 +177,7 @@ export function PurchaseOrderModal({
           genero: p.genero,
           cantidad: qty,
           costoEstimado: cost,
-          subtotal: qty * cost
+          subtotal: itemSubtotal
         }
       ]);
     }
@@ -146,6 +186,7 @@ export function PurchaseOrderModal({
     setProductSearch('');
     setAddItemQty(1);
     setAddItemCost('');
+    setAddItemTotal('');
   };
 
   const handleRemoveItem = (index: number) => {
@@ -173,6 +214,21 @@ export function PurchaseOrderModal({
           ...it,
           costoEstimado: newCost,
           subtotal: it.cantidad * newCost
+        };
+      }
+      return it;
+    }));
+  };
+
+  const handleUpdateItemSubtotal = (index: number, newSubtotal: number) => {
+    setItems(items.map((it, i) => {
+      if (i === index) {
+        const qty = it.cantidad || 1;
+        const newCost = qty > 0 ? parseFloat((newSubtotal / qty).toFixed(2)) : 0;
+        return {
+          ...it,
+          subtotal: newSubtotal,
+          costoEstimado: newCost
         };
       }
       return it;
@@ -413,14 +469,14 @@ export function PurchaseOrderModal({
                   type="number"
                   min="1"
                   value={addItemQty}
-                  onChange={e => setAddItemQty(Math.max(1, parseInt(e.target.value) || 1))}
+                  onChange={e => handleQtyChange(parseInt(e.target.value) || 1)}
                   className="w-full px-3 py-1.5 text-xs rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-bold text-center"
                 />
               </div>
 
               <div className="sm:col-span-2">
-                <label className="block text-[11px] font-bold text-gray-500 mb-1">
-                  Costo Unit. Est.
+                <label className="block text-[11px] font-bold text-gray-500 mb-1" title="Costo unitario">
+                  Costo Unit.
                 </label>
                 <input
                   type="number"
@@ -428,8 +484,23 @@ export function PurchaseOrderModal({
                   step="any"
                   placeholder="$0.00"
                   value={addItemCost}
-                  onChange={e => setAddItemCost(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                  onChange={e => handleCostChange(e.target.value)}
                   className="w-full px-3 py-1.5 text-xs rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-bold text-right"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-bold text-indigo-600 dark:text-indigo-400 mb-1" title="Total del producto (calcula costo unitario)">
+                  Total Est.
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  placeholder="$0.00"
+                  value={addItemTotal}
+                  onChange={e => handleTotalChange(e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/40 dark:bg-indigo-950/30 text-indigo-600 dark:text-indigo-400 font-bold text-right"
                 />
               </div>
 
@@ -451,7 +522,7 @@ export function PurchaseOrderModal({
             <h4 className="text-xs font-black uppercase text-gray-700 dark:text-gray-300 tracking-wider mb-2 flex items-center justify-between">
               <span>Artículos de la Orden ({items.length})</span>
               <span className="text-gray-400 font-normal normal-case text-[11px]">
-                Puedes ajustar cantidades y costos directamente en la tabla
+                Podés ingresar el total o costo unitario directamente en la tabla
               </span>
             </h4>
 
@@ -467,7 +538,7 @@ export function PurchaseOrderModal({
                       <th className="py-2.5 px-3">Artículo</th>
                       <th className="py-2.5 px-2 text-center w-24">Cantidad</th>
                       <th className="py-2.5 px-2 text-right w-28">Costo Unit.</th>
-                      <th className="py-2.5 px-3 text-right w-28">Subtotal</th>
+                      <th className="py-2.5 px-3 text-right w-32">Total (Subtotal)</th>
                       <th className="py-2.5 px-2 text-center w-10"></th>
                     </tr>
                   </thead>
@@ -495,10 +566,19 @@ export function PurchaseOrderModal({
                             value={item.costoEstimado}
                             onChange={e => handleUpdateItemCost(idx, parseFloat(e.target.value) || 0)}
                             className="w-24 py-1 text-right font-bold rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs px-2"
+                            title="Costo unitario"
                           />
                         </td>
                         <td className="py-2.5 px-3 text-right font-black text-gray-900 dark:text-white">
-                          ${(item.subtotal || 0).toLocaleString('es-AR')}
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            value={item.subtotal}
+                            onChange={e => handleUpdateItemSubtotal(idx, parseFloat(e.target.value) || 0)}
+                            className="w-24 py-1 text-right font-black text-indigo-600 dark:text-indigo-400 rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50/40 dark:bg-indigo-950/30 text-xs px-2"
+                            title="Total por este producto (calcula costo unitario automáticamente)"
+                          />
                         </td>
                         <td className="py-2.5 px-2 text-center">
                           <button

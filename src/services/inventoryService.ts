@@ -1667,12 +1667,12 @@ export const inventoryService = {
     });
   },
 
-  registerPurchase: async (purchase: Omit<Purchase, 'id' | 'fecha' | 'createdBy' | 'total'>) => {
+  registerPurchase: async (purchase: Omit<Purchase, 'id' | 'fecha' | 'createdBy' | 'total'> & { total?: number }) => {
     if (!auth.currentUser) throw new Error('User not authenticated');
     const path = 'purchases/batch';
     try {
       const batch = writeBatch(db);
-      const total = purchase.cantidad * purchase.costo;
+      const total = purchase.total !== undefined ? purchase.total : (purchase.cantidad * purchase.costo);
       const transactionId = doc(collection(db, 'transactions')).id;
       
       const purchaseRef = doc(collection(db, 'purchases'));
@@ -1692,6 +1692,9 @@ export const inventoryService = {
         cantidad: increment(purchase.cantidad),
         updatedAt: serverTimestamp()
       };
+      if (purchase.costo && purchase.costo > 0) {
+        updatePayload.costo = purchase.costo;
+      }
       if (purchase.variantId && productData?.variants?.length) {
         updatePayload.variants = productData.variants.map(v => {
           if (v.id === purchase.variantId) {
@@ -1719,7 +1722,7 @@ export const inventoryService = {
     }
   },
 
-  registerBulkPurchase: async (purchases: Omit<Purchase, 'id' | 'fecha' | 'createdBy' | 'total'>[]) => {
+  registerBulkPurchase: async (purchases: (Omit<Purchase, 'id' | 'fecha' | 'createdBy' | 'total'> & { total?: number })[]) => {
     if (!auth.currentUser) throw new Error('User not authenticated');
     const path = 'purchases/bulk';
     try {
@@ -1727,7 +1730,7 @@ export const inventoryService = {
       const transactionId = doc(collection(db, 'transactions')).id;
 
       for (const purchase of purchases) {
-        const total = purchase.cantidad * purchase.costo;
+        const total = purchase.total !== undefined ? purchase.total : (purchase.cantidad * purchase.costo);
         const purchaseRef = doc(collection(db, 'purchases'));
         
         batch.set(purchaseRef, sanitizeData({
@@ -1739,10 +1742,14 @@ export const inventoryService = {
         }));
 
         const productRef = doc(db, 'products', purchase.productId);
-        batch.update(productRef, {
+        const updatePayload: any = {
           cantidad: increment(purchase.cantidad),
           updatedAt: serverTimestamp()
-        });
+        };
+        if (purchase.costo && purchase.costo > 0) {
+          updatePayload.costo = purchase.costo;
+        }
+        batch.update(productRef, updatePayload);
 
         const movementRef = doc(collection(db, 'movements'));
         batch.set(movementRef, {
