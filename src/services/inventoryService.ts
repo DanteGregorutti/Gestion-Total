@@ -116,6 +116,62 @@ const sanitizeData = (data: any) => {
   return sanitized;
 };
 
+/**
+ * Calculates the next sequential code in the sequence (e.g. ART-0001, ART-0002, ART-0003...)
+ */
+export function getNextProductCode(products: Array<{ codigo?: string }>, prefix: string = 'ART'): string {
+  let maxNum = 0;
+  const cleanPrefix = (prefix || 'ART').trim().toUpperCase();
+  const regex = new RegExp(`^${cleanPrefix}[-_]?(\\d+)$`, 'i');
+
+  if (Array.isArray(products)) {
+    for (const p of products) {
+      if (!p.codigo) continue;
+      const trimmed = p.codigo.trim();
+      const match = trimmed.match(regex);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (!isNaN(num) && num > maxNum) {
+          maxNum = num;
+        }
+      }
+    }
+  }
+
+  // Fallback check: if maxNum is still 0, look for any ART- prefix
+  if (cleanPrefix === 'ART' && maxNum === 0 && Array.isArray(products)) {
+    for (const p of products) {
+      if (!p.codigo) continue;
+      const genericMatch = p.codigo.trim().match(/^ART[-_]?(\d+)/i);
+      if (genericMatch) {
+        const num = parseInt(genericMatch[1], 10);
+        if (!isNaN(num) && num > maxNum) {
+          maxNum = num;
+        }
+      }
+    }
+  }
+
+  const nextNum = maxNum + 1;
+  return `${cleanPrefix}-${String(nextNum).padStart(4, '0')}`;
+}
+
+/**
+ * Checks if a code looks like a name mistakenly typed in the code field
+ * (e.g. contains spaces, multiple words, or letters without numeric code pattern)
+ */
+export function isNameInCode(code?: string): boolean {
+  if (!code) return false;
+  const c = code.trim();
+  // Valid standard sequential code like ART-0001 or ART-1042
+  if (/^ART[-_]?\d+$/i.test(c)) return false;
+  // If it contains spaces, e.g. "short pollera", "remera oversize"
+  if (/\s+/.test(c)) return true;
+  // If it has letters, no digits, and length >= 3, e.g. "pollera", "remera"
+  if (!/\d/.test(c) && c.length >= 3) return true;
+  return false;
+}
+
 export const inventoryService = {
   // Products
   getProducts: async () => {
@@ -353,6 +409,26 @@ export const inventoryService = {
     }
   },
 
+  syncProductAcrossVariants: async (productIds: string[], updates: Partial<Product>) => {
+    if (!productIds || productIds.length === 0) return;
+    try {
+      const sanitized = sanitizeData({
+        ...updates,
+        updatedAt: serverTimestamp()
+      });
+
+      for (const id of productIds) {
+        await supabaseService.updateProduct(id, updates).catch(() => {});
+        if (auth.currentUser) {
+          const productRef = doc(db, 'products', id);
+          await updateDoc(productRef, sanitized).catch(() => {});
+        }
+      }
+    } catch (error) {
+      console.warn('Error syncing product across variants:', error);
+    }
+  },
+
   deleteProduct: async (id: string) => {
     try {
       await supabaseService.deleteProduct(id);
@@ -392,6 +468,190 @@ export const inventoryService = {
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
     }
+  },
+
+  updateProductsBatch: async (updates: Array<{ id: string; data: Partial<Product> }>) => {
+    if (!updates || updates.length === 0) return;
+
+    // 1. Update in Supabase & Local Cache
+    for (const item of updates) {
+      try {
+        await supabaseService.updateProduct(item.id, item.data);
+      } catch (e) {
+        console.warn('Supabase batch update fallback:', e);
+      }
+    }
+
+    // 2. Update in Firestore
+    if (!auth.currentUser) return;
+    const path = 'products/batch_update';
+    const CHUNK_SIZE = 400;
+    try {
+      for (let i = 0; i < updates.length; i += CHUNK_SIZE) {
+        const chunk = updates.slice(i, i + CHUNK_SIZE);
+        const batch = writeBatch(db);
+        chunk.forEach(({ id, data }) => {
+          const ref = doc(db, 'products', id);
+          batch.update(ref, sanitizeData({
+            ...data,
+            updatedAt: serverTimestamp()
+          }));
+        });
+        await batch.commit();
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, path);
+    }
+  },
+
+  reorganizeProductCodes: async (options?: { prefix?: string; startNumber?: number }) => {
+    const prefix = (options?.prefix || 'ART').trim().toUpperCase();
+    const startNumber = Math.max(1, options?.startNumber || 1);
+
+    const products = await inventoryService.getProducts();
+    if (!products || products.length === 0) {
+      return { totalUpdated: 0, groupsCount: 0, details: [] };
+    }
+
+    const normalize = (str?: string) => {
+      return (str || '')
+        .toLowerCase()
+        .trim()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+    };
+
+    const getCleanName = (desc: string, code: string): string => {
+      const d = (desc || '').trim();
+      const c = (code || '').trim();
+
+      const isGenericDesc = !d || 
+        /^producto\s+/i.test(d) || 
+        /^art[-_\s]/i.test(d) ||
+        d.toLowerCase() === c.toLowerCase();
+
+      let nameToUse = !isGenericDesc ? d : (c || d || 'Producto');
+      if (/^producto\s+/i.test(nameToUse) && nameToUse.length > 9) {
+        nameToUse = nameToUse.replace(/^producto\s+/i, '').trim();
+      }
+
+      if (nameToUse === nameToUse.toLowerCase() || (nameToUse === nameToUse.toUpperCase() && nameToUse.length > 3)) {
+        nameToUse = nameToUse
+          .split(' ')
+          .map(w => w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : '')
+          .join(' ');
+      }
+      return nameToUse;
+    };
+
+    interface LogicalGroup {
+      cleanName: string;
+      image: string;
+      products: Product[];
+      codes: Set<string>;
+      earliestTime: number;
+    }
+
+    const groups: LogicalGroup[] = [];
+
+    products.forEach(p => {
+      const pCode = normalize(p.codigo);
+      const pDesc = normalize(p.descripcion);
+
+      let match = groups.find(g => {
+        const gName = normalize(g.cleanName);
+        if (pDesc && gName === pDesc) return true;
+        if (pCode && g.codes.has(pCode)) return true;
+        if (pCode && gName === pCode) return true;
+        if (pDesc && g.codes.has(pDesc)) return true;
+        return false;
+      });
+
+      const pTime = (p.createdAt as any)?.toDate 
+        ? (p.createdAt as any).toDate().getTime() 
+        : new Date((p.createdAt as any) || 0).getTime();
+
+      if (!match) {
+        const cleanName = getCleanName(p.descripcion, p.codigo);
+        match = {
+          cleanName,
+          image: p.imagenUrl || '',
+          products: [],
+          codes: new Set(pCode ? [pCode] : []),
+          earliestTime: isNaN(pTime) ? 0 : pTime
+        };
+        groups.push(match);
+      } else {
+        if (pCode) match.codes.add(pCode);
+        if (!match.image && p.imagenUrl) match.image = p.imagenUrl;
+        if (pTime && (match.earliestTime === 0 || pTime < match.earliestTime)) {
+          match.earliestTime = pTime;
+        }
+        if ((!match.cleanName || match.cleanName.startsWith('Producto')) && p.descripcion) {
+          match.cleanName = getCleanName(p.descripcion, p.codigo);
+        }
+      }
+
+      match.products.push(p);
+    });
+
+    // Sort stably: oldest first
+    groups.sort((a, b) => {
+      if (a.earliestTime && b.earliestTime && a.earliestTime !== b.earliestTime) {
+        return a.earliestTime - b.earliestTime;
+      }
+      return a.cleanName.localeCompare(b.cleanName);
+    });
+
+    const updates: Array<{ id: string; data: Partial<Product> }> = [];
+    const details: Array<{
+      groupName: string;
+      newCode: string;
+      previousCodes: string[];
+      variantsCount: number;
+    }> = [];
+
+    groups.forEach((group, index) => {
+      const codeNumber = startNumber + index;
+      const newCode = `${prefix}-${String(codeNumber).padStart(4, '0')}`;
+      const previousCodes = Array.from(group.codes);
+
+      details.push({
+        groupName: group.cleanName,
+        newCode,
+        previousCodes,
+        variantsCount: group.products.length
+      });
+
+      group.products.forEach(prod => {
+        updates.push({
+          id: prod.id,
+          data: {
+            codigo: newCode,
+            descripcion: group.cleanName,
+            ...(group.image && !prod.imagenUrl ? { imagenUrl: group.image } : {})
+          }
+        });
+      });
+    });
+
+    await inventoryService.updateProductsBatch(updates);
+
+    // Sync images to new codes
+    for (const group of groups) {
+      if (group.image) {
+        const newCode = details.find(d => d.groupName === group.cleanName)?.newCode;
+        if (newCode) {
+          inventoryService.syncProductImageAcrossVariants(newCode, group.image).catch(() => {});
+        }
+      }
+    }
+
+    return {
+      totalUpdated: updates.length,
+      groupsCount: groups.length,
+      details
+    };
   },
 
   bulkAddProducts: async (products: Omit<Product, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>[], onProgress?: (count: number) => void) => {

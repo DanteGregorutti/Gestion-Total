@@ -55,9 +55,10 @@ import ProductSearch from '../components/ProductSearch';
 import BulkUpload from '../components/BulkUpload';
 import ImageCropperModal from '../components/ImageCropperModal';
 import { StockIntelligence } from '../components/StockIntelligence';
+import ReorganizeCodesModal from '../components/ReorganizeCodesModal';
 import { Product, Warehouse, Movement, Sale } from '../types';
 import { cn } from '../utils/cn';
-import { inventoryService } from '../services/inventoryService';
+import { inventoryService, getNextProductCode, isNameInCode } from '../services/inventoryService';
 import { toast } from 'sonner';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
@@ -75,6 +76,7 @@ export default function Inventory() {
   const [searchTerm, setSearchTerm] = useState('');
   const deferredSearchTerm = useDeferredValue(searchTerm);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isReorganizeModalOpen, setIsReorganizeModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isBulkUploadModalOpen, setIsBulkUploadModalOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -86,6 +88,11 @@ export default function Inventory() {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<string | null>(null);
   const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set());
+
+  // Products where user mistakenly put the product name in the code
+  const productsWithNameInCode = useMemo(() => {
+    return allProducts.filter(p => isNameInCode(p.codigo));
+  }, [allProducts]);
   const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [duplicateProducts, setDuplicateProducts] = useState<Product[]>([]);
@@ -130,6 +137,25 @@ export default function Inventory() {
 
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
   const [isSavingProduct, setIsSavingProduct] = useState(false);
+  const [selectedGroup, setSelectedGroup] = useState<any | null>(null);
+  const [editingVariants, setEditingVariants] = useState<Array<{
+    id: string;
+    talle: string;
+    cantidad: number | string;
+    ubicacion: string;
+    almacenId: string;
+    isNew?: boolean;
+  }>>([]);
+  const [hasMultipleSizes, setHasMultipleSizes] = useState(false);
+  const [newProductSizes, setNewProductSizes] = useState<Array<{
+    talle: string;
+    cantidad: string;
+    ubicacion?: string;
+  }>>([
+    { talle: '1', cantidad: '1' },
+    { talle: '2', cantidad: '1' },
+    { talle: '3', cantidad: '1' },
+  ]);
 
   useEffect(() => {
     const fetchInitialData = async () => {
@@ -216,16 +242,29 @@ export default function Inventory() {
     return result;
   }, [allProducts, deferredSearchTerm, location.state, filters]);
 
+  const normalizeText = (text?: string): string => {
+    if (!text) return '';
+    return text
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, ' ');
+  };
+
   // Helper to find the shared product image by code or description across all existing products
   const getSharedProductImage = useCallback((code?: string, desc?: string, currentProducts: Product[] = allProducts): string => {
     if (!code && !desc) return '';
-    const cleanCode = code?.trim().toLowerCase();
-    const cleanDesc = desc?.trim().toLowerCase();
-    const match = currentProducts.find(p => 
-      ((cleanCode && p.codigo?.trim().toLowerCase() === cleanCode) || 
-       (cleanDesc && p.descripcion?.trim().toLowerCase() === cleanDesc)) && 
-      Boolean(p.imagenUrl)
-    );
+    const cleanCode = normalizeText(code);
+    const cleanDesc = normalizeText(desc);
+    const match = currentProducts.find(p => {
+      const pC = normalizeText(p.codigo);
+      const pD = normalizeText(p.descripcion);
+      return (
+        (cleanCode && (pC === cleanCode || pD === cleanCode)) ||
+        (cleanDesc && (pD === cleanDesc || pC === cleanDesc))
+      ) && Boolean(p.imagenUrl);
+    });
     return match?.imagenUrl || '';
   }, [allProducts]);
 
@@ -236,18 +275,24 @@ export default function Inventory() {
   }, [formData.imagenUrl, formData.codigo, formData.descripcion, getSharedProductImage]);
 
   const groupedProducts = useMemo(() => {
-    // Map of clean code -> first available image
+    // Map of clean code / description -> first available image
     const codeToImageMap: Record<string, string> = {};
+    const descToImageMap: Record<string, string> = {};
     allProducts.forEach(p => {
-      if (p.imagenUrl && p.codigo) {
-        const key = p.codigo.trim().toLowerCase();
-        if (!codeToImageMap[key]) {
-          codeToImageMap[key] = p.imagenUrl;
+      if (p.imagenUrl) {
+        if (p.codigo) {
+          const kCode = normalizeText(p.codigo);
+          if (kCode && !codeToImageMap[kCode]) codeToImageMap[kCode] = p.imagenUrl;
+        }
+        if (p.descripcion) {
+          const kDesc = normalizeText(p.descripcion);
+          if (kDesc && !descToImageMap[kDesc]) descToImageMap[kDesc] = p.imagenUrl;
         }
       }
     });
 
-    const groups: Record<string, {
+    interface GroupItem {
+      id: string;
       codigo: string;
       descripcion: string;
       procedencia: string;
@@ -258,48 +303,119 @@ export default function Inventory() {
       almacenId: string;
       totalCantidad: number;
       imagenUrl?: string;
-      locations: { id: string, ubicacion: string, cantidad: number, almacenId: string }[];
+      locations: { id: string; ubicacion: string; cantidad: number; almacenId: string; talle?: string }[];
       originalProducts: Product[];
-    }> = {};
+      codes: Set<string>;
+      descriptions: Set<string>;
+    }
+
+    const groupList: GroupItem[] = [];
 
     filteredProducts.forEach(p => {
-      const groupKey = `${p.codigo}_${p.descripcion}_${p.procedencia}`;
-      const codeKey = p.codigo?.trim().toLowerCase() || '';
-      const sharedImage = p.imagenUrl || codeToImageMap[codeKey] || '';
+      const pCode = normalizeText(p.codigo);
+      const pDesc = normalizeText(p.descripcion);
+      const isAutoCode = pCode.startsWith('art-') || pCode.startsWith('aut-');
 
-      if (!groups[groupKey]) {
-        groups[groupKey] = {
-          codigo: p.codigo,
-          descripcion: p.descripcion,
-          procedencia: p.procedencia,
-          estado: p.estado,
-          precio: p.precio,
-          costo: p.costo,
+      // Try finding an existing group that this product belongs to:
+      let matchingGroup = groupList.find(g => {
+        // Same description match (e.g. "short pollera" matches "SHORT POLLERA")
+        if (pDesc && g.descriptions.has(pDesc)) return true;
+        // Non-auto code match
+        if (pCode && !isAutoCode && g.codes.has(pCode)) return true;
+        // User entered product name as code or vice versa
+        if (pCode && g.descriptions.has(pCode)) return true;
+        if (pDesc && g.codes.has(pDesc)) return true;
+        return false;
+      });
+
+      const sharedImage = p.imagenUrl || 
+        (pCode ? codeToImageMap[pCode] : '') || 
+        (pDesc ? descToImageMap[pDesc] : '') || 
+        '';
+
+      if (!matchingGroup) {
+        const hasNameCode = isNameInCode(p.codigo);
+        const groupDesc = p.descripcion || (hasNameCode ? p.codigo : '') || '';
+        const newGroup: GroupItem = {
+          id: p.id,
+          codigo: p.codigo || '',
+          descripcion: groupDesc,
+          procedencia: p.procedencia || 'Legítimo',
+          estado: p.estado || 'Nuevo',
+          precio: p.precio || 0,
+          costo: p.costo || 0,
           minStock: p.minStock || 3,
           almacenId: p.almacenId,
           totalCantidad: 0,
           imagenUrl: sharedImage,
           locations: [],
-          originalProducts: []
+          originalProducts: [],
+          codes: new Set(pCode ? [pCode] : []),
+          descriptions: new Set(pDesc ? [pDesc] : [])
         };
-      } else if (!groups[groupKey].imagenUrl && sharedImage) {
-        groups[groupKey].imagenUrl = sharedImage;
+        groupList.push(newGroup);
+        matchingGroup = newGroup;
+      } else {
+        if (pCode) matchingGroup.codes.add(pCode);
+        if (pDesc) matchingGroup.descriptions.add(pDesc);
+        // Prefer clean sequential code over a name in code
+        if (isNameInCode(matchingGroup.codigo) && !isNameInCode(p.codigo)) {
+          matchingGroup.codigo = p.codigo;
+        } else if (!matchingGroup.codigo && p.codigo) {
+          matchingGroup.codigo = p.codigo;
+        }
+        // If current group description is shorter or auto-generated, adopt better description
+        if ((!matchingGroup.descripcion || matchingGroup.descripcion.startsWith('Producto ART-')) && p.descripcion) {
+          matchingGroup.descripcion = p.descripcion;
+        } else if (!matchingGroup.descripcion && isNameInCode(p.codigo)) {
+          matchingGroup.descripcion = p.codigo;
+        }
+        // Share image
+        if (!matchingGroup.imagenUrl && sharedImage) {
+          matchingGroup.imagenUrl = sharedImage;
+        }
+        // Price/Cost fallback if 0
+        if (!matchingGroup.precio && p.precio) matchingGroup.precio = p.precio;
+        if (!matchingGroup.costo && p.costo) matchingGroup.costo = p.costo;
       }
 
-      groups[groupKey].totalCantidad += p.cantidad;
-      
-      // Ensure we don't add duplicate locations for the same doc if filteredProducts somehow has dupes
-      if (!groups[groupKey].originalProducts.some(orig => orig.id === p.id)) {
-        groups[groupKey].locations.push({ id: p.id, ubicacion: p.ubicacion, cantidad: p.cantidad, almacenId: p.almacenId });
-        groups[groupKey].originalProducts.push({
+      matchingGroup.totalCantidad += (Number(p.cantidad) || 0);
+
+      if (!matchingGroup.originalProducts.some(orig => orig.id === p.id)) {
+        matchingGroup.locations.push({
+          id: p.id,
+          ubicacion: p.ubicacion,
+          cantidad: p.cantidad,
+          almacenId: p.almacenId,
+          talle: p.talle
+        });
+        matchingGroup.originalProducts.push({
           ...p,
           imagenUrl: p.imagenUrl || sharedImage
         });
       }
     });
 
-    return Object.values(groups);
+    return groupList;
   }, [filteredProducts, allProducts]);
+
+  const activeGroup = useMemo(() => {
+    if (!selectedProduct && !selectedGroup) return null;
+    if (selectedGroup) {
+      const found = groupedProducts.find(g => g.id === selectedGroup.id || g.originalProducts.some(p => p.id === selectedGroup.id));
+      if (found) return found;
+    }
+    if (selectedProduct) {
+      const pCode = normalizeText(selectedProduct.codigo);
+      const pDesc = normalizeText(selectedProduct.descripcion);
+      return groupedProducts.find(g => 
+        g.originalProducts.some(p => p.id === selectedProduct.id) ||
+        (pCode && normalizeText(g.codigo) === pCode) ||
+        (pDesc && normalizeText(g.descripcion) === pDesc)
+      ) || null;
+    }
+    return null;
+  }, [selectedGroup, selectedProduct, groupedProducts]);
 
   const displayedGroups = useMemo(() => {
     return groupedProducts.slice(0, displayLimit);
@@ -402,26 +518,54 @@ export default function Inventory() {
   };
 
   const handleAutoGenerateCode = () => {
-    let prefix = 'ART';
-    if (formData.descripcion.trim()) {
-      const words = formData.descripcion.trim().split(/\s+/);
-      if (words.length >= 2) {
-        prefix = (words[0].slice(0, 3) + words[1].slice(0, 3)).toUpperCase();
-      } else if (words.length === 1) {
-        prefix = words[0].slice(0, 4).toUpperCase();
-      }
-    }
-    const cleanPrefix = prefix.replace(/[^A-Z0-9]/g, '') || 'ART';
-    const rand = Math.floor(1000 + Math.random() * 9000);
-    const newCode = `${cleanPrefix}-${rand}`;
-    setFormData(prev => ({ ...prev, codigo: newCode }));
-    toast.success(`Código generado: ${newCode}`);
+    const nextCode = getNextProductCode(allProducts);
+    setFormData(prev => ({ ...prev, codigo: nextCode }));
+    toast.success(`Código secuencial asignado: ${nextCode}`);
+  };
+
+  const openCreateModal = () => {
+    resetForm();
+    const nextCode = getNextProductCode(allProducts);
+    setFormData(prev => ({
+      ...prev,
+      codigo: nextCode,
+      almacenId: warehouses[0]?.id || prev.almacenId || ''
+    }));
+    setShowAdvancedOptions(false);
+    setHasMultipleSizes(false);
+    setIsAddModalOpen(true);
   };
 
   const adjustStock = (delta: number) => {
     const current = Number(formData.cantidad) || 0;
     const next = Math.max(0, current + delta);
     setFormData(prev => ({ ...prev, cantidad: next.toString() }));
+  };
+
+  const updateEditingVariant = (index: number, field: 'talle' | 'cantidad' | 'ubicacion', value: any) => {
+    setEditingVariants(prev => {
+      const next = [...prev];
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
+  };
+
+  const addEditingVariant = () => {
+    setEditingVariants(prev => [
+      ...prev,
+      {
+        id: `temp-${Date.now()}-${Math.random()}`,
+        talle: '',
+        cantidad: 1,
+        ubicacion: '',
+        almacenId: warehouses[0]?.id || '',
+        isNew: true
+      }
+    ]);
+  };
+
+  const removeEditingVariant = (index: number) => {
+    setEditingVariants(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleAddProduct = async (e?: React.FormEvent, keepOpen: boolean = false) => {
@@ -435,10 +579,13 @@ export default function Inventory() {
       return;
     }
 
-    const finalCode = trimmedCode || `ART-${Math.floor(1000 + Math.random() * 9000)}`;
+    const finalCode = trimmedCode || getNextProductCode(allProducts);
     const finalDesc = trimmedDesc || `Producto ${finalCode}`;
     const defaultWarehouseId = warehouses.length > 0 ? warehouses[0].id : 'principal';
     const finalWarehouse = formData.almacenId || defaultWarehouseId;
+    const finalPrice = Number(formData.precio) || 0;
+    const finalCost = Number(formData.costo) || 0;
+    const finalMinStock = formData.minStock !== '' ? (Number(formData.minStock) || 0) : 3;
 
     // Automatically inherit image from existing product if this code/product already has one
     const inheritedImage = getSharedProductImage(finalCode, finalDesc);
@@ -446,41 +593,71 @@ export default function Inventory() {
 
     setIsSavingProduct(true);
     try {
-      const newProdId = await inventoryService.addProduct({
-        ...formData,
-        codigo: finalCode,
-        descripcion: finalDesc,
-        almacenId: finalWarehouse,
-        cantidad: Number(formData.cantidad) || 0,
-        precio: Number(formData.precio) || 0,
-        costo: Number(formData.costo) || 0,
-        minStock: formData.minStock !== '' ? (Number(formData.minStock) || 0) : 3,
-        talle: formData.talle || '',
-        genero: formData.genero || '',
-        ubicacion: formData.ubicacion || '',
-        imagenUrl: finalImage
-      });
+      if (hasMultipleSizes && newProductSizes.length > 0) {
+        for (const sizeItem of newProductSizes) {
+          if (!sizeItem.talle.trim()) continue;
+          await inventoryService.addProduct({
+            codigo: finalCode,
+            descripcion: finalDesc,
+            procedencia: formData.procedencia || 'Legítimo',
+            estado: formData.estado || 'Nuevo',
+            almacenId: finalWarehouse,
+            cantidad: Number(sizeItem.cantidad) || 0,
+            precio: finalPrice,
+            costo: finalCost,
+            minStock: finalMinStock,
+            talle: sizeItem.talle.trim(),
+            genero: formData.genero || '',
+            ubicacion: sizeItem.ubicacion || formData.ubicacion || '',
+            imagenUrl: finalImage
+          });
+        }
+      } else {
+        await inventoryService.addProduct({
+          ...formData,
+          codigo: finalCode,
+          descripcion: finalDesc,
+          almacenId: finalWarehouse,
+          cantidad: Number(formData.cantidad) || 0,
+          precio: finalPrice,
+          costo: finalCost,
+          minStock: finalMinStock,
+          talle: formData.talle || '',
+          genero: formData.genero || '',
+          ubicacion: formData.ubicacion || '',
+          imagenUrl: finalImage
+        });
+      }
 
-      // If user uploaded a new image, sync it across all other variants with this code
-      if (formData.imagenUrl) {
-        inventoryService.syncProductImageAcrossVariants(finalCode, formData.imagenUrl, newProdId).catch(console.error);
+      if (finalImage) {
+        inventoryService.syncProductImageAcrossVariants(finalCode, finalImage).catch(console.error);
       }
 
       await refreshAllProducts();
       toast.success(t('product_added_success') || 'Producto guardado exitosamente');
-      
+
       if (keepOpen) {
         const currentAlmacen = formData.almacenId;
         resetForm();
-        if (currentAlmacen) {
-          setFormData(prev => ({ ...prev, almacenId: currentAlmacen }));
-        }
+        const nextCode = getNextProductCode(allProducts);
+        setFormData(prev => ({
+          ...prev,
+          codigo: nextCode,
+          ...(currentAlmacen ? { almacenId: currentAlmacen } : {})
+        }));
         setShowAdvancedOptions(false);
-        toast.info("Formulario listo para cargar el siguiente producto.");
+        setHasMultipleSizes(false);
+        setNewProductSizes([
+          { talle: '1', cantidad: '1' },
+          { talle: '2', cantidad: '1' },
+          { talle: '3', cantidad: '1' },
+        ]);
+        toast.info("Formulario listo con el siguiente código correlativo.");
       } else {
         setIsAddModalOpen(false);
         resetForm();
         setShowAdvancedOptions(false);
+        setHasMultipleSizes(false);
       }
     } catch (error) {
       console.error('Error adding product:', error);
@@ -492,54 +669,111 @@ export default function Inventory() {
 
   const handleEditProduct = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedProduct) return;
+    if (!selectedProduct && !selectedGroup) return;
     const wasInDetailModal = isDetailModalOpen;
     setIsLoading(true);
     setIsSavingProduct(true);
     try {
       const defaultWarehouseId = warehouses.length > 0 ? warehouses[0].id : 'principal';
-      const finalWarehouse = formData.almacenId || selectedProduct.almacenId || defaultWarehouseId;
-      const finalCode = formData.codigo.trim() || selectedProduct.codigo;
-      const finalDesc = formData.descripcion.trim() || selectedProduct.descripcion;
+      const finalWarehouse = formData.almacenId || selectedProduct?.almacenId || defaultWarehouseId;
+      const finalCode = formData.codigo.trim() || selectedProduct?.codigo || `ART-${Math.floor(1000 + Math.random() * 9000)}`;
+      const finalDesc = formData.descripcion.trim() || selectedProduct?.descripcion || 'Producto';
       const inheritedImage = getSharedProductImage(finalCode, finalDesc);
-      const finalImage = formData.imagenUrl !== undefined ? formData.imagenUrl : (selectedProduct.imagenUrl || inheritedImage || '');
+      const finalImage = formData.imagenUrl !== undefined ? formData.imagenUrl : (selectedProduct?.imagenUrl || inheritedImage || '');
+      const finalPrice = Number(formData.precio) || 0;
+      const finalCost = Number(formData.costo) || 0;
+      const finalMinStock = formData.minStock !== '' ? (Number(formData.minStock) || 0) : 3;
+      const finalProcedencia = formData.procedencia || 'Legítimo';
+      const finalEstado = formData.estado || 'Nuevo';
 
-      const updatedData = {
-        ...formData,
-        codigo: finalCode,
-        descripcion: finalDesc,
-        almacenId: finalWarehouse,
-        cantidad: Number(formData.cantidad) || 0,
-        precio: Number(formData.precio) || 0,
-        costo: Number(formData.costo) || 0,
-        minStock: formData.minStock !== '' ? (Number(formData.minStock) || 0) : 3,
-        talle: formData.talle || '',
-        genero: formData.genero || '',
-        ubicacion: formData.ubicacion || '',
-        imagenUrl: finalImage,
-      };
-      
-      await inventoryService.updateProduct(selectedProduct.id, updatedData);
+      // 1. Process variants if editingVariants is active
+      if (editingVariants.length > 0) {
+        // Detect deleted variants
+        const initialVariants = selectedGroup?.originalProducts || (selectedProduct ? [selectedProduct] : []);
+        const initialIds = initialVariants.map((p: Product) => p.id);
+        const currentIds = new Set(editingVariants.filter(v => !v.isNew).map(v => v.id));
+        const deletedIds = initialIds.filter((id: string) => !currentIds.has(id));
 
-      // If an image is assigned or updated, sync it across all variants with the same code
-      if (finalImage) {
-        inventoryService.syncProductImageAcrossVariants(finalCode, finalImage, selectedProduct.id).catch(console.error);
+        // Delete removed variants
+        for (const delId of deletedIds) {
+          await inventoryService.deleteProduct(delId).catch(console.error);
+        }
+
+        // Update or create variants
+        for (const v of editingVariants) {
+          const vQty = Number(v.cantidad) || 0;
+          const vTalle = (v.talle || '').trim();
+          const vUbic = v.ubicacion || formData.ubicacion || '';
+          const vAlmacen = v.almacenId || finalWarehouse;
+
+          if (v.isNew || !v.id || v.id.startsWith('temp-')) {
+            // New variant added in modal
+            await inventoryService.addProduct({
+              codigo: finalCode,
+              descripcion: finalDesc,
+              procedencia: finalProcedencia,
+              estado: finalEstado,
+              cantidad: vQty,
+              precio: finalPrice,
+              costo: finalCost,
+              minStock: finalMinStock,
+              talle: vTalle,
+              genero: formData.genero || '',
+              ubicacion: vUbic,
+              almacenId: vAlmacen,
+              imagenUrl: finalImage
+            });
+          } else {
+            // Update existing variant with unified name, code, price, cost, image AND updated talle/stock
+            await inventoryService.updateProduct(v.id, {
+              codigo: finalCode,
+              descripcion: finalDesc,
+              procedencia: finalProcedencia,
+              estado: finalEstado,
+              cantidad: vQty,
+              precio: finalPrice,
+              costo: finalCost,
+              minStock: finalMinStock,
+              talle: vTalle,
+              genero: formData.genero || '',
+              ubicacion: vUbic,
+              almacenId: vAlmacen,
+              imagenUrl: finalImage
+            });
+          }
+        }
+      } else if (selectedProduct) {
+        // Single product update
+        const updatedData = {
+          ...formData,
+          codigo: finalCode,
+          descripcion: finalDesc,
+          almacenId: finalWarehouse,
+          cantidad: Number(formData.cantidad) || 0,
+          precio: finalPrice,
+          costo: finalCost,
+          minStock: finalMinStock,
+          talle: formData.talle || '',
+          genero: formData.genero || '',
+          ubicacion: formData.ubicacion || '',
+          imagenUrl: finalImage,
+        };
+        await inventoryService.updateProduct(selectedProduct.id, updatedData);
       }
-      
-      // Update local state immediately for better UX
-      setSelectedProduct({ ...selectedProduct, ...updatedData });
-      
-      // Background refresh
-      refreshProducts().catch(console.error);
-      
-      toast.success(t('product_updated_success') || 'Producto actualizado exitosamente');
+
+      // Sync image across variants if changed
+      if (finalImage && finalCode) {
+        inventoryService.syncProductImageAcrossVariants(finalCode, finalImage).catch(console.error);
+      }
+
+      await refreshAllProducts();
+      toast.success(t('product_updated_success') || 'Producto y talles actualizados exitosamente');
       setIsEditModalOpen(false);
-      
-      // If we want to return to details modal or keep it open
-      if (wasInDetailModal) {
+
+      if (wasInDetailModal && selectedProduct) {
         setIsDetailModalOpen(true);
       }
-      
+
       resetForm();
       setShowAdvancedOptions(false);
     } catch (error) {
@@ -600,28 +834,62 @@ export default function Inventory() {
       imagenUrl: '',
     });
     setShowAdvancedOptions(false);
+    setSelectedGroup(null);
+    setEditingVariants([]);
+    setHasMultipleSizes(false);
+    setNewProductSizes([
+      { talle: '1', cantidad: '1' },
+      { talle: '2', cantidad: '1' },
+      { talle: '3', cantidad: '1' },
+    ]);
   };
 
-  const openEditModal = (product: Product) => {
+  const openEditModal = (product: Product, group?: any) => {
     setSelectedProduct(product);
-    const sharedImg = product.imagenUrl || getSharedProductImage(product.codigo, product.descripcion) || '';
+    
+    // Resolve group
+    const resolvedGroup = group || groupedProducts.find(g => 
+      g.originalProducts.some(p => p.id === product.id) ||
+      (product.codigo && normalizeText(g.codigo) === normalizeText(product.codigo)) ||
+      (product.descripcion && normalizeText(g.descripcion) === normalizeText(product.descripcion))
+    ) || null;
+    
+    setSelectedGroup(resolvedGroup);
+
+    // Variants to edit
+    const siblingVariants = resolvedGroup?.originalProducts?.length 
+      ? resolvedGroup.originalProducts 
+      : [product];
+      
+    setEditingVariants(siblingVariants.map(v => ({
+      id: v.id,
+      talle: v.talle || '',
+      cantidad: v.cantidad ?? 0,
+      ubicacion: v.ubicacion || '',
+      almacenId: v.almacenId || warehouses[0]?.id || '',
+      isNew: false
+    })));
+
+    const sharedImg = product.imagenUrl || resolvedGroup?.imagenUrl || getSharedProductImage(product.codigo, product.descripcion) || '';
+    
     setFormData({
-      codigo: product.codigo || '',
-      descripcion: product.descripcion || '',
-      procedencia: product.procedencia || 'Legítimo',
-      estado: product.estado || 'Nuevo',
-      cantidad: (product.cantidad ?? 0).toString(),
-      precio: (product.precio ?? 0).toString(),
-      costo: (product.costo ?? 0).toString(),
-      minStock: (product.minStock ?? 3).toString(),
+      codigo: resolvedGroup?.codigo || product.codigo || '',
+      descripcion: resolvedGroup?.descripcion || product.descripcion || '',
+      procedencia: (resolvedGroup?.procedencia || product.procedencia || 'Legítimo') as any,
+      estado: (resolvedGroup?.estado || product.estado || 'Nuevo') as any,
+      cantidad: (resolvedGroup?.totalCantidad ?? product.cantidad ?? 0).toString(),
+      precio: (resolvedGroup?.precio ?? product.precio ?? 0).toString(),
+      costo: (resolvedGroup?.costo ?? product.costo ?? 0).toString(),
+      minStock: (resolvedGroup?.minStock ?? product.minStock ?? 3).toString(),
       talle: product.talle || '',
       genero: product.genero || '',
       ubicacion: product.ubicacion || '',
-      almacenId: product.almacenId || '',
+      almacenId: product.almacenId || (warehouses[0]?.id || ''),
       imagenUrl: sharedImg,
     });
+
     const hasAdvanced = Boolean(
-      product.talle || product.genero || product.ubicacion || sharedImg || (product.minStock && product.minStock !== 3) || product.procedencia !== 'Legítimo' || product.estado !== 'Nuevo'
+      product.talle || product.genero || product.ubicacion || sharedImg || (product.minStock && product.minStock !== 3) || product.procedencia !== 'Legítimo' || product.estado !== 'Nuevo' || siblingVariants.length > 1
     );
     setShowAdvancedOptions(hasAdvanced);
     setIsEditModalOpen(true);
@@ -629,33 +897,34 @@ export default function Inventory() {
 
   const handleAddVariant = async () => {
     if (!selectedProduct) return;
-    if (!newVariantData.talle || !newVariantData.cantidad || !newVariantData.genero) {
-      toast.error("Por favor completa Talle, Cantidad y Género");
+    if (!newVariantData.talle || !newVariantData.cantidad) {
+      toast.error("Por favor completa al menos Talle y Cantidad");
       return;
     }
     try {
-      // Automatically inherit image from selected product or any sibling variant of this product
-      const sharedImage = selectedProduct.imagenUrl || 
-        getSharedProductImage(selectedProduct.codigo, selectedProduct.descripcion) || 
-        '';
+      const targetGroup = activeGroup || selectedGroup;
+      const finalCode = targetGroup?.codigo || selectedProduct.codigo;
+      const finalDesc = targetGroup?.descripcion || selectedProduct.descripcion;
+      const sharedImage = selectedProduct.imagenUrl || targetGroup?.imagenUrl || 
+        getSharedProductImage(finalCode, finalDesc) || '';
 
       await inventoryService.addProduct({
-        codigo: selectedProduct.codigo,
-        descripcion: selectedProduct.descripcion,
-        procedencia: selectedProduct.procedencia as any,
-        estado: 'Nuevo',
+        codigo: finalCode,
+        descripcion: finalDesc,
+        procedencia: (targetGroup?.procedencia || selectedProduct.procedencia) as any,
+        estado: (targetGroup?.estado || selectedProduct.estado || 'Nuevo') as any,
         cantidad: Number(newVariantData.cantidad) || 0,
-        precio: Number(newVariantData.precio) || Number(selectedProduct.precio) || 0,
-        costo: Number(newVariantData.costo) || Number(selectedProduct.costo) || 0,
-        minStock: Number(selectedProduct.minStock) || 3,
-        talle: newVariantData.talle,
-        genero: newVariantData.genero,
-        ubicacion: newVariantData.ubicacion,
-        almacenId: newVariantData.almacenId || warehouses[0]?.id || '',
+        precio: Number(newVariantData.precio) || Number(targetGroup?.precio) || Number(selectedProduct.precio) || 0,
+        costo: Number(newVariantData.costo) || Number(targetGroup?.costo) || Number(selectedProduct.costo) || 0,
+        minStock: Number(targetGroup?.minStock) || Number(selectedProduct.minStock) || 3,
+        talle: newVariantData.talle.trim(),
+        genero: newVariantData.genero || selectedProduct.genero || '',
+        ubicacion: newVariantData.ubicacion || '',
+        almacenId: newVariantData.almacenId || selectedProduct.almacenId || warehouses[0]?.id || '',
         imagenUrl: sharedImage,
       });
       await refreshAllProducts();
-      toast.success("Variante agregada con la imagen del producto");
+      toast.success("Talle agregado correctamente");
       setNewVariantData({
         talle: '',
         cantidad: '',
@@ -666,7 +935,7 @@ export default function Inventory() {
         almacenId: warehouses[0]?.id || '',
       });
     } catch (error) {
-      toast.error("Error al agregar variante");
+      toast.error("Error al agregar talle");
     }
   };
 
@@ -817,7 +1086,17 @@ export default function Inventory() {
             <span className="hidden md:inline">{t('catalog')}</span>
           </Button>
           <Button 
-            onClick={() => { resetForm(); setIsAddModalOpen(true); }}
+            variant="outline" 
+            onClick={() => setIsReorganizeModalOpen(true)}
+            className="h-12 px-4 sm:px-5 rounded-xl border-amber-200 dark:border-amber-900/50 text-amber-700 dark:text-amber-400 font-bold hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-all"
+            title="Reorganizar códigos correlativos automáticos (ART-0001, ART-0002...)"
+          >
+            <Barcode className="w-4 h-4 sm:mr-2" />
+            <span className="hidden xl:inline">Códigos Secuenciales</span>
+            <span className="xl:hidden">Códigos</span>
+          </Button>
+          <Button 
+            onClick={openCreateModal}
             className="h-12 px-5 sm:px-6 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-lg shadow-indigo-200 dark:shadow-none transition-all active:scale-95"
           >
             <Plus className="w-5 h-5 sm:mr-2" />
@@ -895,6 +1174,35 @@ export default function Inventory() {
         <StockIntelligence products={allProducts} sales={sales} />
       ) : (
         <>
+          {/* Banner if products with names in code are detected */}
+          {productsWithNameInCode.length > 0 && (
+            <div className="mb-6 p-4 sm:p-5 bg-gradient-to-r from-amber-50/90 to-orange-50/90 dark:from-amber-950/40 dark:to-orange-950/30 border border-amber-200/80 dark:border-amber-800/60 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm">
+              <div className="flex items-start sm:items-center gap-3.5">
+                <div className="p-3 bg-amber-500 text-white rounded-2xl shrink-0 shadow-sm shadow-amber-500/20">
+                  <Barcode size={22} />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-amber-950 dark:text-amber-200 flex items-center gap-2">
+                    <span>Nombres detectados en el código de productos</span>
+                    <span className="px-2 py-0.5 bg-amber-200/60 dark:bg-amber-800/50 text-amber-900 dark:text-amber-200 rounded-full text-[10px] font-black">
+                      {productsWithNameInCode.length} por corregir
+                    </span>
+                  </h4>
+                  <p className="text-xs text-amber-800/90 dark:text-amber-300/90 mt-0.5">
+                    Se detectó que pusiste el nombre en el código (ej: "{productsWithNameInCode[0]?.codigo}"). Podés corregirlos con un solo clic para que tengan códigos correlativos (ART-0001, ART-0002...) y sus nombres queden en la descripción.
+                  </p>
+                </div>
+              </div>
+              <Button
+                onClick={() => setIsReorganizeModalOpen(true)}
+                className="shrink-0 h-10 px-5 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-md shadow-amber-600/20 transition-all active:scale-95 flex items-center justify-center gap-2"
+              >
+                <Wand2 size={15} />
+                Corregir Códigos Ahora
+              </Button>
+            </div>
+          )}
+
           {/* Table Section (Desktop) / Card Section (Mobile) */}
       <div className={cn("bg-white dark:bg-gray-900 rounded-[2.5rem] border border-gray-100 dark:border-gray-800 shadow-xl shadow-gray-200/50 dark:shadow-none overflow-hidden", mobileCompactMode ? "hidden" : "block")}>
         <div className="overflow-x-auto">
@@ -948,6 +1256,7 @@ export default function Inventory() {
                     )}
                     onClick={() => {
                       setSelectedProduct(group.originalProducts[0]);
+                      setSelectedGroup(group);
                       setIsDetailModalOpen(true);
                     }}
                   >
@@ -1078,7 +1387,7 @@ export default function Inventory() {
                           variant="ghost" 
                           size="icon" 
                           className="h-9 w-9 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-xl transition-all"
-                          onClick={() => openEditModal(group.originalProducts[0])}
+                          onClick={() => openEditModal(group.originalProducts[0], group)}
                           title={t('edit')}
                         >
                           <Edit2 size={18} />
@@ -1127,6 +1436,7 @@ export default function Inventory() {
               )}
               onClick={() => {
                 setSelectedProduct(group.originalProducts[0]);
+                setSelectedGroup(group);
                 setIsDetailModalOpen(true);
               }}
             >
@@ -1243,7 +1553,7 @@ export default function Inventory() {
                   variant="ghost" 
                   size="icon" 
                   className="h-11 w-11 bg-gray-50 dark:bg-gray-800 text-gray-400 rounded-2xl"
-                  onClick={() => openEditModal(group.originalProducts[0])}
+                  onClick={() => openEditModal(group.originalProducts[0], group)}
                 >
                   <Edit2 size={20} />
                 </Button>
@@ -1503,9 +1813,9 @@ export default function Inventory() {
                       <p className="text-[10px] uppercase font-black text-gray-400 tracking-widest mb-1">{t('total_stock')}</p>
                       <p className={cn(
                         "text-xl font-black",
-                        groupedProducts.find(g => g.codigo === selectedProduct.codigo && g.procedencia === selectedProduct.procedencia)?.totalCantidad! <= (selectedProduct.minStock || 3) ? "text-rose-600" : "text-gray-900 dark:text-white"
+                        (activeGroup?.totalCantidad ?? selectedProduct.cantidad) <= (selectedProduct.minStock || 3) ? "text-rose-600" : "text-gray-900 dark:text-white"
                       )}>
-                        {groupedProducts.find(g => g.codigo === selectedProduct.codigo && g.procedencia === selectedProduct.procedencia)?.totalCantidad}
+                        {activeGroup?.totalCantidad ?? selectedProduct.cantidad}
                         <span className="text-[10px] ml-1 text-gray-400 font-bold">{t('units')}</span>
                       </p>
                     </div>
@@ -1519,11 +1829,11 @@ export default function Inventory() {
                 <div className="mt-8">
                   <p className="text-[11px] uppercase font-black text-gray-500 tracking-[0.2em] mb-4 ml-1 flex items-center gap-2">
                     <Layers size={14} className="text-indigo-500" />
-                    Variantes y Ubicaciones
+                    Talles y Variantes ({activeGroup?.originalProducts?.length || 1})
                   </p>
                   <div className="grid grid-cols-1 gap-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                    {groupedProducts.find(g => g.codigo === selectedProduct.codigo && g.descripcion === selectedProduct.descripcion && g.procedencia === selectedProduct.procedencia)?.originalProducts?.map((variant, idx) => {
-                      const groupImg = groupedProducts.find(g => g.codigo === selectedProduct.codigo)?.imagenUrl;
+                    {(activeGroup?.originalProducts?.length ? activeGroup.originalProducts : [selectedProduct]).map((variant, idx) => {
+                      const groupImg = activeGroup?.imagenUrl;
                       const variantImg = variant.imagenUrl || groupImg || getSharedProductImage(variant.codigo, variant.descripcion);
                       return (
                         <div key={idx} className="flex items-center justify-between bg-white dark:bg-gray-900 p-4 rounded-3xl border border-gray-100 dark:border-gray-700 shadow-sm hover:border-indigo-200 transition-all group/variant hover:shadow-lg hover:shadow-indigo-50 dark:hover:shadow-none">
@@ -1537,7 +1847,7 @@ export default function Inventory() {
                             </div>
                             <div className="flex flex-col">
                               <div className="flex items-center gap-2">
-                                <span className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-tight">{variant.talle || 'Sin Talle'}</span>
+                                <span className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-tight">{variant.talle ? `Talle ${variant.talle}` : 'Sin Talle'}</span>
                                 <span className="text-[9px] px-2 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-500 rounded-full font-black uppercase tracking-wider">{variant.genero || 'Unisex'}</span>
                               </div>
                               <div className="flex items-center gap-2 mt-1">
@@ -1554,7 +1864,7 @@ export default function Inventory() {
                                 variant="ghost" 
                                 size="icon" 
                                 className="h-7 w-7 text-gray-300 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg opacity-0 group-hover/variant:opacity-100 transition-all"
-                                onClick={() => openEditModal(variant)}
+                                onClick={() => openEditModal(variant, activeGroup)}
                               >
                                 <Edit2 size={12} />
                               </Button>
@@ -1575,7 +1885,7 @@ export default function Inventory() {
 
             <div className="flex justify-end gap-3 pt-6 border-t border-gray-100 dark:border-gray-800">
               <Button variant="outline" className="rounded-2xl h-12 px-6 font-bold" onClick={() => { setIsDetailModalOpen(false); setSelectedProduct(null); }}>{t('close')}</Button>
-              <Button className="rounded-2xl h-12 px-8 font-black uppercase tracking-wider bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-100" onClick={() => { openEditModal(selectedProduct); }}>{t('edit_product')}</Button>
+              <Button className="rounded-2xl h-12 px-8 font-black uppercase tracking-wider bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-100" onClick={() => { openEditModal(selectedProduct, activeGroup); }}>{t('edit_product')}</Button>
             </div>
           </div>
         )}
@@ -1615,66 +1925,91 @@ export default function Inventory() {
             </span>
           </div>
 
-          {isEditModalOpen && selectedProduct && (
-            <div className="p-4 bg-indigo-50/50 dark:bg-indigo-900/10 border border-indigo-100 dark:border-indigo-800 rounded-2xl space-y-4">
-              <p className="text-xs font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">{t('manage_locations') || 'Gestionar Variantes y Ubicaciones'}</p>
-              <div className="space-y-2">
-                {groupedProducts.find(g => g.codigo === selectedProduct.codigo && g.descripcion === selectedProduct.descripcion && g.procedencia === selectedProduct.procedencia)?.originalProducts?.map((variant, idx) => (
-                  <div key={idx} className="flex items-center justify-between bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm group">
-                    <div className="flex flex-col">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-black text-gray-700 dark:text-gray-200 uppercase tracking-tight">{variant.talle || 'Sin Talle'}</span>
-                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{warehouses.find(w => w.id === variant.almacenId)?.nombre}</span>
-                      </div>
-                      <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider italic">{variant.ubicacion}</span>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      <div className="flex flex-col items-end">
-                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t('stock')}</span>
-                        <span className="text-sm font-black text-indigo-600 dark:text-indigo-400">{variant.cantidad}</span>
-                      </div>
-                      <div className="flex gap-1">
-                        <Button 
-                          type="button"
-                          variant="ghost" 
-                          size="icon" 
-                          className="h-8 w-8 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20"
-                        onClick={() => {
-                          const sharedImg = variant.imagenUrl || getSharedProductImage(variant.codigo, variant.descripcion) || '';
-                          setSelectedProduct(variant);
-                          setFormData({
-                            codigo: variant.codigo,
-                            descripcion: variant.descripcion,
-                            procedencia: variant.procedencia,
-                            estado: variant.estado,
-                            cantidad: variant.cantidad.toString(),
-                            precio: variant.precio.toString(),
-                            costo: (variant.costo || 0).toString(),
-                            minStock: (variant.minStock || 3).toString(),
-                            talle: variant.talle || '',
-                            genero: variant.genero || '',
-                            ubicacion: variant.ubicacion,
-                            almacenId: variant.almacenId,
-                            imagenUrl: sharedImg,
-                          });
-                        }}
-                        >
-                          <Edit2 size={14} />
-                        </Button>
-                        <Button 
-                          type="button"
-                          variant="ghost" 
-                          size="icon" 
-                          className="h-8 w-8 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20"
-                          onClick={() => confirmDelete(variant.id)}
-                        >
-                          <Trash2 size={14} />
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+          {/* GESTIÓN INTELIGENTE DE TALLES Y STOCK EN EDICIÓN */}
+          {isEditModalOpen && (
+            <div className="p-4 bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-850 rounded-2xl space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Tag size={16} className="text-indigo-600 dark:text-indigo-400" />
+                  <span className="text-xs font-black uppercase tracking-wider text-indigo-900 dark:text-indigo-200">
+                    Talles y Stock del Producto ({editingVariants.length} {editingVariants.length === 1 ? 'variante' : 'variantes'})
+                  </span>
+                </div>
+                <span className="text-xs font-black text-indigo-600 dark:text-indigo-400 bg-white dark:bg-gray-800 px-2.5 py-1 rounded-xl shadow-xs border border-indigo-100 dark:border-indigo-800">
+                  Stock Total: {editingVariants.reduce((sum, v) => sum + (Number(v.cantidad) || 0), 0)} un.
+                </span>
               </div>
+
+              {editingVariants.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                    {editingVariants.map((v, idx) => (
+                      <div key={v.id || idx} className="flex items-center gap-2 p-2.5 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 shadow-xs">
+                        <div className="w-28 shrink-0">
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Talle</label>
+                          <Input 
+                            value={v.talle} 
+                            placeholder="Ej: 1, S, M" 
+                            onChange={(e) => updateEditingVariant(idx, 'talle', e.target.value)}
+                            className="h-8 text-xs font-bold"
+                          />
+                        </div>
+                        <div className="w-28 shrink-0">
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Stock</label>
+                          <Input 
+                            type="number"
+                            value={v.cantidad} 
+                            onChange={(e) => updateEditingVariant(idx, 'cantidad', e.target.value)}
+                            className="h-8 text-xs font-black text-center text-indigo-600 dark:text-indigo-400"
+                          />
+                        </div>
+                        <div className="flex-1 min-w-[100px]">
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Ubicación</label>
+                          <Input 
+                            value={v.ubicacion} 
+                            placeholder="Opcional" 
+                            onChange={(e) => updateEditingVariant(idx, 'ubicacion', e.target.value)}
+                            className="h-8 text-xs"
+                          />
+                        </div>
+                        <button 
+                          type="button"
+                          onClick={() => removeEditingVariant(idx)}
+                          className="mt-4 p-1.5 text-gray-400 hover:text-rose-500 rounded-lg transition-colors"
+                          title="Eliminar este talle"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={addEditingVariant}
+                    className="w-full h-8 rounded-xl border-dashed border-indigo-300 dark:border-indigo-700 text-indigo-600 dark:text-indigo-400 font-bold text-xs hover:bg-indigo-50 dark:hover:bg-indigo-900/30 flex items-center justify-center gap-1.5"
+                  >
+                    <Plus size={14} />
+                    <span>+ Agregar Otro Talle</span>
+                  </Button>
+                </div>
+              ) : (
+                <div className="p-3 bg-white dark:bg-gray-900 rounded-xl text-center space-y-2">
+                  <p className="text-xs text-gray-500">Este producto actualmente no tiene talles diferenciados.</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={addEditingVariant}
+                    className="h-8 text-xs font-bold text-indigo-600 border-indigo-200 dark:border-indigo-800"
+                  >
+                    <Plus size={14} className="mr-1" />
+                    + Manejar por talles (1, 2, 3 o S, M, L)
+                  </Button>
+                </div>
+              )}
             </div>
           )}
 
@@ -1808,47 +2143,56 @@ export default function Inventory() {
 
             {/* Stock and Code */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-              {/* Stock with quick step buttons */}
+              {/* Stock */}
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-gray-700 dark:text-gray-300 flex items-center justify-between">
-                  <span>Stock Actual</span>
-                  <span className="text-[10px] text-gray-400 font-normal">Opcional (Defecto: 0)</span>
+                  <span>{isEditModalOpen && editingVariants.length > 0 ? "Stock Total" : "Stock Actual"}</span>
+                  <span className="text-[10px] text-gray-400 font-normal">
+                    {isEditModalOpen && editingVariants.length > 0 ? `${editingVariants.length} talles` : "Opcional (Defecto: 0)"}
+                  </span>
                 </label>
-                <div className="flex items-center gap-1.5">
-                  <Input 
-                    type="number" 
-                    placeholder="0" 
-                    value={formData.cantidad}
-                    onChange={(e) => setFormData({...formData, cantidad: e.target.value})}
-                    className="font-bold text-sm text-center"
-                  />
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => adjustStock(-1)}
-                      className="h-10 px-2.5 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-xs font-black text-gray-700 dark:text-gray-200 transition-colors"
-                      title="Restar 1"
-                    >
-                      -1
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => adjustStock(1)}
-                      className="h-10 px-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-xs font-black text-indigo-600 dark:text-indigo-400 transition-colors"
-                      title="Sumar 1"
-                    >
-                      +1
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => adjustStock(5)}
-                      className="h-10 px-2 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-xs font-bold text-gray-600 dark:text-gray-300 transition-colors hidden sm:block"
-                      title="Sumar 5"
-                    >
-                      +5
-                    </button>
+                {isEditModalOpen && editingVariants.length > 0 ? (
+                  <div className="h-10 px-3 bg-indigo-50/50 dark:bg-indigo-950/30 rounded-xl border border-indigo-100 dark:border-indigo-800 flex items-center justify-between font-black text-indigo-600 dark:text-indigo-400 text-sm">
+                    <span>{editingVariants.reduce((sum, v) => sum + (Number(v.cantidad) || 0), 0)} unidades en total</span>
+                    <span className="text-[10px] font-bold text-gray-400 uppercase">Gestionado por talle</span>
                   </div>
-                </div>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <Input 
+                      type="number" 
+                      placeholder="0" 
+                      value={formData.cantidad}
+                      onChange={(e) => setFormData({...formData, cantidad: e.target.value})}
+                      className="font-bold text-sm text-center"
+                    />
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => adjustStock(-1)}
+                        className="h-10 px-2.5 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-xs font-black text-gray-700 dark:text-gray-200 transition-colors"
+                        title="Restar 1"
+                      >
+                        -1
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => adjustStock(1)}
+                        className="h-10 px-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-xs font-black text-indigo-600 dark:text-indigo-400 transition-colors"
+                        title="Sumar 1"
+                      >
+                        +1
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => adjustStock(5)}
+                        className="h-10 px-2 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-xs font-bold text-gray-600 dark:text-gray-300 transition-colors hidden sm:block"
+                        title="Sumar 5"
+                      >
+                        +5
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Code with Auto-generator */}
@@ -1862,15 +2206,15 @@ export default function Inventory() {
                     type="button"
                     onClick={handleAutoGenerateCode}
                     className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
-                    title="Generar código aleatorio"
+                    title="Asignar siguiente código correlativo"
                   >
                     <Wand2 size={11} />
-                    Generar código
+                    Siguiente correlativo
                   </button>
                 </div>
                 <div className="relative">
                   <Input 
-                    placeholder="Ej: ART-1042 o código de barras" 
+                    placeholder="Ej: ART-0001 o código de barras" 
                     value={formData.codigo}
                     onChange={(e) => setFormData({...formData, codigo: e.target.value.toUpperCase()})}
                     className={cn("text-xs font-mono uppercase", isAddModalOpen && duplicateProducts.length > 0 && "border-amber-500 ring-amber-500/20")}
@@ -1886,6 +2230,101 @@ export default function Inventory() {
                 </p>
               </div>
             </div>
+
+            {/* Multi-talles selector for "+ Nuevo Producto" */}
+            {isAddModalOpen && (
+              <div className="p-4 bg-indigo-50/50 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-900/40 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-gray-800 dark:text-gray-200 flex items-center gap-2 cursor-pointer">
+                    <input 
+                      type="checkbox"
+                      checked={hasMultipleSizes}
+                      onChange={(e) => setHasMultipleSizes(e.target.checked)}
+                      className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-gray-300 dark:border-gray-700"
+                    />
+                    <span>¿Este producto tiene varios talles? (ej: 1, 2, 3 o S, M, L)</span>
+                  </label>
+                  {hasMultipleSizes && (
+                    <span className="text-[10px] font-black text-indigo-600 dark:text-indigo-400 bg-white dark:bg-gray-800 px-2.5 py-1 rounded-lg border border-indigo-100 dark:border-indigo-800">
+                      Stock Total: {newProductSizes.reduce((sum, s) => sum + (Number(s.cantidad) || 0), 0)} un.
+                    </span>
+                  )}
+                </div>
+
+                {hasMultipleSizes && (
+                  <div className="space-y-2 pt-1">
+                    <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                      Ingresá cada talle y su stock. Se guardarán juntos bajo el mismo nombre y código sin perder datos.
+                    </p>
+                    <div className="space-y-2">
+                      {newProductSizes.map((s, idx) => (
+                        <div key={idx} className="flex items-center gap-2 bg-white dark:bg-gray-900 p-2 rounded-xl border border-gray-200 dark:border-gray-800">
+                          <div className="w-28 shrink-0">
+                            <Input 
+                              placeholder="Talle (ej: 1, S)"
+                              value={s.talle}
+                              onChange={(e) => {
+                                const next = [...newProductSizes];
+                                next[idx].talle = e.target.value;
+                                setNewProductSizes(next);
+                              }}
+                              className="h-8 text-xs font-bold"
+                            />
+                          </div>
+                          <div className="w-28 shrink-0">
+                            <Input 
+                              type="number"
+                              placeholder="Stock"
+                              value={s.cantidad}
+                              onChange={(e) => {
+                                const next = [...newProductSizes];
+                                next[idx].cantidad = e.target.value;
+                                setNewProductSizes(next);
+                              }}
+                              className="h-8 text-xs font-black text-center text-indigo-600 dark:text-indigo-400"
+                            />
+                          </div>
+                          <div className="flex-1 min-w-[100px]">
+                            <Input 
+                              placeholder="Ubicación (opcional)"
+                              value={s.ubicacion || ''}
+                              onChange={(e) => {
+                                const next = [...newProductSizes];
+                                next[idx].ubicacion = e.target.value;
+                                setNewProductSizes(next);
+                              }}
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                          <button 
+                            type="button"
+                            onClick={() => {
+                              if (newProductSizes.length > 1) {
+                                setNewProductSizes(newProductSizes.filter((_, i) => i !== idx));
+                              }
+                            }}
+                            disabled={newProductSizes.length <= 1}
+                            className="p-1.5 text-gray-400 hover:text-rose-500 disabled:opacity-30 rounded-lg transition-colors"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setNewProductSizes([...newProductSizes, { talle: '', cantidad: '1' }])}
+                      className="w-full h-8 rounded-xl border-dashed border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 text-xs font-bold hover:bg-indigo-50 dark:hover:bg-indigo-900/30 flex items-center justify-center gap-1"
+                    >
+                      <Plus size={13} />
+                      <span>+ Agregar otro talle</span>
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Expandable Advanced Options Section */}
@@ -2310,6 +2749,13 @@ export default function Inventory() {
           }}
         />
       )}
+
+      <ReorganizeCodesModal
+        isOpen={isReorganizeModalOpen}
+        onClose={() => setIsReorganizeModalOpen(false)}
+        products={allProducts}
+        onSuccess={refreshAllProducts}
+      />
     </div>
   );
 }
