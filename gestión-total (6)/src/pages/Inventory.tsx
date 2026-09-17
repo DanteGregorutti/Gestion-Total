@@ -216,7 +216,37 @@ export default function Inventory() {
     return result;
   }, [allProducts, deferredSearchTerm, location.state, filters]);
 
+  // Helper to find the shared product image by code or description across all existing products
+  const getSharedProductImage = useCallback((code?: string, desc?: string, currentProducts: Product[] = allProducts): string => {
+    if (!code && !desc) return '';
+    const cleanCode = code?.trim().toLowerCase();
+    const cleanDesc = desc?.trim().toLowerCase();
+    const match = currentProducts.find(p => 
+      ((cleanCode && p.codigo?.trim().toLowerCase() === cleanCode) || 
+       (cleanDesc && p.descripcion?.trim().toLowerCase() === cleanDesc)) && 
+      Boolean(p.imagenUrl)
+    );
+    return match?.imagenUrl || '';
+  }, [allProducts]);
+
+  // Detected image for currently edited or created product based on its code or description
+  const detectedProductImage = useMemo(() => {
+    if (formData.imagenUrl) return '';
+    return getSharedProductImage(formData.codigo, formData.descripcion);
+  }, [formData.imagenUrl, formData.codigo, formData.descripcion, getSharedProductImage]);
+
   const groupedProducts = useMemo(() => {
+    // Map of clean code -> first available image
+    const codeToImageMap: Record<string, string> = {};
+    allProducts.forEach(p => {
+      if (p.imagenUrl && p.codigo) {
+        const key = p.codigo.trim().toLowerCase();
+        if (!codeToImageMap[key]) {
+          codeToImageMap[key] = p.imagenUrl;
+        }
+      }
+    });
+
     const groups: Record<string, {
       codigo: string;
       descripcion: string;
@@ -234,6 +264,9 @@ export default function Inventory() {
 
     filteredProducts.forEach(p => {
       const groupKey = `${p.codigo}_${p.descripcion}_${p.procedencia}`;
+      const codeKey = p.codigo?.trim().toLowerCase() || '';
+      const sharedImage = p.imagenUrl || codeToImageMap[codeKey] || '';
+
       if (!groups[groupKey]) {
         groups[groupKey] = {
           codigo: p.codigo,
@@ -245,22 +278,28 @@ export default function Inventory() {
           minStock: p.minStock || 3,
           almacenId: p.almacenId,
           totalCantidad: 0,
-          imagenUrl: p.imagenUrl,
+          imagenUrl: sharedImage,
           locations: [],
           originalProducts: []
         };
+      } else if (!groups[groupKey].imagenUrl && sharedImage) {
+        groups[groupKey].imagenUrl = sharedImage;
       }
+
       groups[groupKey].totalCantidad += p.cantidad;
       
       // Ensure we don't add duplicate locations for the same doc if filteredProducts somehow has dupes
       if (!groups[groupKey].originalProducts.some(orig => orig.id === p.id)) {
         groups[groupKey].locations.push({ id: p.id, ubicacion: p.ubicacion, cantidad: p.cantidad, almacenId: p.almacenId });
-        groups[groupKey].originalProducts.push(p);
+        groups[groupKey].originalProducts.push({
+          ...p,
+          imagenUrl: p.imagenUrl || sharedImage
+        });
       }
     });
 
     return Object.values(groups);
-  }, [filteredProducts]);
+  }, [filteredProducts, allProducts]);
 
   const displayedGroups = useMemo(() => {
     return groupedProducts.slice(0, displayLimit);
@@ -401,9 +440,13 @@ export default function Inventory() {
     const defaultWarehouseId = warehouses.length > 0 ? warehouses[0].id : 'principal';
     const finalWarehouse = formData.almacenId || defaultWarehouseId;
 
+    // Automatically inherit image from existing product if this code/product already has one
+    const inheritedImage = getSharedProductImage(finalCode, finalDesc);
+    const finalImage = formData.imagenUrl || inheritedImage || '';
+
     setIsSavingProduct(true);
     try {
-      await inventoryService.addProduct({
+      const newProdId = await inventoryService.addProduct({
         ...formData,
         codigo: finalCode,
         descripcion: finalDesc,
@@ -415,8 +458,14 @@ export default function Inventory() {
         talle: formData.talle || '',
         genero: formData.genero || '',
         ubicacion: formData.ubicacion || '',
-        imagenUrl: formData.imagenUrl || ''
+        imagenUrl: finalImage
       });
+
+      // If user uploaded a new image, sync it across all other variants with this code
+      if (formData.imagenUrl) {
+        inventoryService.syncProductImageAcrossVariants(finalCode, formData.imagenUrl, newProdId).catch(console.error);
+      }
+
       await refreshAllProducts();
       toast.success(t('product_added_success') || 'Producto guardado exitosamente');
       
@@ -450,10 +499,15 @@ export default function Inventory() {
     try {
       const defaultWarehouseId = warehouses.length > 0 ? warehouses[0].id : 'principal';
       const finalWarehouse = formData.almacenId || selectedProduct.almacenId || defaultWarehouseId;
+      const finalCode = formData.codigo.trim() || selectedProduct.codigo;
+      const finalDesc = formData.descripcion.trim() || selectedProduct.descripcion;
+      const inheritedImage = getSharedProductImage(finalCode, finalDesc);
+      const finalImage = formData.imagenUrl !== undefined ? formData.imagenUrl : (selectedProduct.imagenUrl || inheritedImage || '');
+
       const updatedData = {
         ...formData,
-        codigo: formData.codigo.trim() || selectedProduct.codigo,
-        descripcion: formData.descripcion.trim() || selectedProduct.descripcion,
+        codigo: finalCode,
+        descripcion: finalDesc,
         almacenId: finalWarehouse,
         cantidad: Number(formData.cantidad) || 0,
         precio: Number(formData.precio) || 0,
@@ -462,10 +516,15 @@ export default function Inventory() {
         talle: formData.talle || '',
         genero: formData.genero || '',
         ubicacion: formData.ubicacion || '',
-        imagenUrl: formData.imagenUrl || '',
+        imagenUrl: finalImage,
       };
       
       await inventoryService.updateProduct(selectedProduct.id, updatedData);
+
+      // If an image is assigned or updated, sync it across all variants with the same code
+      if (finalImage) {
+        inventoryService.syncProductImageAcrossVariants(finalCode, finalImage, selectedProduct.id).catch(console.error);
+      }
       
       // Update local state immediately for better UX
       setSelectedProduct({ ...selectedProduct, ...updatedData });
@@ -545,6 +604,7 @@ export default function Inventory() {
 
   const openEditModal = (product: Product) => {
     setSelectedProduct(product);
+    const sharedImg = product.imagenUrl || getSharedProductImage(product.codigo, product.descripcion) || '';
     setFormData({
       codigo: product.codigo || '',
       descripcion: product.descripcion || '',
@@ -558,10 +618,10 @@ export default function Inventory() {
       genero: product.genero || '',
       ubicacion: product.ubicacion || '',
       almacenId: product.almacenId || '',
-      imagenUrl: product.imagenUrl || '',
+      imagenUrl: sharedImg,
     });
     const hasAdvanced = Boolean(
-      product.talle || product.genero || product.ubicacion || product.imagenUrl || (product.minStock && product.minStock !== 3) || product.procedencia !== 'Legítimo' || product.estado !== 'Nuevo'
+      product.talle || product.genero || product.ubicacion || sharedImg || (product.minStock && product.minStock !== 3) || product.procedencia !== 'Legítimo' || product.estado !== 'Nuevo'
     );
     setShowAdvancedOptions(hasAdvanced);
     setIsEditModalOpen(true);
@@ -574,6 +634,11 @@ export default function Inventory() {
       return;
     }
     try {
+      // Automatically inherit image from selected product or any sibling variant of this product
+      const sharedImage = selectedProduct.imagenUrl || 
+        getSharedProductImage(selectedProduct.codigo, selectedProduct.descripcion) || 
+        '';
+
       await inventoryService.addProduct({
         codigo: selectedProduct.codigo,
         descripcion: selectedProduct.descripcion,
@@ -587,9 +652,10 @@ export default function Inventory() {
         genero: newVariantData.genero,
         ubicacion: newVariantData.ubicacion,
         almacenId: newVariantData.almacenId || warehouses[0]?.id || '',
+        imagenUrl: sharedImage,
       });
       await refreshAllProducts();
-      toast.success("Variante agregada correctamente");
+      toast.success("Variante agregada con la imagen del producto");
       setNewVariantData({
         talle: '',
         cantidad: '',
@@ -1292,7 +1358,11 @@ export default function Inventory() {
                   </div>
                   <div>
                     <h5 className="font-black uppercase tracking-[0.15em] text-sm leading-none">Nueva Variante</h5>
-                    <p className="text-[10px] font-bold text-white/60 uppercase tracking-widest mt-1">Agregue rápidamente un talle o color</p>
+                    <p className="text-[10px] font-bold text-white/70 uppercase tracking-widest mt-1 flex items-center gap-1.5">
+                      <span>Talle, color o depósito</span>
+                      <span className="opacity-40">•</span>
+                      <span className="bg-white/20 px-1.5 py-0.5 rounded text-[9px] font-black text-white">Foto compartida automáticamente</span>
+                    </p>
                   </div>
                 </div>
                 
@@ -1373,12 +1443,40 @@ export default function Inventory() {
             </div>
 
             <div className="flex flex-col md:flex-row gap-8 bg-gray-50/50 dark:bg-gray-800/50 p-8 rounded-[2.5rem] border border-gray-100 dark:border-gray-800">
-              <div className="w-full md:w-2/5 aspect-[4/5] bg-white dark:bg-gray-900 rounded-[2rem] flex items-center justify-center text-gray-200 overflow-hidden border border-gray-100 dark:border-gray-700 shadow-sm">
-                {selectedProduct.imagenUrl ? (
-                  <img src={selectedProduct.imagenUrl} alt={selectedProduct.descripcion} className="w-full h-full object-cover" />
-                ) : (
-                  <Package size={80} className="opacity-20" />
-                )}
+              <div className="w-full md:w-2/5 aspect-[4/5] bg-white dark:bg-gray-900 rounded-[2rem] flex items-center justify-center text-gray-200 overflow-hidden border border-gray-100 dark:border-gray-700 shadow-sm relative group">
+                {(() => {
+                  const groupImg = groupedProducts.find(g => g.codigo === selectedProduct.codigo && g.procedencia === selectedProduct.procedencia)?.imagenUrl;
+                  const displayImage = selectedProduct.imagenUrl || groupImg || getSharedProductImage(selectedProduct.codigo, selectedProduct.descripcion);
+                  return displayImage ? (
+                    <>
+                      <img src={displayImage} alt={selectedProduct.descripcion} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      <div className="absolute top-3 left-3 bg-indigo-600/90 backdrop-blur-md text-white px-2.5 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-md">
+                        <Sparkles size={11} />
+                        <span>Foto del Producto</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => openEditModal(selectedProduct)}
+                        className="absolute bottom-3 right-3 bg-white/95 dark:bg-gray-900/95 text-indigo-600 dark:text-indigo-400 px-3 py-1.5 rounded-xl text-xs font-bold shadow-lg opacity-0 group-hover:opacity-100 transition-all flex items-center gap-1.5 backdrop-blur-sm"
+                      >
+                        <Edit2 size={13} />
+                        <span>Cambiar Foto</span>
+                      </button>
+                    </>
+                  ) : (
+                    <div className="flex flex-col items-center gap-2 text-gray-300 dark:text-gray-600">
+                      <Package size={80} className="opacity-25" />
+                      <button
+                        type="button"
+                        onClick={() => openEditModal(selectedProduct)}
+                        className="text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-3 py-1.5 rounded-xl hover:bg-indigo-100 transition-colors flex items-center gap-1 mt-1"
+                      >
+                        <Plus size={13} />
+                        <span>Asignar Foto</span>
+                      </button>
+                    </div>
+                  );
+                })()}
               </div>
               <div className="flex-1 flex flex-col justify-between py-2">
                 <div className="space-y-6">
@@ -1424,39 +1522,52 @@ export default function Inventory() {
                     Variantes y Ubicaciones
                   </p>
                   <div className="grid grid-cols-1 gap-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                    {groupedProducts.find(g => g.codigo === selectedProduct.codigo && g.descripcion === selectedProduct.descripcion && g.procedencia === selectedProduct.procedencia)?.originalProducts?.map((variant, idx) => (
-                      <div key={idx} className="flex items-center justify-between bg-white dark:bg-gray-900 p-4 rounded-3xl border border-gray-100 dark:border-gray-700 shadow-sm hover:border-indigo-200 transition-all group/variant hover:shadow-lg hover:shadow-indigo-50 dark:hover:shadow-none">
-                        <div className="flex flex-col">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-tight">{variant.talle || 'Sin Talle'}</span>
-                            <span className="text-[9px] px-2 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-500 rounded-full font-black uppercase tracking-wider">{variant.genero || 'Unisex'}</span>
+                    {groupedProducts.find(g => g.codigo === selectedProduct.codigo && g.descripcion === selectedProduct.descripcion && g.procedencia === selectedProduct.procedencia)?.originalProducts?.map((variant, idx) => {
+                      const groupImg = groupedProducts.find(g => g.codigo === selectedProduct.codigo)?.imagenUrl;
+                      const variantImg = variant.imagenUrl || groupImg || getSharedProductImage(variant.codigo, variant.descripcion);
+                      return (
+                        <div key={idx} className="flex items-center justify-between bg-white dark:bg-gray-900 p-4 rounded-3xl border border-gray-100 dark:border-gray-700 shadow-sm hover:border-indigo-200 transition-all group/variant hover:shadow-lg hover:shadow-indigo-50 dark:hover:shadow-none">
+                          <div className="flex items-center gap-3">
+                            <div className="w-11 h-11 rounded-2xl bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 flex items-center justify-center overflow-hidden shrink-0">
+                              {variantImg ? (
+                                <img src={variantImg} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                              ) : (
+                                <Package size={20} className="opacity-30" />
+                              )}
+                            </div>
+                            <div className="flex flex-col">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-tight">{variant.talle || 'Sin Talle'}</span>
+                                <span className="text-[9px] px-2 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-500 rounded-full font-black uppercase tracking-wider">{variant.genero || 'Unisex'}</span>
+                              </div>
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider italic">Ubicación: {variant.ubicacion || 'N/A'}</span>
+                                <span className="w-1 h-1 rounded-full bg-gray-300" />
+                                <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">{warehouses.find(w => w.id === variant.almacenId)?.nombre}</span>
+                              </div>
+                              {variant.precio !== selectedProduct.precio && <span className="text-[10px] font-black text-emerald-500 uppercase mt-2">$ {variant.precio}</span>}
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider italic">Ubicación: {variant.ubicacion || 'N/A'}</span>
-                            <span className="w-1 h-1 rounded-full bg-gray-300" />
-                            <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">{warehouses.find(w => w.id === variant.almacenId)?.nombre}</span>
+                          <div className="flex flex-col items-end">
+                            <div className="flex items-center gap-2 mb-1">
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="h-7 w-7 text-gray-300 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg opacity-0 group-hover/variant:opacity-100 transition-all"
+                                onClick={() => openEditModal(variant)}
+                              >
+                                <Edit2 size={12} />
+                              </Button>
+                              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Stock</span>
+                            </div>
+                            <span className={cn(
+                              "text-lg font-black leading-none",
+                              variant.cantidad <= (variant.minStock || 3) ? "text-rose-600" : "text-indigo-600 dark:text-indigo-400"
+                            )}>{variant.cantidad}</span>
                           </div>
-                          {variant.precio !== selectedProduct.precio && <span className="text-[10px] font-black text-emerald-500 uppercase mt-2">$ {variant.precio}</span>}
                         </div>
-                        <div className="flex flex-col items-end">
-                          <div className="flex items-center gap-2 mb-1">
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              className="h-7 w-7 text-gray-300 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg opacity-0 group-hover/variant:opacity-100 transition-all"
-                              onClick={() => openEditModal(variant)}
-                            >
-                              <Edit2 size={12} />
-                            </Button>
-                            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Stock</span>
-                          </div>
-                          <span className={cn(
-                            "text-lg font-black leading-none",
-                            variant.cantidad <= (variant.minStock || 3) ? "text-rose-600" : "text-indigo-600 dark:text-indigo-400"
-                          )}>{variant.cantidad}</span>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               </div>
@@ -1529,6 +1640,7 @@ export default function Inventory() {
                           size="icon" 
                           className="h-8 w-8 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20"
                         onClick={() => {
+                          const sharedImg = variant.imagenUrl || getSharedProductImage(variant.codigo, variant.descripcion) || '';
                           setSelectedProduct(variant);
                           setFormData({
                             codigo: variant.codigo,
@@ -1543,7 +1655,7 @@ export default function Inventory() {
                             genero: variant.genero || '',
                             ubicacion: variant.ubicacion,
                             almacenId: variant.almacenId,
-                            imagenUrl: variant.imagenUrl || '',
+                            imagenUrl: sharedImg,
                           });
                         }}
                         >
@@ -1928,59 +2040,86 @@ export default function Inventory() {
                       </div>
                     </div>
 
-                    {/* Foto del Producto */}
+                    {/* Foto del Producto (Compartida para todas las variantes) */}
                     <div className="space-y-2">
-                      <label className="text-xs font-bold text-gray-700 dark:text-gray-300 flex items-center justify-between">
-                        <span>Imagen del Producto <span className="text-gray-400 font-normal">(Opcional)</span></span>
-                      </label>
-                      <div 
-                        onClick={() => fileInputRef.current?.click()}
-                        className={cn(
-                          "relative group cursor-pointer border-2 border-dashed rounded-2xl transition-all flex flex-col items-center justify-center min-h-[120px] overflow-hidden bg-gray-50 dark:bg-gray-900/50 hover:bg-indigo-50/50 dark:hover:bg-indigo-900/10",
-                          formData.imagenUrl ? "border-indigo-500/50" : "border-gray-200 dark:border-gray-800 hover:border-indigo-400"
-                        )}
-                      >
-                        {formData.imagenUrl ? (
-                          <>
-                            <img 
-                              src={formData.imagenUrl} 
-                              alt="Preview" 
-                              className="w-full h-full object-cover absolute inset-0 opacity-80 group-hover:opacity-60 transition-opacity"
-                            />
-                            <div className="relative z-10 flex flex-col items-center animate-in fade-in zoom-in duration-300">
-                              <div className="p-2.5 bg-white/90 dark:bg-gray-900/90 rounded-xl shadow-xl border border-white dark:border-gray-800 text-indigo-600">
-                                <Upload size={20} />
-                              </div>
-                              <span className="mt-1.5 text-[10px] font-black uppercase text-white drop-shadow-md">Cambiar Foto</span>
-                            </div>
-                            <button 
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setFormData({...formData, imagenUrl: ''});
-                              }}
-                              className="absolute top-3 right-3 z-20 p-1.5 bg-rose-500 text-white rounded-xl shadow-lg hover:bg-rose-600 transition-colors"
-                            >
-                              <X size={14} />
-                            </button>
-                          </>
-                        ) : (
-                          <div className="flex flex-col items-center text-gray-400 group-hover:text-indigo-500 transition-colors py-3">
-                            <div className="p-3 bg-gray-100 dark:bg-gray-800 rounded-2xl mb-2 group-hover:bg-indigo-100 dark:group-hover:bg-indigo-900/30">
-                              <ImageIcon size={24} />
-                            </div>
-                            <p className="text-[11px] font-bold">Subir foto desde dispositivo</p>
-                            <p className="text-[9px] font-medium opacity-60">PNG, JPG</p>
-                          </div>
-                        )}
-                        <input 
-                          type="file" 
-                          ref={fileInputRef}
-                          className="hidden" 
-                          accept="image/*"
-                          onChange={handleFileChange}
-                        />
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                        <label className="text-xs font-bold text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
+                          <ImageIcon size={14} className="text-indigo-500" />
+                          <span>Imagen del Producto <span className="text-gray-400 font-normal">(Opcional)</span></span>
+                        </label>
+                        <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-2 py-0.5 rounded-full w-fit">
+                          Se aplica a todas las variantes
+                        </span>
                       </div>
+                      <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                        Solo sube la foto una vez. Todas las variantes (talles, géneros o depósitos) con este código compartirán automáticamente esta misma imagen.
+                      </p>
+
+                      {(() => {
+                        const effectiveImg = formData.imagenUrl || detectedProductImage;
+                        const isInherited = !formData.imagenUrl && Boolean(detectedProductImage);
+
+                        return (
+                          <div 
+                            onClick={() => fileInputRef.current?.click()}
+                            className={cn(
+                              "relative group cursor-pointer border-2 border-dashed rounded-2xl transition-all flex flex-col items-center justify-center min-h-[140px] overflow-hidden bg-gray-50 dark:bg-gray-900/50 hover:bg-indigo-50/50 dark:hover:bg-indigo-900/10",
+                              effectiveImg ? "border-indigo-500/50" : "border-gray-200 dark:border-gray-800 hover:border-indigo-400"
+                            )}
+                          >
+                            {effectiveImg ? (
+                              <>
+                                <img 
+                                  src={effectiveImg} 
+                                  alt="Preview" 
+                                  className="w-full h-full object-cover absolute inset-0 opacity-80 group-hover:opacity-60 transition-opacity"
+                                  referrerPolicy="no-referrer"
+                                />
+                                {isInherited && (
+                                  <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5 px-2.5 py-1 bg-indigo-600/95 text-white rounded-xl text-[10px] font-black uppercase tracking-wider shadow-lg backdrop-blur-md">
+                                    <Sparkles size={12} />
+                                    <span>Foto compartida del producto</span>
+                                  </div>
+                                )}
+                                <div className="relative z-10 flex flex-col items-center animate-in fade-in zoom-in duration-300">
+                                  <div className="p-2.5 bg-white/90 dark:bg-gray-900/90 rounded-xl shadow-xl border border-white dark:border-gray-800 text-indigo-600">
+                                    <Upload size={20} />
+                                  </div>
+                                  <span className="mt-1.5 text-[10px] font-black uppercase text-white drop-shadow-md">
+                                    {isInherited ? 'Personalizar / Cambiar Foto' : 'Cambiar Foto'}
+                                  </span>
+                                </div>
+                                <button 
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setFormData({...formData, imagenUrl: ''});
+                                  }}
+                                  className="absolute top-3 right-3 z-20 p-1.5 bg-rose-500 text-white rounded-xl shadow-lg hover:bg-rose-600 transition-colors"
+                                  title="Quitar foto"
+                                >
+                                  <X size={14} />
+                                </button>
+                              </>
+                            ) : (
+                              <div className="flex flex-col items-center text-gray-400 group-hover:text-indigo-500 transition-colors py-4">
+                                <div className="p-3 bg-gray-100 dark:bg-gray-800 rounded-2xl mb-2 group-hover:bg-indigo-100 dark:group-hover:bg-indigo-900/30">
+                                  <ImageIcon size={24} />
+                                </div>
+                                <p className="text-[11px] font-bold">Subir foto desde dispositivo</p>
+                                <p className="text-[9px] font-medium opacity-60">PNG, JPG (se guardará para todas las variantes)</p>
+                              </div>
+                            )}
+                            <input 
+                              type="file" 
+                              ref={fileInputRef}
+                              className="hidden" 
+                              accept="image/*"
+                              onChange={handleFileChange}
+                            />
+                          </div>
+                        );
+                      })()}
                       
                       <div className="relative mt-2">
                         <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-100 dark:bg-gray-800" />

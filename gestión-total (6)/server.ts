@@ -18,7 +18,7 @@ async function startServer() {
 
   // Lazy initialization of Gemini client
   const getGenAI = () => {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
     if (!apiKey) return null;
     return new GoogleGenAI({
       apiKey,
@@ -40,9 +40,7 @@ async function startServer() {
     }
 
     const { prompt, systemInstruction } = req.body;
-    // Prioritize gemini-3.6-flash (recommended by Google API, ultra-fast 1.5s latency)
-    // with fallbacks for maximum resilience
-    const modelsToTry = ["gemini-3.6-flash", "gemini-3.8-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
+    const modelsToTry = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
     let lastError: any = null;
 
     for (const model of modelsToTry) {

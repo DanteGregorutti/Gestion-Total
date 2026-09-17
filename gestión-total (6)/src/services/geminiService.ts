@@ -86,6 +86,34 @@ export const geminiService = {
       - Si te preguntan "dime todo" o "resumen general", incluye inventario, finanzas y estado del taller.
     `;
 
+    const tryClientFallback = async (): Promise<string | null> => {
+      const clientApiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY;
+      if (!clientApiKey) return null;
+
+      try {
+        const { GoogleGenAI } = await import('@google/genai');
+        const ai = new GoogleGenAI({ apiKey: clientApiKey });
+        const models = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+        for (const model of models) {
+          try {
+            const resp = await ai.models.generateContent({
+              model,
+              contents: prompt,
+              config: {
+                systemInstruction: systemInstruction || "Eres un asistente experto para Gestión Total y PulseStore.",
+              }
+            });
+            if (resp.text) return resp.text;
+          } catch (mErr) {
+            console.warn(`[Client AI fallback] Model ${model} failed:`, mErr);
+          }
+        }
+      } catch (err) {
+        console.error('[Client AI fallback] Error:', err);
+      }
+      return null;
+    };
+
     try {
       const response = await fetch("/api/ai/ask", {
         method: "POST",
@@ -97,17 +125,29 @@ export const geminiService = {
       if (!contentType.includes("application/json")) {
         const textPreview = await response.text();
         console.error("Non-JSON response from /api/ai/ask:", textPreview.slice(0, 200));
-        return "No se pudo conectar con el endpoint de IA (/api/ai/ask). Si estás en Vercel, sube la nueva versión con la carpeta /api y agrega la variable GEMINI_API_KEY en tu panel de Vercel.";
+        
+        // Attempt client fallback if available
+        const fallbackAnswer = await tryClientFallback();
+        if (fallbackAnswer) return fallbackAnswer;
+
+        return "No se pudo conectar con el endpoint de IA (/api/ai/ask). Si estás en Vercel, asegúrate de haber subido la carpeta `/api` en tu repositorio y haber agregado la variable `GEMINI_API_KEY` en tu panel de Vercel (Settings -> Environment Variables) y realizado un Redeploy.";
       }
 
       const data = await response.json();
       if (!response.ok || data.error) {
+        const fallbackAnswer = await tryClientFallback();
+        if (fallbackAnswer) return fallbackAnswer;
+
         return data.error || `Error del servidor (${response.status}): Por favor intenta de nuevo.`;
       }
       return data.text;
     } catch (error: any) {
       console.error("Error calling Gemini API proxy:", error);
-      return `Hubo un error de conexión al consultar el asistente IA (${error?.message || 'Error de red'}). Por favor, verifica la configuración en Vercel y tu conexión.`;
+
+      const fallbackAnswer = await tryClientFallback();
+      if (fallbackAnswer) return fallbackAnswer;
+
+      return `Hubo un error de conexión al consultar el asistente IA (${error?.message || 'Error de red'}). Por favor, verifica la configuración de la variable GEMINI_API_KEY en tu panel de Vercel y tu conexión.`;
     }
   }
 };

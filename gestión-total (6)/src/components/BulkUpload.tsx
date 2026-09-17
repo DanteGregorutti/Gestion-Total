@@ -31,7 +31,7 @@ interface LogEntry {
 
 export default function BulkUpload({ onComplete }: BulkUploadProps) {
   const { t } = useSettings();
-  const { refreshProducts } = useProducts();
+  const { products: existingProducts, refreshProducts } = useProducts();
   const [file, setFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -152,7 +152,9 @@ export default function BulkUpload({ onComplete }: BulkUploadProps) {
             talle: String(talle || '').trim(),
             genero: String(genero || '').trim(),
             almacenId: selectedWarehouseId,
-            minStock: 5 // Default min stock
+            minStock: 5, // Default min stock
+            imagenUrl: existingProducts.find(p => p.codigo?.trim().toLowerCase() === String(articulo || '').trim().toLowerCase() && p.imagenUrl)?.imagenUrl ||
+              productsToUpload.find(p => p.codigo?.trim().toLowerCase() === String(articulo || '').trim().toLowerCase() && p.imagenUrl)?.imagenUrl || ''
           };
 
           productsToUpload.push(product);

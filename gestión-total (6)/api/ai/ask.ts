@@ -14,10 +14,10 @@ export default async function handler(req: any, res: any) {
     return res.status(405).json({ error: 'Método no permitido. Solo se acepta POST.' });
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
   if (!apiKey) {
     return res.status(400).json({ 
-      error: 'La variable de entorno GEMINI_API_KEY no está configurada en Vercel. Ve a tu proyecto en Vercel -> Settings -> Environment Variables, añade GEMINI_API_KEY con tu API Key de Google AI Studio y luego haz un Redeploy.' 
+      error: 'La variable GEMINI_API_KEY no está configurada en Vercel. Ve a tu proyecto en Vercel -> Settings -> Environment Variables, añade GEMINI_API_KEY con tu clave de Google AI Studio y luego haz un Redeploy.' 
     });
   }
 
@@ -47,7 +47,6 @@ export default async function handler(req: any, res: any) {
   });
 
   const modelsToTry = [
-    "gemini-3.6-flash", 
     "gemini-3.8-flash", 
     "gemini-flash-latest", 
     "gemini-3.1-flash-lite"

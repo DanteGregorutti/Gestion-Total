@@ -317,6 +317,42 @@ export const inventoryService = {
     }
   },
 
+  syncProductImageAcrossVariants: async (codigo: string, imagenUrl: string, excludeId?: string) => {
+    if (!codigo?.trim() || !imagenUrl) return;
+    const cleanCode = codigo.trim().toLowerCase();
+    try {
+      // 1. Synchronize in Supabase / Local Storage
+      const allCached = await supabaseService.getProducts().catch(() => []);
+      const siblingsSb = allCached.filter(p => p.codigo?.trim().toLowerCase() === cleanCode && p.id !== excludeId && p.imagenUrl !== imagenUrl);
+      for (const sib of siblingsSb) {
+        await supabaseService.updateProduct(sib.id, { imagenUrl }).catch(() => {});
+      }
+
+      // 2. Synchronize in Firestore
+      if (auth.currentUser) {
+        const path = 'products';
+        const q = query(
+          collection(db, path),
+          where('createdBy', '==', auth.currentUser.uid)
+        );
+        const snapshot = await getDocs(q);
+        const matches = snapshot.docs.filter(d => {
+          const data = d.data();
+          return data.codigo?.trim().toLowerCase() === cleanCode && d.id !== excludeId && data.imagenUrl !== imagenUrl;
+        });
+
+        for (const matchDoc of matches) {
+          await updateDoc(doc(db, 'products', matchDoc.id), sanitizeData({
+            imagenUrl,
+            updatedAt: serverTimestamp()
+          })).catch(() => {});
+        }
+      }
+    } catch (error) {
+      console.warn('Error syncing product image across variants:', error);
+    }
+  },
+
   deleteProduct: async (id: string) => {
     try {
       await supabaseService.deleteProduct(id);
