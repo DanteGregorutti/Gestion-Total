@@ -9,6 +9,7 @@ import {
   where, 
   getDocs, 
   addDoc, 
+  setDoc,
   updateDoc, 
   deleteDoc, 
   doc, 
@@ -902,11 +903,12 @@ export const inventoryService = {
     const path = 'clients';
     const q = query(
       collection(db, path),
-      where('createdBy', '==', auth.currentUser.uid),
-      orderBy('nombre', 'asc')
+      where('createdBy', '==', auth.currentUser.uid)
     );
     return onSnapshot(q, (snapshot) => {
-      const clients = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Client));
+      const clients = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Client))
+        .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
       callback(clients);
     }, (error) => handleFirestoreError(error, OperationType.LIST, path));
   },
@@ -988,11 +990,12 @@ export const inventoryService = {
     const path = 'suppliers';
     const q = query(
       collection(db, path),
-      where('createdBy', '==', auth.currentUser.uid),
-      orderBy('nombre', 'asc')
+      where('createdBy', '==', auth.currentUser.uid)
     );
     return onSnapshot(q, (snapshot) => {
-      const suppliers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Supplier));
+      const suppliers = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Supplier))
+        .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
       callback(suppliers);
     }, (error) => handleFirestoreError(error, OperationType.LIST, path));
   },
@@ -1121,12 +1124,17 @@ export const inventoryService = {
     try {
       const q = query(
         collection(db, path),
-        where('createdBy', '==', auth.currentUser.uid),
-        orderBy('fecha', 'desc'),
-        limit(maxResults) 
+        where('createdBy', '==', auth.currentUser.uid)
       );
       const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Movement));
+      return snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Movement))
+        .sort((a, b) => {
+          const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
+          const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
+          return dateB.getTime() - dateA.getTime();
+        })
+        .slice(0, maxResults);
     } catch (error) {
       handleFirestoreError(error, OperationType.LIST, path);
       return [];
@@ -1140,12 +1148,17 @@ export const inventoryService = {
       const q = query(
         collection(db, path),
         where('createdBy', '==', auth.currentUser.uid),
-        where('productId', '==', productId),
-        orderBy('fecha', 'desc'),
-        limit(50)
+        where('productId', '==', productId)
       );
       const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Movement));
+      return snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Movement))
+        .sort((a, b) => {
+          const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
+          const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
+          return dateB.getTime() - dateA.getTime();
+        })
+        .slice(0, 50);
     } catch (error) {
       handleFirestoreError(error, OperationType.LIST, path);
       return [];
@@ -1499,6 +1512,42 @@ export const inventoryService = {
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, path);
     }
+
+    try {
+      await supabaseService.updateSale(id, data);
+    } catch (e) {
+      console.warn('supabase updateSale fallback:', e);
+    }
+  },
+
+  assignSalesToClient: async (saleIds: string[], client: { id: string; nombre: string }) => {
+    if (!saleIds || saleIds.length === 0) return;
+
+    // 1. Update in Firestore if authenticated
+    if (auth.currentUser) {
+      const path = 'sales';
+      try {
+        const batch = writeBatch(db);
+        for (const id of saleIds) {
+          const saleRef = doc(db, 'sales', id);
+          batch.update(saleRef, sanitizeData({
+            clientId: client.id,
+            clientNombre: client.nombre,
+            updatedAt: serverTimestamp()
+          }));
+        }
+        await batch.commit();
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, path);
+      }
+    }
+
+    // 2. Update in Supabase / Local storage cache
+    try {
+      await supabaseService.assignSalesToClient(saleIds, client);
+    } catch (e) {
+      console.warn('supabase assignSalesToClient fallback:', e);
+    }
   },
 
   registerComboSale: async (data: { 
@@ -1602,12 +1651,17 @@ export const inventoryService = {
       const q = query(
         collection(db, path),
         where('createdBy', '==', auth.currentUser.uid),
-        where('proveedor', '==', proveedor),
-        orderBy('fecha', 'desc'),
-        limit(50)
+        where('proveedor', '==', proveedor)
       );
       const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Purchase));
+      return snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Purchase))
+        .sort((a, b) => {
+          const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
+          const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
+          return dateB.getTime() - dateA.getTime();
+        })
+        .slice(0, 50);
     } catch (error) {
       handleFirestoreError(error, OperationType.LIST, path);
       return [];
@@ -2139,12 +2193,13 @@ export const inventoryService = {
     try {
       const q = query(
         collection(db, path),
-        where('createdBy', '==', auth.currentUser.uid),
-        orderBy('fecha', 'desc'),
-        limit(maxResults)
+        where('createdBy', '==', auth.currentUser.uid)
       );
       const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      return snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as any))
+        .sort((a, b) => new Date(b.fecha || 0).getTime() - new Date(a.fecha || 0).getTime())
+        .slice(0, maxResults);
     } catch (error) {
       handleFirestoreError(error, OperationType.LIST, path);
       return [];
@@ -2156,12 +2211,13 @@ export const inventoryService = {
     const path = 'backups';
     const q = query(
       collection(db, path),
-      where('createdBy', '==', auth.currentUser.uid),
-      orderBy('fecha', 'desc'),
-      limit(10)
+      where('createdBy', '==', auth.currentUser.uid)
     );
     return onSnapshot(q, (snapshot) => {
-      const backups = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const backups = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as any))
+        .sort((a, b) => new Date(b.fecha || 0).getTime() - new Date(a.fecha || 0).getTime())
+        .slice(0, 10);
       callback(backups);
     }, (error) => handleFirestoreError(error, OperationType.LIST, path));
   },
@@ -2278,11 +2334,16 @@ export const inventoryService = {
     const path = 'combos';
     const q = query(
       collection(db, path),
-      where('createdBy', '==', auth.currentUser.uid),
-      orderBy('createdAt', 'desc')
+      where('createdBy', '==', auth.currentUser.uid)
     );
     return onSnapshot(q, (snapshot) => {
-      const combos = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Combo));
+      const combos = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Combo))
+        .sort((a, b) => {
+          const dateA = (a.createdAt as any)?.toDate ? (a.createdAt as any).toDate() : new Date(a.createdAt as any || 0);
+          const dateB = (b.createdAt as any)?.toDate ? (b.createdAt as any).toDate() : new Date(b.createdAt as any || 0);
+          return dateB.getTime() - dateA.getTime();
+        });
       callback(combos);
     }, (error) => handleFirestoreError(error, OperationType.LIST, path));
   },
@@ -2425,11 +2486,12 @@ export const inventoryService = {
     const path = 'cash_audits';
     const q = query(
       collection(db, path),
-      where('createdBy', '==', auth.currentUser.uid),
-      orderBy('fecha', 'desc')
+      where('createdBy', '==', auth.currentUser.uid)
     );
     return onSnapshot(q, (snapshot) => {
-      const audits = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CashAudit));
+      const audits = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as CashAudit))
+        .sort((a, b) => new Date(b.fecha || 0).getTime() - new Date(a.fecha || 0).getTime());
       callback(audits);
     }, (error) => handleFirestoreError(error, OperationType.LIST, path));
   },
@@ -2633,22 +2695,26 @@ export const inventoryService = {
       createdBy: userId
     };
 
+    // Generate document ID upfront
+    const docRef = doc(collection(db, path));
+    const quoteId = docRef.id;
+
     // Helper to persist into all local caches
     const saveToCaches = (quote: Quote) => {
-      const keys = [cacheKey, 'cached_quotes_user_offline', 'cached_quotes_default'];
+      const keys = [cacheKey, 'cached_quotes_user_offline', 'cached_quotes_default', 'quotes', 'sb_cache_quotes'];
       for (const k of keys) {
         try {
           const cached = localStorage.getItem(k);
           const list: Quote[] = cached ? JSON.parse(cached) : [];
-          const updated = [quote, ...list.filter(q => q.id !== quote.id)];
+          const updated = [quote, ...list.filter(q => q.id !== quote.id && q.numero !== quote.numero)];
           localStorage.setItem(k, JSON.stringify(updated));
         } catch (e) {}
       }
     };
 
-    // First, persist to Supabase if available
+    // First, persist to Supabase if available with consistent ID
     try {
-      await supabaseService.createQuote(newQuote);
+      await supabaseService.createQuote({ ...newQuote, id: quoteId });
     } catch (e) {
       console.warn('Supabase createQuote fallback:', e);
     }
@@ -2656,8 +2722,8 @@ export const inventoryService = {
     // If authenticated in Firebase, attempt Firestore persistence
     if (auth.currentUser) {
       try {
-        const docRef = await addDoc(collection(db, path), sanitizeData(newQuote));
-        const created: Quote = { id: docRef.id, ...newQuote };
+        await setDoc(docRef, sanitizeData({ ...newQuote, id: quoteId }));
+        const created: Quote = { id: quoteId, ...newQuote };
         saveToCaches(created);
         return created;
       } catch (error) {
@@ -2666,8 +2732,7 @@ export const inventoryService = {
     }
 
     // Local / Offline fallback (always succeeds)
-    const localId = `local_quote_${Date.now()}`;
-    const created: Quote = { id: localId, ...newQuote };
+    const created: Quote = { id: quoteId, ...newQuote };
     saveToCaches(created);
     return created;
   },
@@ -2684,7 +2749,7 @@ export const inventoryService = {
     const cacheKey = `cached_quotes_${userId}`;
 
     // Update all local caches
-    const keys = [cacheKey, 'cached_quotes_user_offline', 'cached_quotes_default'];
+    const keys = [cacheKey, 'cached_quotes_user_offline', 'cached_quotes_default', 'quotes', 'sb_cache_quotes'];
     for (const k of keys) {
       try {
         const cached = localStorage.getItem(k);
@@ -2705,9 +2770,10 @@ export const inventoryService = {
     }
   },
 
-  deleteQuote: async (id: string) => {
+  deleteQuote: async (id: string, numero?: string) => {
+    // 1. Clean from Supabase by ID and by Numero
     try {
-      await supabaseService.deleteQuote(id);
+      await supabaseService.deleteQuote(id, numero);
     } catch (e) {
       console.warn('Supabase deleteQuote fallback:', e);
     }
@@ -2716,24 +2782,58 @@ export const inventoryService = {
     const userId = auth.currentUser?.uid || 'user_offline';
     const cacheKey = `cached_quotes_${userId}`;
 
-    // Update all local caches
-    const keys = [cacheKey, 'cached_quotes_user_offline', 'cached_quotes_default'];
+    // 2. Clean from all known localStorage keys
+    const keys = [cacheKey, 'cached_quotes_user_offline', 'cached_quotes_default', 'quotes', 'sb_cache_quotes'];
     for (const k of keys) {
       try {
         const cached = localStorage.getItem(k);
         if (cached) {
           const list: Quote[] = JSON.parse(cached);
-          const filtered = list.filter(q => q.id !== id);
-          localStorage.setItem(k, JSON.stringify(filtered));
+          if (Array.isArray(list)) {
+            const filtered = list.filter(q => q && q.id !== id && (!numero || q.numero !== numero));
+            localStorage.setItem(k, JSON.stringify(filtered));
+          }
         }
       } catch (e) {}
     }
 
-    if (auth.currentUser && !id.startsWith('local_')) {
-      try {
-        await deleteDoc(doc(db, 'quotes', id));
-      } catch (error) {
-        handleFirestoreError(error, OperationType.DELETE, path);
+    // Scan any other keys in localStorage containing 'quote'
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.includes('quote') || key.includes('cotizac'))) {
+          const cached = localStorage.getItem(key);
+          if (cached && (cached.includes(id) || (numero && cached.includes(numero)))) {
+            try {
+              const parsed = JSON.parse(cached);
+              if (Array.isArray(parsed)) {
+                const filtered = parsed.filter((q: any) => q && q.id !== id && (!numero || q.numero !== numero));
+                localStorage.setItem(key, JSON.stringify(filtered));
+              }
+            } catch (e) {}
+          }
+        }
+      }
+    } catch (e) {}
+
+    // 3. Clean from Firestore
+    if (auth.currentUser) {
+      if (id && !id.startsWith('local_')) {
+        try {
+          await deleteDoc(doc(db, 'quotes', id));
+        } catch (error) {
+          console.warn('Direct deleteDoc error in deleteQuote:', error);
+        }
+      }
+
+      if (numero) {
+        try {
+          const q = query(collection(db, 'quotes'), where('numero', '==', numero));
+          const snap = await getDocs(q);
+          for (const d of snap.docs) {
+            await deleteDoc(doc(db, 'quotes', d.id));
+          }
+        } catch (e) {}
       }
     }
   },
@@ -2753,9 +2853,9 @@ export const inventoryService = {
     }));
 
     await inventoryService.registerSale(salesToRegister);
-    await inventoryService.updateQuote(quote.id, {
-      estado: 'aceptada'
-    });
+
+    // Delete the pending quotation so it is completely removed upon confirmation
+    await inventoryService.deleteQuote(quote.id, quote.numero);
   },
 
   syncAllToSupabase: async () => {

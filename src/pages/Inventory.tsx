@@ -979,36 +979,63 @@ export default function Inventory() {
   return (
     <div className="space-y-6">
       {/* Header Actions */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 bg-white dark:bg-gray-900 p-6 rounded-[2rem] border border-gray-100 dark:border-gray-800 shadow-xl shadow-gray-200/50 dark:shadow-none">
-        <div className="relative flex-1 max-w-xl">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-indigo-500 w-5 h-5 pointer-events-none" />
-          <Input 
-            placeholder={t('search_inventory')} 
-            className="pl-12 py-3.5 bg-gray-50 dark:bg-gray-800 border-gray-100 dark:border-gray-800 focus:bg-white dark:focus:bg-gray-950 focus:ring-4 focus:ring-indigo-500/10 transition-all rounded-2xl"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
+      <div className="bg-white dark:bg-gray-900 p-5 sm:p-6 rounded-[2rem] border border-gray-100 dark:border-gray-800 shadow-xl shadow-gray-200/50 dark:shadow-none space-y-4">
+        {/* Top Row: Generous Search Bar + Main Primary Actions */}
+        <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+          <div className="relative flex-1 min-w-[280px] max-w-3xl">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-indigo-500 w-5 h-5 pointer-events-none" />
+            <input 
+              type="text"
+              placeholder={t('search_inventory') || 'Buscar por código, descripción, ubicación (ej: Caja 3)...'} 
+              className="w-full pl-12 pr-11 py-3.5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700/80 rounded-2xl text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-500 dark:focus:bg-gray-950 text-sm sm:text-base font-semibold transition-all shadow-inner"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              autoComplete="off"
+            />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchTerm('')}
+                className="absolute right-3.5 top-1/2 -translate-y-1/2 p-1.5 rounded-full text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                title="Borrar búsqueda"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <RefreshButton 
+              onRefresh={refreshProducts}
+              isLoading={isLoading || productsLoading}
+              label={t('refresh') || 'Actualizar'}
+              title="Actualizar inventario"
+              className="h-12"
+            />
+            <Button 
+              onClick={openCreateModal}
+              className="h-12 px-5 sm:px-6 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-lg shadow-indigo-200 dark:shadow-none transition-all active:scale-95"
+            >
+              <Plus className="w-5 h-5 sm:mr-2" />
+              <span className="hidden sm:inline">{t('new_product')}</span>
+              <span className="sm:hidden">{t('add') || 'Crear'}</span>
+            </Button>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <RefreshButton 
-            onRefresh={refreshProducts}
-            isLoading={isLoading || productsLoading}
-            label={t('refresh') || 'Actualizar'}
-            title="Actualizar inventario"
-            className="h-12"
-          />
-          <div className="h-8 w-px bg-gray-100 dark:bg-gray-800 mx-1 hidden sm:block" />
+
+        {/* Bottom Row: Utilities and Filters Toolbar */}
+        <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-gray-100 dark:border-gray-800/80">
           <Button 
             id="btn-inventory-filter-toggle"
             variant="outline" 
             onClick={() => setShowFilters(!showFilters)}
             className={cn(
-              "h-12 px-5 rounded-xl border-gray-100 dark:border-gray-800 font-bold transition-all",
-              showFilters ? "bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-200 dark:shadow-none" : "text-gray-600 dark:text-gray-400 hover:border-indigo-200"
+              "h-11 px-4 sm:px-5 rounded-xl border-gray-200 dark:border-gray-800 font-bold text-xs sm:text-sm transition-all",
+              showFilters ? "bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-200 dark:shadow-none" : "text-gray-600 dark:text-gray-400 hover:border-indigo-200"
             )}
           >
             <Filter className={cn("w-4 h-4 sm:mr-2 transition-transform", showFilters && "rotate-180")} />
-            <span className="hidden sm:inline">{t('filters')}</span>
+            <span className="inline">{t('filters')}</span>
           </Button>
 
           {/* Select all / Deselect / Bulk delete buttons */}
@@ -1018,7 +1045,7 @@ export default function Inventory() {
               variant="outline"
               onClick={handleToggleSelectAll}
               disabled={allFilteredProductIds.length === 0}
-              className="h-12 px-4 sm:px-5 rounded-xl border-gray-100 dark:border-gray-800 text-gray-700 dark:text-gray-300 font-bold hover:border-indigo-200 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all"
+              className="h-11 px-3.5 sm:px-4 rounded-xl border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-300 font-bold text-xs sm:text-sm hover:border-indigo-200 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all"
               title="Seleccionar todos los productos"
             >
               <CheckSquare className="w-4 h-4 sm:mr-2 text-indigo-500" />
@@ -1031,7 +1058,7 @@ export default function Inventory() {
                 id="btn-inventory-deselect-all"
                 variant="outline"
                 onClick={() => setSelectedProductIds(new Set())}
-                className="h-12 px-4 sm:px-5 rounded-xl border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 font-bold transition-all"
+                className="h-11 px-3.5 sm:px-4 rounded-xl border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 font-bold text-xs sm:text-sm transition-all"
                 title="Deseleccionar todo"
               >
                 <Square className="w-4 h-4 sm:mr-2" />
@@ -1041,7 +1068,7 @@ export default function Inventory() {
               <Button
                 id="btn-inventory-bulk-delete"
                 onClick={() => setIsBulkDeleteModalOpen(true)}
-                className="h-12 px-4 sm:px-5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold shadow-lg shadow-rose-200 dark:shadow-none transition-all active:scale-95"
+                className="h-11 px-3.5 sm:px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs sm:text-sm shadow-md shadow-rose-200 dark:shadow-none transition-all active:scale-95"
                 title="Eliminar seleccionados"
               >
                 <Trash2 className="w-4 h-4 sm:mr-2" />
@@ -1055,17 +1082,19 @@ export default function Inventory() {
             id="btn-inventory-bulk-upload"
             variant="outline" 
             onClick={() => setIsBulkUploadModalOpen(true)}
-            className="h-12 px-4 sm:px-5 rounded-xl border-indigo-100 dark:border-indigo-900/50 text-indigo-600 dark:text-indigo-400 font-bold hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all"
+            className="h-11 px-3.5 sm:px-4 rounded-xl border-indigo-100 dark:border-indigo-900/50 text-indigo-600 dark:text-indigo-400 font-bold text-xs sm:text-sm hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all"
             title={t('bulk_upload')}
           >
             <Database className="w-4 h-4 sm:mr-2" />
             <span className="hidden md:inline">{t('bulk_upload')}</span>
+            <span className="md:hidden">Carga</span>
           </Button>
+
           <Button 
             variant="outline" 
             onClick={() => setInventoryTab(inventoryTab === 'stock' ? 'inteligencia' : 'stock')}
             className={cn(
-              "h-12 px-4 sm:px-5 rounded-xl font-bold transition-all",
+              "h-11 px-3.5 sm:px-4 rounded-xl font-bold text-xs sm:text-sm transition-all",
               inventoryTab === 'inteligencia' 
                 ? "bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-600/20"
                 : "border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/20"
@@ -1076,32 +1105,27 @@ export default function Inventory() {
             <span className="hidden md:inline">Inteligencia ABC & Reposición</span>
             <span className="md:hidden">ABC</span>
           </Button>
+
           <Button 
             variant="outline" 
             onClick={() => navigate('/catalogo')}
-            className="h-12 px-4 sm:px-5 rounded-xl border-emerald-100 dark:border-emerald-900/50 text-emerald-600 dark:text-emerald-400 font-bold hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-all"
+            className="h-11 px-3.5 sm:px-4 rounded-xl border-emerald-100 dark:border-emerald-900/50 text-emerald-600 dark:text-emerald-400 font-bold text-xs sm:text-sm hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-all"
             title={t('catalog')}
           >
             <FileText className="w-4 h-4 sm:mr-2" />
             <span className="hidden md:inline">{t('catalog')}</span>
+            <span className="md:hidden">Catálogo</span>
           </Button>
+
           <Button 
             variant="outline" 
             onClick={() => setIsReorganizeModalOpen(true)}
-            className="h-12 px-4 sm:px-5 rounded-xl border-amber-200 dark:border-amber-900/50 text-amber-700 dark:text-amber-400 font-bold hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-all"
+            className="h-11 px-3.5 sm:px-4 rounded-xl border-amber-200 dark:border-amber-900/50 text-amber-700 dark:text-amber-400 font-bold text-xs sm:text-sm hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-all"
             title="Reorganizar códigos correlativos automáticos (ART-0001, ART-0002...)"
           >
             <Barcode className="w-4 h-4 sm:mr-2" />
             <span className="hidden xl:inline">Códigos Secuenciales</span>
             <span className="xl:hidden">Códigos</span>
-          </Button>
-          <Button 
-            onClick={openCreateModal}
-            className="h-12 px-5 sm:px-6 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-lg shadow-indigo-200 dark:shadow-none transition-all active:scale-95"
-          >
-            <Plus className="w-5 h-5 sm:mr-2" />
-            <span className="hidden sm:inline">{t('new_product')}</span>
-            <span className="sm:hidden">{t('add') || 'Crear'}</span>
           </Button>
         </div>
       </div>

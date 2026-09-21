@@ -244,6 +244,7 @@ export default function WorkOrders() {
   const handleConvertToWorkOrder = async (quote: RepairQuote) => {
     if (confirm(`¿Aprobar el presupuesto ${quote.numero} y crear una Orden de Trabajo activa en el taller?`)) {
       try {
+        setRepairQuotes(prev => prev.filter(q => q.id !== quote.id));
         const newOrderId = await workOrderService.convertRepairQuoteToWorkOrder(quote);
         toast.success(`¡Orden de Trabajo creada con éxito a partir del presupuesto!`);
         setActiveTab('ordenes');

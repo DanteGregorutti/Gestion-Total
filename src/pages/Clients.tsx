@@ -35,7 +35,10 @@ import {
   UserCheck,
   Calendar,
   Layers,
-  ArrowRight
+  ArrowRight,
+  UserPlus,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui';
@@ -92,6 +95,22 @@ export default function Clients() {
   const [shareTargetClient, setShareTargetClient] = useState<Client | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
 
+  // Assign unassigned sales state
+  const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
+  const [assignTargetClientId, setAssignTargetClientId] = useState<string>('');
+  const [selectedSaleIdsForAssign, setSelectedSaleIdsForAssign] = useState<string[]>([]);
+  const [assignSearchTerm, setAssignSearchTerm] = useState('');
+  const [assignDateFilter, setAssignDateFilter] = useState<'all' | '7d' | '30d'>('all');
+  const [isCreatingClientInAssign, setIsCreatingClientInAssign] = useState(false);
+  const [quickClientForm, setQuickClientForm] = useState({
+    nombre: '',
+    telefono: '',
+    email: '',
+    direccion: ''
+  });
+  const [isSubmittingAssign, setIsSubmittingAssign] = useState(false);
+  const [historialSubTab, setHistorialSubTab] = useState<'con_cliente' | 'sin_cliente'>('con_cliente');
+
   // Form data for add / edit
   const [formData, setFormData] = useState<Omit<Client, 'id' | 'createdAt' | 'createdBy'>>({
     nombre: '',
@@ -106,7 +125,7 @@ export default function Clients() {
     try {
       const [clientsData, salesData] = await Promise.all([
         inventoryService.getClients(),
-        inventoryService.getSales()
+        inventoryService.getSales(365)
       ]);
       setClients(clientsData);
       setSales(salesData);
@@ -123,6 +142,167 @@ export default function Clients() {
     loadData();
   }, []);
 
+  // Check if a sale is unassigned / sin nombre de cliente
+  const isSaleUnassigned = (s: Sale) => {
+    if (!s.clientId || s.clientId.trim() === '') return true;
+    const name = (s.clientNombre || '').trim().toLowerCase();
+    return !name || name === 'consumidor final' || name === 'cliente general' || name === 'sin cliente' || name === 'anónimo' || name === 'anonimo';
+  };
+
+  // List of all unassigned sales
+  const unassignedSales = useMemo(() => {
+    return sales.filter(isSaleUnassigned);
+  }, [sales]);
+
+  const unassignedTotal = useMemo(() => {
+    return unassignedSales.reduce((acc, s) => acc + (Number(s.total) || 0), 0);
+  }, [unassignedSales]);
+
+  // Filtered unassigned sales for the assignment modal
+  const filteredUnassignedSales = useMemo(() => {
+    return unassignedSales.filter(s => {
+      // Date filter
+      if (assignDateFilter !== 'all') {
+        const dateObj = s.fecha?.toDate ? s.fecha.toDate() : new Date(s.fecha || 0);
+        const diffMs = Date.now() - dateObj.getTime();
+        const days = diffMs / (1000 * 60 * 60 * 24);
+        if (assignDateFilter === '7d' && days > 7) return false;
+        if (assignDateFilter === '30d' && days > 30) return false;
+      }
+
+      // Search term
+      if (assignSearchTerm.trim()) {
+        const term = assignSearchTerm.toLowerCase();
+        const prodMatch = (s.productNombre || '').toLowerCase().includes(term);
+        const variantMatch = (s.variantNombre || '').toLowerCase().includes(term);
+        const totalMatch = String(s.total || '').includes(term);
+        const methodMatch = (s.metodo || '').toLowerCase().includes(term);
+        if (!prodMatch && !variantMatch && !totalMatch && !methodMatch) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [unassignedSales, assignSearchTerm, assignDateFilter]);
+
+  const openAssignModal = (preselectedClientId?: string, preselectedSaleId?: string) => {
+    if (preselectedClientId) {
+      setAssignTargetClientId(preselectedClientId);
+      setIsCreatingClientInAssign(false);
+    } else if (clients.length > 0) {
+      setAssignTargetClientId(clients[0].id);
+      setIsCreatingClientInAssign(false);
+    } else {
+      setAssignTargetClientId('');
+      setIsCreatingClientInAssign(true);
+    }
+
+    if (preselectedSaleId) {
+      setSelectedSaleIdsForAssign([preselectedSaleId]);
+    } else {
+      setSelectedSaleIdsForAssign([]);
+    }
+
+    setAssignSearchTerm('');
+    setAssignDateFilter('all');
+    setQuickClientForm({ nombre: '', telefono: '', email: '', direccion: '' });
+    setIsAssignModalOpen(true);
+  };
+
+  const toggleSaleSelection = (id: string) => {
+    setSelectedSaleIdsForAssign(prev => 
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  const selectAllFiltered = () => {
+    setSelectedSaleIdsForAssign(filteredUnassignedSales.map(s => s.id));
+  };
+
+  const deselectAll = () => {
+    setSelectedSaleIdsForAssign([]);
+  };
+
+  const handleQuickCreateClient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickClientForm.nombre.trim()) {
+      toast.error('El nombre del cliente es obligatorio');
+      return;
+    }
+
+    try {
+      const newId = await inventoryService.addClient({
+        nombre: quickClientForm.nombre.trim(),
+        telefono: quickClientForm.telefono.trim() || undefined,
+        email: quickClientForm.email.trim() || undefined,
+        direccion: quickClientForm.direccion.trim() || undefined
+      });
+
+      const newClient: Client = {
+        id: newId || `client_${Date.now()}`,
+        nombre: quickClientForm.nombre.trim(),
+        telefono: quickClientForm.telefono.trim() || undefined,
+        email: quickClientForm.email.trim() || undefined,
+        direccion: quickClientForm.direccion.trim() || undefined,
+        createdAt: new Date().toISOString(),
+        createdBy: 'admin'
+      };
+
+      setClients(prev => [newClient, ...prev]);
+      setAssignTargetClientId(newClient.id);
+      setIsCreatingClientInAssign(false);
+      setQuickClientForm({ nombre: '', telefono: '', email: '', direccion: '' });
+      toast.success(`Cliente "${newClient.nombre}" registrado y seleccionado`);
+    } catch (error) {
+      console.error(error);
+      toast.error('Error al registrar el cliente');
+    }
+  };
+
+  const handleConfirmAssignSales = async () => {
+    if (!assignTargetClientId) {
+      toast.error('Selecciona el cliente de destino');
+      return;
+    }
+    if (selectedSaleIdsForAssign.length === 0) {
+      toast.error('Selecciona al menos una venta para asignarle');
+      return;
+    }
+
+    const targetClient = clients.find(c => c.id === assignTargetClientId);
+    if (!targetClient) {
+      toast.error('Cliente no encontrado');
+      return;
+    }
+
+    setIsSubmittingAssign(true);
+    try {
+      await inventoryService.assignSalesToClient(selectedSaleIdsForAssign, {
+        id: targetClient.id,
+        nombre: targetClient.nombre
+      });
+
+      const assignedCount = selectedSaleIdsForAssign.length;
+      const assignedSum = unassignedSales
+        .filter(s => selectedSaleIdsForAssign.includes(s.id))
+        .reduce((acc, s) => acc + (Number(s.total) || 0), 0);
+
+      toast.success(
+        `¡Se asignaron ${assignedCount} ${assignedCount === 1 ? 'venta' : 'ventas'} ($${assignedSum.toLocaleString()}) a ${targetClient.nombre}!`,
+        { duration: 4000 }
+      );
+
+      setIsAssignModalOpen(false);
+      setSelectedSaleIdsForAssign([]);
+      await loadData();
+    } catch (error) {
+      console.error(error);
+      toast.error('Error al asignar las ventas al cliente');
+    } finally {
+      setIsSubmittingAssign(false);
+    }
+  };
+
   // Compute stats per client
   const clientsWithStats = useMemo(() => {
     return clients.map(client => {
@@ -130,12 +310,26 @@ export default function Clients() {
       const totalSpent = clientSales.reduce((acc, s) => acc + (Number(s.total) || 0), 0);
       const totalUnits = clientSales.reduce((acc, s) => acc + (Number(s.cantidad) || 0), 0);
 
-      // Payments made by this client
-      const clientPayments = accountPayments.filter(p => p.entityId === client.id && p.entityType === 'client');
-      const totalPaid = clientPayments.reduce((acc, p) => acc + (Number(p.monto) || 0), 0);
+      // In a store and point-of-sale, sales are completed, paid transactions.
+      // A sale only generates pending debt if explicitly marked as pending or on credit ('a_credito' / 'cuenta_corriente' / estadoPago === 'pendiente').
+      const isCreditSale = (s: Sale) => 
+        s.estadoPago === 'pendiente' || 
+        s.metodo === 'cuenta_corriente' || 
+        s.metodo === 'credito' || 
+        s.metodo === 'a_credito';
 
-      // Balance: positive means client owes money
-      const balance = Math.round((totalSpent - totalPaid) * 100) / 100;
+      const creditSales = clientSales.filter(isCreditSale);
+      const creditDebt = creditSales.reduce((acc, s) => acc + (Number(s.total) || 0), 0);
+      const normalSalesPaid = clientSales.filter(s => !isCreditSale(s)).reduce((acc, s) => acc + (Number(s.total) || 0), 0);
+
+      // Payments made specifically towards credit/debt (abonos en cuenta corriente)
+      const clientPayments = accountPayments.filter(p => p.entityId === client.id && p.entityType === 'client');
+      const extraPaid = clientPayments.reduce((acc, p) => acc + (Number(p.monto) || 0), 0);
+
+      const totalPaid = normalSalesPaid + extraPaid;
+
+      // Balance: only pending credit sales minus account payments. Regular sales do not owe anything.
+      const balance = Math.max(0, Math.round((creditDebt - extraPaid) * 100) / 100);
 
       // Last purchase date
       const sortedSales = [...clientSales].sort((a, b) => {
@@ -397,6 +591,20 @@ export default function Clients() {
         {/* Global Action Buttons */}
         <div className="flex items-center gap-2.5 flex-wrap">
           <Button
+            onClick={() => openAssignModal()}
+            variant="outline"
+            className="rounded-xl border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 bg-indigo-50/70 dark:bg-indigo-950/30 font-bold hover:bg-indigo-100 transition-all text-xs sm:text-sm relative shadow-sm"
+          >
+            <UserCheck className="w-4 h-4 mr-1.5" />
+            <span>Asignar Ventas Sin Nombre</span>
+            {unassignedSales.length > 0 && (
+              <span className="ml-1.5 px-2 py-0.5 rounded-full text-[10px] font-black bg-indigo-600 text-white animate-pulse">
+                {unassignedSales.length}
+              </span>
+            )}
+          </Button>
+
+          <Button
             onClick={() => setIsShareModalOpen(true)}
             variant="outline"
             className="rounded-xl border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/20 font-bold hover:bg-emerald-100 transition-all text-xs sm:text-sm"
@@ -492,6 +700,41 @@ export default function Clients() {
           </div>
         </div>
       </div>
+
+      {/* Banner de Ventas Sin Nombre pendientes */}
+      {unassignedSales.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-gradient-to-r from-indigo-50 via-purple-50 to-blue-50 dark:from-indigo-950/40 dark:via-purple-950/30 dark:to-blue-950/20 p-4 rounded-3xl border border-indigo-100 dark:border-indigo-900/40 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3.5"
+        >
+          <div className="flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-indigo-500/20">
+              <UserCheck size={20} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-black text-gray-900 dark:text-white text-sm">
+                  Hay {unassignedSales.length} {unassignedSales.length === 1 ? 'venta sin nombre registrada' : 'ventas sin nombre registradas'}
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[11px] font-black bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300">
+                  ${unassignedTotal.toLocaleString()} acumulados
+                </span>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                ¿Tenés ventas cobradas como "Consumidor Final" de clientes que no estaban anotados? Podés asignárselas ahora para actualizar su ficha e historial de compras.
+              </p>
+            </div>
+          </div>
+          <Button
+            onClick={() => openAssignModal()}
+            className="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shrink-0 self-start sm:self-center shadow-md shadow-indigo-500/20"
+          >
+            <UserCheck size={14} className="mr-1.5" />
+            Asignar a un Cliente
+          </Button>
+        </motion.div>
+      )}
 
       {/* Main Navigation Tabs */}
       <div className="flex gap-2 p-1.5 bg-gray-100 dark:bg-gray-800/80 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-x-auto">
@@ -815,6 +1058,16 @@ export default function Clients() {
                       </div>
                     )}
 
+                    {/* Assign unassigned sales button */}
+                    <button
+                      onClick={() => openAssignModal(client.id)}
+                      className="w-full py-1.5 bg-indigo-50/70 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors border border-indigo-100/80 dark:border-indigo-900/30"
+                      title="Vincular ventas que estaban sin nombre a este cliente"
+                    >
+                      <UserCheck size={13} />
+                      <span>Poner ventas sin nombre</span>
+                    </button>
+
                     {/* Full History & Details Button */}
                     <button
                       onClick={() => {
@@ -981,54 +1234,169 @@ export default function Clients() {
       {activeTab === 'historial_ventas' && (
         <div className="space-y-4">
           <div className="bg-white dark:bg-gray-900 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm p-5">
-            <h3 className="text-base font-black text-gray-900 dark:text-white mb-1">
-              Registro de Ventas a Clientes
-            </h3>
-            <p className="text-xs text-gray-500 mb-4">Todas las ventas asociadas a clientes registrados en el sistema</p>
-
-            {sales.filter(s => s.clientId).length === 0 ? (
-              <div className="text-center py-10 text-gray-400">
-                <ShoppingBag className="w-12 h-12 mx-auto mb-2 opacity-30" />
-                <p className="text-xs">Aún no hay ventas asociadas a clientes. Al realizar una venta, selecciona el cliente para asociarla a su historial.</p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-gray-100 dark:border-gray-800">
+              <div>
+                <h3 className="text-base font-black text-gray-900 dark:text-white">
+                  Registro de Ventas
+                </h3>
+                <p className="text-xs text-gray-500">
+                  {historialSubTab === 'con_cliente' 
+                    ? 'Todas las ventas vinculadas a clientes registrados en el sistema' 
+                    : 'Ventas que fueron registradas sin cliente o como Consumidor Final'}
+                </p>
               </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="bg-gray-100 dark:bg-gray-800 p-1 rounded-2xl flex items-center gap-1">
+                  <button
+                    onClick={() => setHistorialSubTab('con_cliente')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                      historialSubTab === 'con_cliente'
+                        ? 'bg-white dark:bg-gray-900 text-gray-900 dark:text-white shadow-xs'
+                        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                    }`}
+                  >
+                    Con Cliente ({sales.filter(s => !isSaleUnassigned(s)).length})
+                  </button>
+                  <button
+                    onClick={() => setHistorialSubTab('sin_cliente')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                      historialSubTab === 'sin_cliente'
+                        ? 'bg-white dark:bg-gray-900 text-indigo-600 dark:text-indigo-400 shadow-xs'
+                        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                    }`}
+                  >
+                    <span>Sin Nombre / Sin Cliente</span>
+                    {unassignedSales.length > 0 && (
+                      <span className="px-1.5 py-0.2 rounded-full text-[10px] font-black bg-indigo-600 text-white">
+                        {unassignedSales.length}
+                      </span>
+                    )}
+                  </button>
+                </div>
+
+                {historialSubTab === 'sin_cliente' && unassignedSales.length > 0 && (
+                  <Button
+                    onClick={() => openAssignModal()}
+                    className="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-sm"
+                  >
+                    <UserCheck size={13} className="mr-1.5" />
+                    Asignar Ventas a Clientes
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {historialSubTab === 'con_cliente' ? (
+              sales.filter(s => !isSaleUnassigned(s)).length === 0 ? (
+                <div className="text-center py-10 text-gray-400">
+                  <ShoppingBag className="w-12 h-12 mx-auto mb-2 opacity-30" />
+                  <p className="text-xs">Aún no hay ventas asociadas a clientes.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-gray-100 dark:border-gray-800 text-gray-400 uppercase tracking-wider text-[10px]">
+                        <th className="py-3 px-3">Fecha</th>
+                        <th className="py-3 px-3">Cliente</th>
+                        <th className="py-3 px-3">Producto / Concepto</th>
+                        <th className="py-3 px-3 text-center">Unidades</th>
+                        <th className="py-3 px-3 text-right">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 dark:divide-gray-800 font-medium">
+                      {sales
+                        .filter(s => !isSaleUnassigned(s))
+                        .slice(0, 50)
+                        .map(sale => {
+                          const dateStr = sale.fecha?.toDate 
+                            ? sale.fecha.toDate().toLocaleDateString()
+                            : new Date(sale.fecha || 0).toLocaleDateString();
+
+                          return (
+                            <tr key={sale.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                              <td className="py-3 px-3 text-gray-500">{dateStr}</td>
+                              <td className="py-3 px-3 font-bold text-gray-900 dark:text-white">
+                                {sale.clientNombre || 'Cliente'}
+                              </td>
+                              <td className="py-3 px-3">{sale.productNombre}</td>
+                              <td className="py-3 px-3 text-center text-gray-500">{sale.cantidad}</td>
+                              <td className="py-3 px-3 text-right font-black text-indigo-600 dark:text-indigo-400">
+                                ${Number(sale.total).toLocaleString()}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              )
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-gray-100 dark:border-gray-800 text-gray-400 uppercase tracking-wider text-[10px]">
-                      <th className="py-3 px-3">Fecha</th>
-                      <th className="py-3 px-3">Cliente</th>
-                      <th className="py-3 px-3">Producto / Concepto</th>
-                      <th className="py-3 px-3 text-center">Unidades</th>
-                      <th className="py-3 px-3 text-right">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 dark:divide-gray-800 font-medium">
-                    {sales
-                      .filter(s => s.clientId)
-                      .slice(0, 50)
-                      .map(sale => {
+              /* TABLA DE VENTAS SIN CLIENTE / SIN NOMBRE */
+              unassignedSales.length === 0 ? (
+                <div className="text-center py-10 text-gray-400">
+                  <CheckCircle2 className="w-12 h-12 mx-auto mb-2 text-emerald-500 opacity-60" />
+                  <p className="text-xs font-bold text-gray-700 dark:text-gray-300">¡No hay ventas sin nombre pendientes!</p>
+                  <p className="text-[11px] text-gray-400 mt-1">Todas las ventas han sido atribuidas a sus respectivos clientes.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-gray-100 dark:border-gray-800 text-gray-400 uppercase tracking-wider text-[10px]">
+                        <th className="py-3 px-3">Fecha</th>
+                        <th className="py-3 px-3">Producto / Concepto</th>
+                        <th className="py-3 px-3 text-center">Unidades</th>
+                        <th className="py-3 px-3">Método</th>
+                        <th className="py-3 px-3 text-right">Total</th>
+                        <th className="py-3 px-3 text-right">Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 dark:divide-gray-800 font-medium">
+                      {unassignedSales.map(sale => {
                         const dateStr = sale.fecha?.toDate 
-                          ? sale.fecha.toDate().toLocaleDateString()
-                          : new Date(sale.fecha || 0).toLocaleDateString();
+                          ? sale.fecha.toDate().toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })
+                          : new Date(sale.fecha || 0).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
 
                         return (
-                          <tr key={sale.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                          <tr key={sale.id} className="hover:bg-indigo-50/40 dark:hover:bg-indigo-950/20 transition-colors">
                             <td className="py-3 px-3 text-gray-500">{dateStr}</td>
-                            <td className="py-3 px-3 font-bold text-gray-900 dark:text-white">
-                              {sale.clientNombre || 'Cliente'}
+                            <td className="py-3 px-3">
+                              <div className="font-bold text-gray-900 dark:text-white">
+                                {sale.productNombre}
+                              </div>
+                              {sale.variantNombre && (
+                                <span className="text-[10px] text-gray-400 font-normal">
+                                  Var: {sale.variantNombre}
+                                </span>
+                              )}
                             </td>
-                            <td className="py-3 px-3">{sale.productNombre}</td>
                             <td className="py-3 px-3 text-center text-gray-500">{sale.cantidad}</td>
-                            <td className="py-3 px-3 text-right font-black text-indigo-600 dark:text-indigo-400">
+                            <td className="py-3 px-3">
+                              <span className="px-2 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 text-[11px] capitalize">
+                                {sale.metodo || 'Venta'}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-right font-black text-indigo-600 dark:text-indigo-400 text-sm">
                               ${Number(sale.total).toLocaleString()}
+                            </td>
+                            <td className="py-3 px-3 text-right">
+                              <Button
+                                onClick={() => openAssignModal(undefined, sale.id)}
+                                className="px-2.5 py-1 text-xs font-bold rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs"
+                              >
+                                <UserCheck size={12} className="mr-1" />
+                                Asignar a Cliente
+                              </Button>
                             </td>
                           </tr>
                         );
                       })}
-                  </tbody>
-                </table>
-              </div>
+                    </tbody>
+                  </table>
+                </div>
+              )
             )}
           </div>
         </div>
@@ -1303,6 +1671,19 @@ export default function Clients() {
                   </Button>
                 )}
                 <Button
+                  onClick={() => openAssignModal(detail.id)}
+                  variant="outline"
+                  className="rounded-xl border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 bg-indigo-50/70 dark:bg-indigo-950/30 font-bold text-xs hover:bg-indigo-100 transition-all"
+                >
+                  <UserCheck size={14} className="mr-1.5" />
+                  Asignarle Ventas Sin Nombre
+                  {unassignedSales.length > 0 && (
+                    <span className="ml-1.5 px-1.5 py-0.2 rounded-full text-[10px] font-black bg-indigo-600 text-white">
+                      {unassignedSales.length}
+                    </span>
+                  )}
+                </Button>
+                <Button
                   onClick={() => {
                     setViewingDetailClient(null);
                     navigate('/ventas');
@@ -1342,19 +1723,54 @@ export default function Clients() {
               {/* Compras List */}
               {detailModalTab === 'compras' && (
                 <div className="space-y-2">
+                  {unassignedSales.length > 0 && (
+                    <div className="flex justify-end pb-1">
+                      <button
+                        onClick={() => openAssignModal(detail.id)}
+                        className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1.5 bg-indigo-50/50 dark:bg-indigo-950/30 px-3 py-1.5 rounded-xl border border-indigo-100 dark:border-indigo-900/30"
+                      >
+                        <UserCheck size={13} />
+                        <span>+ Asignar ventas sin nombre a este cliente ({unassignedSales.length} disponibles)</span>
+                      </button>
+                    </div>
+                  )}
+
                   {detail.sales.length === 0 ? (
-                    <p className="text-center py-8 text-xs text-gray-400">Sin compras registradas para este cliente.</p>
+                    <div className="text-center py-8 text-xs text-gray-400 space-y-3">
+                      <p>Sin compras registradas aún para este cliente.</p>
+                      {unassignedSales.length > 0 && (
+                        <Button
+                          onClick={() => openAssignModal(detail.id)}
+                          className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-sm"
+                        >
+                          <UserCheck size={13} className="mr-1.5" />
+                          Buscar y transferirle ventas sin nombre ({unassignedSales.length} disponibles)
+                        </Button>
+                      )}
+                    </div>
                   ) : (
                     detail.sales.map(s => {
                       const dateStr = s.fecha?.toDate 
                         ? s.fecha.toDate().toLocaleDateString()
                         : new Date(s.fecha || 0).toLocaleDateString();
+                      const isCredit = s.estadoPago === 'pendiente' || s.metodo === 'cuenta_corriente' || s.metodo === 'credito' || s.metodo === 'a_credito';
 
                       return (
                         <div key={s.id} className="p-3 bg-gray-50 dark:bg-gray-800/70 rounded-2xl flex justify-between items-center text-xs">
                           <div>
-                            <span className="font-bold text-gray-900 dark:text-white block">{s.productNombre}</span>
-                            <span className="text-gray-400 text-[11px]">{dateStr} • {s.cantidad} unidades</span>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-gray-900 dark:text-white block">{s.productNombre}</span>
+                              {isCredit ? (
+                                <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                                  A Crédito
+                                </span>
+                              ) : (
+                                <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
+                                  Pagado
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-gray-400 text-[11px]">{dateStr} • {s.cantidad} unidades {s.metodo ? `• ${s.metodo}` : ''}</span>
                           </div>
                           <span className="font-black text-indigo-600 dark:text-indigo-400 text-sm">
                             ${Number(s.total).toLocaleString()}
@@ -1551,6 +1967,385 @@ export default function Clients() {
                   )}
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      </Modal>
+
+      {/* MODAL: ASIGNAR VENTAS SIN NOMBRE A CLIENTES */}
+      <Modal
+        isOpen={isAssignModalOpen}
+        onClose={() => {
+          if (!isSubmittingAssign) {
+            setIsAssignModalOpen(false);
+          }
+        }}
+        title="Asignar Ventas Sin Nombre a Clientes"
+        maxWidth="max-w-4xl"
+      >
+        <div className="space-y-6 max-h-[80vh] overflow-y-auto pr-1">
+          {/* Top explainer */}
+          <div className="p-4 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/40 flex items-start gap-3 text-xs text-indigo-900 dark:text-indigo-200">
+            <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
+              <UserCheck size={16} />
+            </div>
+            <div>
+              <p className="font-bold">
+                Asocia ventas anteriores que se cobraron como "Consumidor Final" o sin registrar a un cliente específico.
+              </p>
+              <p className="text-indigo-700/80 dark:text-indigo-300/80 mt-0.5">
+                Al asignarlas, estas compras pasarán inmediatamente a la ficha del cliente, actualizando su historial de compras, frecuencia y volumen total.
+              </p>
+            </div>
+          </div>
+
+          {/* PASO 1: SELECCIONAR O CREAR CLIENTE */}
+          <div className="p-4 rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/60 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
+                <span className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[10px]">1</span>
+                ¿A qué cliente le pertenecen estas ventas?
+              </span>
+
+              <button
+                type="button"
+                onClick={() => setIsCreatingClientInAssign(!isCreatingClientInAssign)}
+                className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
+              >
+                {isCreatingClientInAssign ? (
+                  <span>Elegir de clientes existentes</span>
+                ) : (
+                  <>
+                    <UserPlus size={13} />
+                    <span>+ Crear nuevo cliente ahora</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {isCreatingClientInAssign ? (
+              <form onSubmit={handleQuickCreateClient} className="p-3.5 rounded-xl bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 space-y-3">
+                <div className="flex items-center justify-between pb-1 border-b border-gray-200 dark:border-gray-700">
+                  <span className="text-xs font-bold text-gray-800 dark:text-gray-200">
+                    Anotar cliente en el acto
+                  </span>
+                  <span className="text-[10px] text-gray-400">Se agregará a tu directorio de clientes</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                  <div>
+                    <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">Nombre Completo *</label>
+                    <Input
+                      value={quickClientForm.nombre}
+                      onChange={e => setQuickClientForm(prev => ({ ...prev, nombre: e.target.value }))}
+                      placeholder="Ej: Marcelo Fernández"
+                      className="text-xs"
+                      required
+                      autoFocus
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">Teléfono / WhatsApp</label>
+                    <Input
+                      value={quickClientForm.telefono}
+                      onChange={e => setQuickClientForm(prev => ({ ...prev, telefono: e.target.value }))}
+                      placeholder="Ej: 11 5555 4444"
+                      className="text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">Email (Opcional)</label>
+                    <Input
+                      type="email"
+                      value={quickClientForm.email}
+                      onChange={e => setQuickClientForm(prev => ({ ...prev, email: e.target.value }))}
+                      placeholder="correo@ejemplo.com"
+                      className="text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">Dirección (Opcional)</label>
+                    <Input
+                      value={quickClientForm.direccion}
+                      onChange={e => setQuickClientForm(prev => ({ ...prev, direccion: e.target.value }))}
+                      placeholder="Calle 123, Ciudad"
+                      className="text-xs"
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsCreatingClientInAssign(false)}
+                    className="px-3 py-1.5 rounded-xl text-xs font-bold text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700"
+                  >
+                    Cancelar
+                  </button>
+                  <Button
+                    type="submit"
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-sm"
+                  >
+                    <UserPlus size={13} className="mr-1" />
+                    Crear y Seleccionar
+                  </Button>
+                </div>
+              </form>
+            ) : (
+              <div className="space-y-2">
+                <select
+                  value={assignTargetClientId}
+                  onChange={e => setAssignTargetClientId(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-bold text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                >
+                  <option value="" disabled>Selecciona un cliente de la lista...</option>
+                  {clients.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.nombre} {c.telefono ? `(${c.telefono})` : ''}
+                    </option>
+                  ))}
+                </select>
+
+                {assignTargetClientId && (() => {
+                  const target = clients.find(c => c.id === assignTargetClientId);
+                  if (!target) return null;
+                  return (
+                    <div className="flex items-center justify-between p-2.5 rounded-xl bg-gray-50 dark:bg-gray-800/40 text-xs">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 flex items-center justify-center font-black">
+                          {target.nombre.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <span className="font-bold text-gray-900 dark:text-white">{target.nombre}</span>
+                          <span className="text-gray-400 text-[10px] ml-2">{target.telefono || 'Sin teléfono'}</span>
+                        </div>
+                      </div>
+                      <span className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400">
+                        Cliente seleccionado ✓
+                      </span>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
+
+          {/* PASO 2: SELECCIONAR LAS VENTAS */}
+          <div className="p-4 rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/60 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <span className="text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
+                <span className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[10px]">2</span>
+                Selecciona las ventas sin nombre a transferirle ({filteredUnassignedSales.length} disponibles)
+              </span>
+
+              {/* Selection quick buttons */}
+              {filteredUnassignedSales.length > 0 && (
+                <div className="flex items-center gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={selectAllFiltered}
+                    className="font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
+                  >
+                    <CheckSquare size={13} />
+                    <span>Seleccionar todas ({filteredUnassignedSales.length})</span>
+                  </button>
+                  {selectedSaleIdsForAssign.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={deselectAll}
+                      className="font-bold text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                    >
+                      Deseleccionar
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Filter and search bar */}
+            <div className="flex flex-col sm:flex-row gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-2.5 text-gray-400 w-4 h-4" />
+                <Input
+                  value={assignSearchTerm}
+                  onChange={e => setAssignSearchTerm(e.target.value)}
+                  placeholder="Buscar por producto, monto, método..."
+                  className="pl-9 text-xs"
+                />
+              </div>
+
+              <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 p-1 rounded-xl shrink-0 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setAssignDateFilter('all')}
+                  className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
+                    assignDateFilter === 'all'
+                      ? 'bg-white dark:bg-gray-900 text-gray-900 dark:text-white shadow-xs'
+                      : 'text-gray-500'
+                  }`}
+                >
+                  Todas ({unassignedSales.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAssignDateFilter('7d')}
+                  className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
+                    assignDateFilter === '7d'
+                      ? 'bg-white dark:bg-gray-900 text-gray-900 dark:text-white shadow-xs'
+                      : 'text-gray-500'
+                  }`}
+                >
+                  Últimos 7 días
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAssignDateFilter('30d')}
+                  className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
+                    assignDateFilter === '30d'
+                      ? 'bg-white dark:bg-gray-900 text-gray-900 dark:text-white shadow-xs'
+                      : 'text-gray-500'
+                  }`}
+                >
+                  Últimos 30 días
+                </button>
+              </div>
+            </div>
+
+            {/* Sales List */}
+            {filteredUnassignedSales.length === 0 ? (
+              <div className="text-center py-10 text-gray-400 bg-gray-50 dark:bg-gray-800/40 rounded-2xl">
+                <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-emerald-500 opacity-60" />
+                <p className="text-xs font-bold text-gray-600 dark:text-gray-300">
+                  {unassignedSales.length === 0
+                    ? 'No hay ventas sin nombre pendientes en el sistema.'
+                    : 'Ninguna venta coincide con el filtro o búsqueda.'}
+                </p>
+                <p className="text-[11px] text-gray-400 mt-1">
+                  Todas las ventas registradas ya se encuentran asociadas a sus respectivos clientes.
+                </p>
+              </div>
+            ) : (
+              <div className="max-h-64 overflow-y-auto space-y-1.5 pr-1 divide-y divide-gray-100 dark:divide-gray-800/50">
+                {filteredUnassignedSales.map(sale => {
+                  const isSelected = selectedSaleIdsForAssign.includes(sale.id);
+                  const dateStr = sale.fecha?.toDate
+                    ? sale.fecha.toDate().toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })
+                    : new Date(sale.fecha || 0).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
+
+                  return (
+                    <div
+                      key={sale.id}
+                      onClick={() => toggleSaleSelection(sale.id)}
+                      className={`p-3 rounded-xl flex items-center justify-between cursor-pointer transition-all ${
+                        isSelected
+                          ? 'bg-indigo-50/80 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800'
+                          : 'hover:bg-gray-50 dark:hover:bg-gray-800/50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="text-indigo-600 dark:text-indigo-400 shrink-0">
+                          {isSelected ? (
+                            <CheckSquare size={18} className="text-indigo-600 dark:text-indigo-400" />
+                          ) : (
+                            <Square size={18} className="text-gray-300 dark:text-gray-600" />
+                          )}
+                        </div>
+
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-xs text-gray-900 dark:text-white">
+                              {sale.productNombre}
+                            </span>
+                            {sale.variantNombre && (
+                              <span className="px-1.5 py-0.2 text-[10px] rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 font-bold">
+                                {sale.variantNombre}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px] text-gray-400 mt-0.5">
+                            <span>{dateStr}</span>
+                            <span>•</span>
+                            <span>{sale.cantidad} {sale.cantidad === 1 ? 'unidad' : 'unidades'}</span>
+                            {sale.metodo && (
+                              <>
+                                <span>•</span>
+                                <span className="capitalize">{sale.metodo}</span>
+                              </>
+                            )}
+                            <span>•</span>
+                            <span className="text-amber-600 dark:text-amber-400 font-medium">
+                              {sale.clientNombre || 'Sin Cliente'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="text-right shrink-0">
+                        <span className="font-black text-sm text-indigo-600 dark:text-indigo-400 block">
+                          ${Number(sale.total).toLocaleString()}
+                        </span>
+                        <span className="text-[10px] text-gray-400">
+                          ${Math.round(Number(sale.precio || 0)).toLocaleString()} c/u
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* SUMMARY & ACTION BAR */}
+          <div className="p-4 rounded-2xl bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-bold text-gray-600 dark:text-gray-300">
+                Resumen de asignación:
+              </div>
+              <div className="text-sm font-black text-gray-900 dark:text-white mt-0.5">
+                {selectedSaleIdsForAssign.length === 0 ? (
+                  <span className="text-gray-400 font-normal">Ninguna venta seleccionada</span>
+                ) : (
+                  <span>
+                    {selectedSaleIdsForAssign.length} {selectedSaleIdsForAssign.length === 1 ? 'venta' : 'ventas'} seleccionadas (
+                    ${unassignedSales
+                      .filter(s => selectedSaleIdsForAssign.includes(s.id))
+                      .reduce((acc, s) => acc + (Number(s.total) || 0), 0)
+                      .toLocaleString()}
+                    ) para{' '}
+                    <strong className="text-indigo-600 dark:text-indigo-400">
+                      {clients.find(c => c.id === assignTargetClientId)?.nombre || 'el cliente seleccionado'}
+                    </strong>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                type="button"
+                onClick={() => setIsAssignModalOpen(false)}
+                disabled={isSubmittingAssign}
+                className="rounded-xl text-xs font-bold"
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                onClick={handleConfirmAssignSales}
+                disabled={isSubmittingAssign || selectedSaleIdsForAssign.length === 0 || !assignTargetClientId}
+                className="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md shadow-indigo-500/20"
+              >
+                {isSubmittingAssign ? (
+                  <>
+                    <Loader2 size={14} className="mr-1.5 animate-spin" />
+                    Asignando...
+                  </>
+                ) : (
+                  <>
+                    <UserCheck size={14} className="mr-1.5" />
+                    Confirmar Asignación ({selectedSaleIdsForAssign.length})
+                  </>
+                )}
+              </Button>
             </div>
           </div>
         </div>

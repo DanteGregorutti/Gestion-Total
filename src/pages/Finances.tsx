@@ -27,7 +27,13 @@ import {
   Sparkles,
   RotateCcw,
   Bot,
-  MessageCircle
+  MessageCircle,
+  ShoppingBag,
+  Package,
+  Truck,
+  Users,
+  Layers,
+  Filter
 } from 'lucide-react';
 import { Button } from '../components/ui';
 import ConfirmationModal from '../components/ConfirmationModal';
@@ -43,6 +49,7 @@ import { toast } from 'sonner';
 
 type DateFilter = 'today' | 'week' | 'month' | 'all';
 type TypeFilter = 'all' | 'ingreso' | 'egreso';
+type SourceFilter = 'all' | 'stock' | 'manual';
 
 export default function Finances() {
   const { t, mobileCompactMode } = useSettings();
@@ -58,8 +65,10 @@ export default function Finances() {
   // Filters
   const [dateFilter, setDateFilter] = useState<DateFilter>('month');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>(() => {
+    return (localStorage.getItem('finances_source_filter') as SourceFilter) || 'all';
+  });
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [includeInventory, setIncludeInventory] = useState<boolean>(false);
 
   // Modals & Forms
   const [modalOpen, setModalOpen] = useState<boolean>(false);
@@ -162,58 +171,70 @@ export default function Finances() {
     setModalOpen(true);
   };
 
-  // Unified items
+  // Unified items connecting Finances, Sales, and Purchases
   const allItems = useMemo(() => {
     const list: Array<{
       id: string;
       tipo: 'ingreso' | 'egreso';
       concepto: string;
       categoria: string;
+      origen: 'venta' | 'compra' | 'caja' | 'gasto';
       monto: number;
       metodo: string;
       fecha: any;
       isCustom: boolean;
+      detalleExtra?: string;
     }> = [];
 
-    // User's custom finances (highest priority)
-    finances.forEach(f => {
-      list.push({
-        id: f.id,
-        tipo: f.tipo,
-        concepto: f.concepto,
-        categoria: f.categoria,
-        monto: Number(f.monto) || 0,
-        metodo: f.metodo || 'efectivo',
-        fecha: f.fecha,
-        isCustom: true
+    // User's custom finances (caja / gastos manuales)
+    if (sourceFilter !== 'stock') {
+      finances.forEach(f => {
+        list.push({
+          id: f.id,
+          tipo: f.tipo,
+          concepto: f.concepto,
+          categoria: f.categoria,
+          origen: f.tipo === 'ingreso' ? 'caja' : 'gasto',
+          monto: Number(f.monto) || 0,
+          metodo: f.metodo || 'efectivo',
+          fecha: f.fecha,
+          isCustom: true,
+          detalleExtra: f.notas
+        });
       });
-    });
+    }
 
-    // Optionally include sales and purchases from inventory
-    if (includeInventory) {
+    // Sales and purchases from inventory
+    if (sourceFilter !== 'manual') {
       sales.forEach(s => {
+        const clientText = s.clientNombre ? `Cliente: ${s.clientNombre}` : undefined;
         list.push({
           id: `sale-${s.id}`,
           tipo: 'ingreso',
           concepto: s.isCombo ? `Venta Combo: ${s.productNombre}` : `Venta: ${s.productNombre} (x${s.cantidad})`,
           categoria: 'Venta',
+          origen: 'venta',
           monto: Number(s.total) || 0,
-          metodo: 'efectivo',
+          metodo: s.metodo || 'efectivo',
           fecha: s.fecha,
-          isCustom: false
+          isCustom: false,
+          detalleExtra: clientText
         });
       });
 
       purchases.forEach(p => {
+        const provText = p.proveedor ? `Proveedor: ${p.proveedor}` : undefined;
         list.push({
           id: `purchase-${p.id}`,
           tipo: 'egreso',
           concepto: `Compra stock: ${p.productNombre} (x${p.cantidad})`,
-          categoria: 'Mercadería',
+          categoria: 'Compra Mercadería',
+          origen: 'compra',
           monto: Number(p.total) || 0,
-          metodo: 'efectivo',
+          metodo: p.metodo || 'efectivo',
           fecha: p.fecha,
-          isCustom: false
+          isCustom: false,
+          detalleExtra: provText
         });
       });
     }
@@ -224,25 +245,26 @@ export default function Finances() {
       const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha);
       return dateB.getTime() - dateA.getTime();
     });
-  }, [finances, sales, purchases, includeInventory]);
+  }, [finances, sales, purchases, sourceFilter]);
 
   // Filtered by selected period
   const periodItems = useMemo(() => {
     return allItems.filter(item => isWithinDateFilter(item.fecha, dateFilter));
   }, [allItems, dateFilter]);
 
-  // Totals for current period
-  const totalIncome = useMemo(() => {
-    return periodItems
-      .filter(i => i.tipo === 'ingreso')
-      .reduce((sum, i) => sum + (Number(i.monto) || 0), 0);
-  }, [periodItems]);
+  // Breakdown metrics for the current period
+  const salesItems = useMemo(() => periodItems.filter(i => i.origen === 'venta'), [periodItems]);
+  const purchaseItems = useMemo(() => periodItems.filter(i => i.origen === 'compra'), [periodItems]);
+  const manualIncomeItems = useMemo(() => periodItems.filter(i => i.origen === 'caja'), [periodItems]);
+  const manualExpenseItems = useMemo(() => periodItems.filter(i => i.origen === 'gasto'), [periodItems]);
 
-  const totalExpense = useMemo(() => {
-    return periodItems
-      .filter(i => i.tipo === 'egreso')
-      .reduce((sum, i) => sum + (Number(i.monto) || 0), 0);
-  }, [periodItems]);
+  const totalSalesRevenue = useMemo(() => salesItems.reduce((acc, i) => acc + (Number(i.monto) || 0), 0), [salesItems]);
+  const totalPurchasesCost = useMemo(() => purchaseItems.reduce((acc, i) => acc + (Number(i.monto) || 0), 0), [purchaseItems]);
+  const totalManualIncome = useMemo(() => manualIncomeItems.reduce((acc, i) => acc + (Number(i.monto) || 0), 0), [manualIncomeItems]);
+  const totalManualExpense = useMemo(() => manualExpenseItems.reduce((acc, i) => acc + (Number(i.monto) || 0), 0), [manualExpenseItems]);
+
+  const totalIncome = useMemo(() => totalSalesRevenue + totalManualIncome, [totalSalesRevenue, totalManualIncome]);
+  const totalExpense = useMemo(() => totalPurchasesCost + totalManualExpense, [totalPurchasesCost, totalManualExpense]);
 
   const currentBalance = useMemo(() => {
     const bal = totalIncome - totalExpense;
@@ -257,7 +279,8 @@ export default function Finances() {
         const query = searchQuery.toLowerCase();
         const matchConcept = item.concepto.toLowerCase().includes(query);
         const matchCat = item.categoria.toLowerCase().includes(query);
-        if (!matchConcept && !matchCat) return false;
+        const matchExtra = item.detalleExtra ? item.detalleExtra.toLowerCase().includes(query) : false;
+        if (!matchConcept && !matchCat && !matchExtra) return false;
       }
       return true;
     });
@@ -505,32 +528,97 @@ export default function Finances() {
         </div>
 
         {/* Sub-totals Strip */}
-        <div className="grid grid-cols-2 gap-3 pt-4 border-t border-gray-100 dark:border-gray-800/80">
-          <div className="flex items-center gap-3 p-3 rounded-2xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/30">
-            <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
-              <ArrowUpRight className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                Total Ingresado
+        <div className="space-y-3 pt-4 border-t border-gray-100 dark:border-gray-800/80">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex items-center gap-3 p-3 rounded-2xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/30">
+              <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                <ArrowUpRight className="w-5 h-5" />
               </div>
-              <div className="text-base sm:text-lg font-black text-emerald-600 dark:text-emerald-400">
-                +${totalIncome.toLocaleString('es-AR')}
+              <div>
+                <div className="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                  Total Ingresado
+                </div>
+                <div className="text-base sm:text-lg font-black text-emerald-600 dark:text-emerald-400">
+                  +${totalIncome.toLocaleString('es-AR')}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 p-3 rounded-2xl bg-rose-50/50 dark:bg-rose-950/20 border border-rose-100 dark:border-rose-900/30">
+              <div className="w-9 h-9 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+                <ArrowDownRight className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                  Total Gastado
+                </div>
+                <div className="text-base sm:text-lg font-black text-rose-600 dark:text-rose-400">
+                  -${totalExpense.toLocaleString('es-AR')}
+                </div>
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 p-3 rounded-2xl bg-rose-50/50 dark:bg-rose-950/20 border border-rose-100 dark:border-rose-900/30">
-            <div className="w-9 h-9 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
-              <ArrowDownRight className="w-5 h-5" />
+          {/* Connected Breakdown: Ventas y Compras conectadas con Caja y Gastos */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+            <div className="p-2.5 rounded-xl bg-white dark:bg-gray-800/80 border border-gray-100 dark:border-gray-800 flex items-center justify-between gap-2 shadow-sm">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-7 h-7 rounded-lg bg-emerald-100 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                  <ShoppingBag size={14} />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[10px] font-bold uppercase text-gray-400 truncate">Ventas Stock</div>
+                  <div className="text-xs font-black text-emerald-600 dark:text-emerald-400">
+                    +${totalSalesRevenue.toLocaleString('es-AR')}
+                  </div>
+                </div>
+              </div>
+              <span className="text-[10px] font-bold text-gray-400 shrink-0">({salesItems.length})</span>
             </div>
-            <div>
-              <div className="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                Total Gastado
+
+            <div className="p-2.5 rounded-xl bg-white dark:bg-gray-800/80 border border-gray-100 dark:border-gray-800 flex items-center justify-between gap-2 shadow-sm">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-7 h-7 rounded-lg bg-indigo-100 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
+                  <Wallet size={14} />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[10px] font-bold uppercase text-gray-400 truncate">Ingreso Caja</div>
+                  <div className="text-xs font-black text-indigo-600 dark:text-indigo-400">
+                    +${totalManualIncome.toLocaleString('es-AR')}
+                  </div>
+                </div>
               </div>
-              <div className="text-base sm:text-lg font-black text-rose-600 dark:text-rose-400">
-                -${totalExpense.toLocaleString('es-AR')}
+              <span className="text-[10px] font-bold text-gray-400 shrink-0">({manualIncomeItems.length})</span>
+            </div>
+
+            <div className="p-2.5 rounded-xl bg-white dark:bg-gray-800/80 border border-gray-100 dark:border-gray-800 flex items-center justify-between gap-2 shadow-sm">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-7 h-7 rounded-lg bg-amber-100 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                  <Truck size={14} />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[10px] font-bold uppercase text-gray-400 truncate">Compras Stock</div>
+                  <div className="text-xs font-black text-amber-600 dark:text-amber-400">
+                    -${totalPurchasesCost.toLocaleString('es-AR')}
+                  </div>
+                </div>
               </div>
+              <span className="text-[10px] font-bold text-gray-400 shrink-0">({purchaseItems.length})</span>
+            </div>
+
+            <div className="p-2.5 rounded-xl bg-white dark:bg-gray-800/80 border border-gray-100 dark:border-gray-800 flex items-center justify-between gap-2 shadow-sm">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-7 h-7 rounded-lg bg-rose-100 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+                  <MinusCircle size={14} />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[10px] font-bold uppercase text-gray-400 truncate">Gastos Varios</div>
+                  <div className="text-xs font-black text-rose-600 dark:text-rose-400">
+                    -${totalManualExpense.toLocaleString('es-AR')}
+                  </div>
+                </div>
+              </div>
+              <span className="text-[10px] font-bold text-gray-400 shrink-0">({manualExpenseItems.length})</span>
             </div>
           </div>
         </div>
@@ -541,7 +629,7 @@ export default function Finances() {
       <div className="space-y-4">
         
         {/* Section Header & Filters */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           <div>
             <h2 className="text-base sm:text-lg font-bold text-gray-900 dark:text-white">
               Historial de Movimientos
@@ -551,67 +639,107 @@ export default function Finances() {
             </p>
           </div>
 
-          {/* Quick Filter Pills */}
-          <div className="flex items-center gap-1.5 self-start sm:self-center">
-            <button
-              onClick={() => setTypeFilter('all')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                typeFilter === 'all'
-                  ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 shadow-sm'
-                  : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
-              }`}
-            >
-              Todos
-            </button>
-            <button
-              onClick={() => setTypeFilter('egreso')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 ${
-                typeFilter === 'egreso'
-                  ? 'bg-rose-600 text-white shadow-sm'
-                  : 'bg-white dark:bg-gray-800 text-rose-600 dark:text-rose-400 border border-gray-200 dark:border-gray-700'
-              }`}
-            >
-              <MinusCircle className="w-3.5 h-3.5" />
-              <span>Gastos</span>
-            </button>
-            <button
-              onClick={() => setTypeFilter('ingreso')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 ${
-                typeFilter === 'ingreso'
-                  ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'bg-white dark:bg-gray-800 text-emerald-600 dark:text-emerald-400 border border-gray-200 dark:border-gray-700'
-              }`}
-            >
-              <PlusCircle className="w-3.5 h-3.5" />
-              <span>Ingresos</span>
-            </button>
+          {/* Quick Filter Pills and Source Selector */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Source Segmented Control */}
+            <div className="p-1 bg-gray-100 dark:bg-gray-800/90 rounded-xl flex items-center gap-1 text-xs border border-gray-200 dark:border-gray-700/60">
+              <button
+                type="button"
+                onClick={() => {
+                  setSourceFilter('all');
+                  localStorage.setItem('finances_source_filter', 'all');
+                }}
+                className={`px-2.5 py-1 rounded-lg font-bold transition-all flex items-center gap-1 ${
+                  sourceFilter === 'all'
+                    ? 'bg-white dark:bg-gray-900 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'
+                }`}
+              >
+                <Layers size={13} />
+                <span>Todo Conectado</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSourceFilter('stock');
+                  localStorage.setItem('finances_source_filter', 'stock');
+                }}
+                className={`px-2.5 py-1 rounded-lg font-bold transition-all flex items-center gap-1 ${
+                  sourceFilter === 'stock'
+                    ? 'bg-white dark:bg-gray-900 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'
+                }`}
+              >
+                <ShoppingBag size={13} />
+                <span>Ventas & Compras</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSourceFilter('manual');
+                  localStorage.setItem('finances_source_filter', 'manual');
+                }}
+                className={`px-2.5 py-1 rounded-lg font-bold transition-all flex items-center gap-1 ${
+                  sourceFilter === 'manual'
+                    ? 'bg-white dark:bg-gray-900 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'
+                }`}
+              >
+                <Wallet size={13} />
+                <span>Caja & Gastos</span>
+              </button>
+            </div>
+
+            {/* Type Filters */}
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setTypeFilter('all')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                  typeFilter === 'all'
+                    ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 shadow-sm'
+                    : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
+                }`}
+              >
+                Todos
+              </button>
+              <button
+                onClick={() => setTypeFilter('egreso')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 ${
+                  typeFilter === 'egreso'
+                    ? 'bg-rose-600 text-white shadow-sm'
+                    : 'bg-white dark:bg-gray-800 text-rose-600 dark:text-rose-400 border border-gray-200 dark:border-gray-700'
+                }`}
+              >
+                <MinusCircle className="w-3.5 h-3.5" />
+                <span>Gastos / Compras</span>
+              </button>
+              <button
+                onClick={() => setTypeFilter('ingreso')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 ${
+                  typeFilter === 'ingreso'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'bg-white dark:bg-gray-800 text-emerald-600 dark:text-emerald-400 border border-gray-200 dark:border-gray-700'
+                }`}
+              >
+                <PlusCircle className="w-3.5 h-3.5" />
+                <span>Ingresos / Ventas</span>
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Search bar & optional catalog toggle */}
+        {/* Search bar */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="relative w-full sm:w-80">
+          <div className="relative w-full sm:w-96">
             <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar gasto o dinero (ej. comida, nafta)..."
+              placeholder="Buscar por producto, cliente, proveedor, concepto..."
               className="w-full pl-9 pr-3 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900 dark:text-white"
             />
           </div>
-
-          {(sales.length > 0 || purchases.length > 0) && (
-            <label className="flex items-center gap-2 text-xs font-medium text-gray-600 dark:text-gray-400 cursor-pointer self-start sm:self-center select-none">
-              <input
-                type="checkbox"
-                checked={includeInventory}
-                onChange={(e) => setIncludeInventory(e.target.checked)}
-                className="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
-              />
-              <span>Incluir ventas y compras del stock</span>
-            </label>
-          )}
         </div>
 
         {/* List of Transactions */}
@@ -741,16 +869,50 @@ export default function Finances() {
                       </button>
 
                       <div className={`w-10 h-10 rounded-2xl shrink-0 flex items-center justify-center font-black ${
-                        isIncome 
+                        item.origen === 'venta'
                           ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-900/30'
+                          : item.origen === 'compra'
+                          ? 'bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400 border border-amber-100 dark:border-amber-900/30'
+                          : isIncome 
+                          ? 'bg-indigo-50 text-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-400 border border-indigo-100 dark:border-indigo-900/30'
                           : 'bg-rose-50 text-rose-600 dark:bg-rose-950/40 dark:text-rose-400 border border-rose-100 dark:border-rose-900/30'
                       }`}>
-                        {isIncome ? <ArrowUpRight className="w-5 h-5" /> : <ArrowDownRight className="w-5 h-5" />}
+                        {item.origen === 'venta' ? (
+                          <ShoppingBag className="w-5 h-5" />
+                        ) : item.origen === 'compra' ? (
+                          <Truck className="w-5 h-5" />
+                        ) : isIncome ? (
+                          <ArrowUpRight className="w-5 h-5" />
+                        ) : (
+                          <ArrowDownRight className="w-5 h-5" />
+                        )}
                       </div>
 
                       <div className="min-w-0">
-                        <div className="font-bold text-gray-900 dark:text-white text-sm truncate">
-                          {item.concepto}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-gray-900 dark:text-white text-sm truncate">
+                            {item.concepto}
+                          </span>
+                          {item.origen === 'venta' && (
+                            <span className="px-1.5 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wide bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                              Venta
+                            </span>
+                          )}
+                          {item.origen === 'compra' && (
+                            <span className="px-1.5 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wide bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                              Compra Stock
+                            </span>
+                          )}
+                          {item.origen === 'caja' && (
+                            <span className="px-1.5 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wide bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">
+                              Caja
+                            </span>
+                          )}
+                          {item.origen === 'gasto' && (
+                            <span className="px-1.5 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wide bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300">
+                              Gasto
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 mt-0.5 flex-wrap">
                           <span className="font-semibold text-gray-700 dark:text-gray-300">
@@ -759,7 +921,17 @@ export default function Finances() {
                           <span>•</span>
                           <span className="capitalize">{item.categoria.replace(/_/g, ' ')}</span>
                           <span>•</span>
-                          <span className="capitalize">{item.metodo}</span>
+                          <span className="capitalize px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 font-medium text-[10px]">
+                            {item.metodo}
+                          </span>
+                          {item.detalleExtra && (
+                            <>
+                              <span>•</span>
+                              <span className="text-gray-600 dark:text-gray-400 font-medium">
+                                {item.detalleExtra}
+                              </span>
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>

@@ -21,7 +21,7 @@ import {
 import { Button } from '../ui';
 import { inventoryService } from '../../services/inventoryService';
 import { workOrderService } from '../../services/workOrderService';
-import { Sale, FinanceTransaction, WorkOrder } from '../../types';
+import { Sale, FinanceTransaction, WorkOrder, Purchase } from '../../types';
 
 interface DailyReportModalProps {
   isOpen: boolean;
@@ -33,6 +33,7 @@ export function DailyReportModal({ isOpen, onClose }: DailyReportModalProps) {
     new Date().toISOString().substring(0, 10)
   );
   const [sales, setSales] = useState<Sale[]>([]);
+  const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [finances, setFinances] = useState<FinanceTransaction[]>([]);
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [copied, setCopied] = useState(false);
@@ -40,6 +41,7 @@ export function DailyReportModal({ isOpen, onClose }: DailyReportModalProps) {
   useEffect(() => {
     if (isOpen) {
       inventoryService.getSales(7).then(setSales).catch(console.warn);
+      inventoryService.getPurchases(7).then(setPurchases).catch(console.warn);
       const unsubFinances = inventoryService.subscribeToFinances(setFinances);
       workOrderService.getWorkOrders().then(setWorkOrders).catch(console.warn);
       return () => {
@@ -61,18 +63,21 @@ export function DailyReportModal({ isOpen, onClose }: DailyReportModalProps) {
   };
 
   const daySales = sales.filter(s => isDateMatch(s.fecha, selectedDate));
+  const dayPurchases = purchases.filter(p => isDateMatch(p.fecha, selectedDate));
   const dayFinances = finances.filter(f => isDateMatch(f.fecha, selectedDate));
   
   const totalSalesRevenue = daySales.reduce((acc, s) => acc + (Number(s.total) || 0), 0);
   const extraIncome = dayFinances
     .filter(f => f.tipo === 'ingreso')
     .reduce((acc, f) => acc + Number(f.monto || 0), 0);
-  const dayExpenses = dayFinances
+  const manualExpenses = dayFinances
     .filter(f => f.tipo === 'egreso')
     .reduce((acc, f) => acc + Number(f.monto || 0), 0);
+  const totalPurchasesCost = dayPurchases.reduce((acc, p) => acc + (Number(p.total) || 0), 0);
 
   const totalIncome = totalSalesRevenue + extraIncome;
-  const netBalance = totalIncome - dayExpenses;
+  const totalDayExpenses = manualExpenses + totalPurchasesCost;
+  const netBalance = totalIncome - totalDayExpenses;
 
   // Work orders delivered or completed today
   const deliveredOrders = workOrders.filter(o => 
@@ -105,12 +110,12 @@ export function DailyReportModal({ isOpen, onClose }: DailyReportModalProps) {
   });
 
   const reportText = 
-`📊 *CIERRE DIARIO - TALLER GREGORUTTI*
+`📊 *CIERRE DIARIO - GESTIÓN INTEGRADA*
 📅 *Fecha:* ${formattedDateStr}
 ──────────────────────────────
 💰 *RESUMEN ECONÓMICO:*
 • *Ventas registradas:* $${totalSalesRevenue.toLocaleString('es-AR')} (${daySales.length} operaciones)
-${extraIncome > 0 ? `• *Ingresos extras:* $${extraIncome.toLocaleString('es-AR')}\n` : ''}• *Gastos / Egresos:* -$${dayExpenses.toLocaleString('es-AR')}
+${extraIncome > 0 ? `• *Ingresos extras de caja:* $${extraIncome.toLocaleString('es-AR')}\n` : ''}${totalPurchasesCost > 0 ? `• *Compras de stock:* -$${totalPurchasesCost.toLocaleString('es-AR')} (${dayPurchases.length} compras)\n` : ''}• *Gastos varios / retiros:* -$${manualExpenses.toLocaleString('es-AR')}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 💵 *BALANCE NETO DEL DÍA:* $${netBalance.toLocaleString('es-AR')}
 
@@ -121,7 +126,7 @@ ${extraIncome > 0 ? `• *Ingresos extras:* $${extraIncome.toLocaleString('es-AR
 📦 *ARTÍCULOS DESTACADOS DEL DÍA:*
 ${topProducts.length === 0 ? '• Sin artículos registrados hoy.' : topProducts.map(p => `• ${p.name} (x${p.qty}) → $${p.total.toLocaleString('es-AR')}`).join('\n')}
 ──────────────────────────────
-_Generado automáticamente desde Gestión Taller Gregorutti_`;
+_Generado automáticamente desde Gestión Gregorutti_`;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(reportText);
@@ -186,9 +191,9 @@ _Generado automáticamente desde Gestión Taller Gregorutti_`;
             </div>
 
             <div className="p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/60">
-              <span className="text-[10px] uppercase font-bold text-rose-600 block">Egresos</span>
+              <span className="text-[10px] uppercase font-bold text-rose-600 block">Total Egresos</span>
               <span className="text-base font-black text-rose-700 dark:text-rose-300">
-                ${dayExpenses.toLocaleString('es-AR')}
+                ${totalDayExpenses.toLocaleString('es-AR')}
               </span>
             </div>
 

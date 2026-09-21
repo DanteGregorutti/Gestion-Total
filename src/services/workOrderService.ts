@@ -597,10 +597,8 @@ export const workOrderService = {
 
     const newOrder = await this.createWorkOrder(orderData);
 
-    await this.updateRepairQuote(quote.id, {
-      estado: 'aprobado',
-      workOrderId: newOrder.id
-    });
+    // Delete the pending repair quote so it does not linger as pending
+    await this.deleteRepairQuote(quote.id);
 
     return newOrder;
   },

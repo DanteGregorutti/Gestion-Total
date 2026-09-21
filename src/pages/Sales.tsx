@@ -218,14 +218,7 @@ export default function Sales() {
       setSales(s);
       setClients(c);
       setCombos(co);
-      setQuotes(prev => {
-        const map = new Map<string, Quote>();
-        (q || []).forEach(item => map.set(item.id, item));
-        prev.forEach(item => {
-          if (!map.has(item.id)) map.set(item.id, item);
-        });
-        return Array.from(map.values());
-      });
+      setQuotes(q || []);
     } catch (error) {
       console.error('Error refreshing data:', error);
     } finally {
@@ -237,7 +230,7 @@ export default function Sales() {
     try {
       const created = await inventoryService.createQuote(quoteData);
       if (created) {
-        setQuotes(prev => [created, ...prev.filter(q => q.id !== created.id)]);
+        setQuotes(prev => [created, ...prev.filter(q => q.id !== created.id && q.numero !== created.numero)]);
       }
       setActiveTab('cotizaciones');
       return created;
@@ -262,23 +255,31 @@ export default function Sales() {
   };
 
   const handleConvertToSale = async (quote: Quote) => {
+    // Remove immediately from state so it vanishes from pending quotes without waiting
+    setQuotes(prev => prev.filter(q => q.id !== quote.id && q.numero !== quote.numero));
+    if (selectedReceiptQuote?.id === quote.id || selectedReceiptQuote?.numero === quote.numero) {
+      setSelectedReceiptQuote(null);
+    }
     try {
       await inventoryService.convertQuoteToSale(quote);
-      toast.success('¡Cotización aprobada! Stock descontado y venta registrada.');
+      toast.success('¡Cotización aprobada! Venta registrada y cotización eliminada de pendientes.');
       await refreshData();
     } catch (error) {
+      console.error('Error al convertir cotización:', error);
       toast.error('Error al convertir la cotización en venta');
+      await refreshData();
     }
   };
 
   const handleDeleteQuote = async () => {
     if (!quoteToDelete) return;
     const idToDelete = quoteToDelete;
-    setQuotes(prev => prev.filter(q => q.id !== idToDelete));
+    const targetQuote = quotes.find(q => q.id === idToDelete);
+    setQuotes(prev => prev.filter(q => q.id !== idToDelete && (!targetQuote || q.numero !== targetQuote.numero)));
     setQuoteToDelete(null);
     setIsDeleteQuoteModalOpen(false);
     try {
-      await inventoryService.deleteQuote(idToDelete);
+      await inventoryService.deleteQuote(idToDelete, targetQuote?.numero);
       toast.success('Cotización eliminada');
       await refreshData();
     } catch (error) {

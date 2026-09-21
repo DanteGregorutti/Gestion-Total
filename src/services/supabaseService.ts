@@ -339,6 +339,37 @@ export const supabaseService = {
     }
   },
 
+  updateSale: async (id: string, data: Partial<Sale>): Promise<void> => {
+    // 1. Update local cache
+    const cached = getLocal<Sale[]>('sales', []);
+    const updated = cached.map(s => s.id === id ? { ...s, ...data } : s);
+    setLocal('sales', updated);
+
+    // 2. Persist to Supabase table
+    try {
+      await supabase.from('sales').update(data).eq('id', id);
+    } catch (e) {
+      console.warn('Supabase updateSale error:', e);
+    }
+  },
+
+  assignSalesToClient: async (saleIds: string[], client: { id: string; nombre: string }): Promise<void> => {
+    if (!saleIds.length) return;
+    const saleIdsSet = new Set(saleIds);
+    const cached = getLocal<Sale[]>('sales', []);
+    const updated = cached.map(s => saleIdsSet.has(s.id) ? { ...s, clientId: client.id, clientNombre: client.nombre } : s);
+    setLocal('sales', updated);
+
+    try {
+      await supabase.from('sales').update({
+        clientId: client.id,
+        clientNombre: client.nombre
+      }).in('id', saleIds);
+    } catch (e) {
+      console.warn('Supabase assignSalesToClient error:', e);
+    }
+  },
+
   deleteSale: async (id: string): Promise<void> => {
     // 1. Remove from local cache
     const cached = getLocal<Sale[]>('sales', []);
@@ -485,7 +516,7 @@ export const supabaseService = {
   },
 
   createQuote: async (quoteData: any): Promise<Quote> => {
-    const id = generateId();
+    const id = quoteData.id || generateId();
     const now = new Date().toISOString();
     const count = (getLocal<Quote[]>('quotes', []).length + 1).toString().padStart(4, '0');
     const numero = quoteData.numero || `COT-${count}`;
@@ -507,7 +538,7 @@ export const supabaseService = {
 
     // Cache locally
     const cached = getLocal<Quote[]>('quotes', []);
-    setLocal('quotes', [newQuote, ...cached.filter(q => q.id !== id)]);
+    setLocal('quotes', [newQuote, ...cached.filter(q => q.id !== id && q.numero !== numero)]);
 
     // Persist to Supabase
     try {
@@ -541,14 +572,19 @@ export const supabaseService = {
     return newQuote;
   },
 
-  deleteQuote: async (id: string): Promise<void> => {
+  deleteQuote: async (id: string, numero?: string): Promise<void> => {
     const cached = getLocal<Quote[]>('quotes', []);
-    setLocal('quotes', cached.filter(q => q.id !== id));
+    setLocal('quotes', cached.filter(q => q.id !== id && (!numero || q.numero !== numero)));
 
     try {
-      await supabase.from('quotes').delete().eq('id', id);
+      if (id) {
+        await supabase.from('quotes').delete().eq('id', id);
+      }
+      if (numero) {
+        await supabase.from('quotes').delete().eq('numero', numero);
+      }
     } catch (e) {
-      console.warn(e);
+      console.warn('Supabase deleteQuote error:', e);
     }
   },
 

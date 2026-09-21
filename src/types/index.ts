@@ -98,6 +98,8 @@ export interface Sale {
   isCombo?: boolean;
   comboItems?: ComboItem[];
   costo?: number;
+  metodo?: PaymentMethod | string;
+  estadoPago?: 'pagado' | 'pendiente' | 'parcial';
 }
 
 export interface Purchase {
@@ -114,6 +116,7 @@ export interface Purchase {
   fecha: any;
   createdBy: string;
   numeroComprobante?: string;
+  metodo?: PaymentMethod | string;
 }
 
 export type PurchaseOrderStatus = 'borrador' | 'enviada' | 'parcial' | 'recibida' | 'cancelada';
