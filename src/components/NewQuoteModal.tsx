@@ -16,7 +16,8 @@ import {
   Calculator,
   Tag,
   PenLine,
-  Layers
+  Layers,
+  Sparkles
 } from 'lucide-react';
 import { Product, Quote, QuoteItem } from '../types';
 import { Button, Input } from './ui';
@@ -75,12 +76,16 @@ export function NewQuoteModal({
     productNombre: string;
     variantId?: string;
     variantNombre?: string;
+    customVariantText?: string;
     cantidad: number;
     precioUnitario: number;
     total: number;
   }>({
     productId: '',
     productNombre: '',
+    variantId: '',
+    variantNombre: '',
+    customVariantText: '',
     cantidad: 1,
     precioUnitario: 0,
     total: 0
@@ -248,11 +253,24 @@ export function NewQuoteModal({
       ? Math.round(calculatedTotal / currentItem.cantidad) 
       : currentItem.precioUnitario;
 
+    // Combine base variant and custom chosen variant if specified
+    const baseVariant = currentItem.variantNombre && currentItem.variantNombre !== 'Único' ? currentItem.variantNombre : '';
+    const customVar = currentItem.customVariantText?.trim() || '';
+    let finalVariantNombre = '';
+    if (baseVariant && customVar) {
+      finalVariantNombre = `${baseVariant} (${customVar})`;
+    } else if (customVar) {
+      finalVariantNombre = customVar;
+    } else if (baseVariant) {
+      finalVariantNombre = baseVariant;
+    }
+
     const newItem: QuoteItem = {
       productId: currentItem.productId || `manual_${Date.now()}`,
       productNombre: itemName || 'Artículo / Servicio',
       variantId: currentItem.variantId,
-      variantNombre: currentItem.variantNombre,
+      variantNombre: finalVariantNombre || undefined,
+      personalizacion: customVar || undefined,
       cantidad: currentItem.cantidad > 0 ? currentItem.cantidad : 1,
       precio: unitPrice,
       total: calculatedTotal
@@ -264,6 +282,9 @@ export function NewQuoteModal({
     setCurrentItem({
       productId: '',
       productNombre: '',
+      variantId: '',
+      variantNombre: '',
+      customVariantText: '',
       cantidad: 1,
       precioUnitario: 0,
       total: 0
@@ -293,11 +314,23 @@ export function NewQuoteModal({
         ? Math.round(calculatedTotal / currentItem.cantidad) 
         : currentItem.precioUnitario;
 
+      const baseVariant = currentItem.variantNombre && currentItem.variantNombre !== 'Único' ? currentItem.variantNombre : '';
+      const customVar = currentItem.customVariantText?.trim() || '';
+      let finalVariantNombre = '';
+      if (baseVariant && customVar) {
+        finalVariantNombre = `${baseVariant} (${customVar})`;
+      } else if (customVar) {
+        finalVariantNombre = customVar;
+      } else if (baseVariant) {
+        finalVariantNombre = baseVariant;
+      }
+
       finalItems.push({
         productId: currentItem.productId || `manual_${Date.now()}`,
         productNombre: activeItemName || 'Artículo / Servicio',
         variantId: currentItem.variantId,
-        variantNombre: currentItem.variantNombre,
+        variantNombre: finalVariantNombre || undefined,
+        personalizacion: customVar || undefined,
         cantidad: currentItem.cantidad > 0 ? currentItem.cantidad : 1,
         precio: unitPrice,
         total: calculatedTotal
@@ -639,6 +672,76 @@ export function NewQuoteModal({
           {(currentItem.productId || (entryMode === 'manual' && manualDescription.trim().length > 0)) && (
             <div className="pt-3 border-t border-gray-100 dark:border-gray-800 space-y-3 animate-in fade-in duration-200">
               
+              {/* Custom Variant / Personalization Selector */}
+              {entryMode === 'catalog' && currentItem.productId && (
+                <div className="p-3.5 bg-indigo-50/70 dark:bg-indigo-950/30 rounded-2xl border border-indigo-100 dark:border-indigo-900/40 space-y-2.5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                    <label className="text-xs font-black text-indigo-700 dark:text-indigo-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <Sparkles size={14} className="text-indigo-600 dark:text-indigo-400" />
+                      Variante o Personalización (Elegida por vos)
+                    </label>
+                    <span className="text-[10px] text-gray-500 dark:text-gray-400 font-medium">
+                      Opcional: podés agregar este mismo producto varias veces con distintas variantes
+                    </span>
+                  </div>
+
+                  {/* Quick-choice chips */}
+                  <div className="flex flex-wrap gap-1.5 items-center">
+                    {['Sin personalizar', 'Personalizado', 'Con logo', 'Estampado', 'Bordado', 'Sublimado'].map((chip) => {
+                      const isSelected = currentItem.customVariantText === chip;
+                      return (
+                        <button
+                          key={chip}
+                          type="button"
+                          onClick={() => {
+                            setCurrentItem(prev => ({
+                              ...prev,
+                              customVariantText: isSelected ? '' : chip
+                            }));
+                          }}
+                          className={cn(
+                            "px-2.5 py-1 rounded-lg text-xs font-bold transition-all border",
+                            isSelected
+                              ? "bg-indigo-600 border-indigo-600 text-white shadow-sm"
+                              : "bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-indigo-300"
+                          )}
+                        >
+                          {chip}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Custom text field */}
+                  <div className="flex items-center gap-2 pt-0.5">
+                    <div className="flex-1 relative">
+                      <Input
+                        placeholder="O escribí tu variante personalizada (ej: Personalizados con nombre, Talle especial...)"
+                        value={currentItem.customVariantText || ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setCurrentItem(prev => ({
+                            ...prev,
+                            customVariantText: val
+                          }));
+                        }}
+                        className="text-xs bg-white dark:bg-gray-900"
+                      />
+                    </div>
+                    {currentItem.customVariantText && (
+                      <button
+                        type="button"
+                        onClick={() => setCurrentItem(prev => ({ ...prev, customVariantText: '' }))}
+                        className="p-2 text-gray-400 hover:text-rose-500 rounded-xl hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
+                        title="Limpiar variante personalizada"
+                      >
+                        <X size={16} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Option Selector: Unit Price vs Total Price */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <span className="text-xs font-bold text-gray-500 dark:text-gray-400">
@@ -769,6 +872,11 @@ export function NewQuoteModal({
                       <p className="font-bold text-gray-900 dark:text-white truncate">
                         {item.productNombre}
                       </p>
+                      {item.variantNombre && (
+                        <span className="inline-block mt-0.5 px-2 py-0.5 text-[10px] font-black rounded-md bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 border border-indigo-100 dark:border-indigo-800">
+                          Variante: {item.variantNombre}
+                        </span>
+                      )}
                       <p className="text-[11px] text-gray-400">
                         ${item.precio.toLocaleString('es-AR')} c/u
                       </p>

@@ -96,6 +96,8 @@
         "total": { "type": "number" },
         "clientId": { "type": "string" },
         "clientNombre": { "type": "string" },
+        "variantNombre": { "type": "string" },
+        "personalizacion": { "type": "string" },
         "fecha": { "type": "string", "format": "date-time" },
         "createdBy": { "type": "string" }
       },

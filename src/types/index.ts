@@ -87,6 +87,7 @@ export interface Sale {
   productNombre: string;
   variantId?: string;
   variantNombre?: string;
+  personalizacion?: string;
   cantidad: number;
   precio: number;
   total: number;
@@ -264,6 +265,7 @@ export interface QuoteItem {
   productNombre: string;
   variantId?: string;
   variantNombre?: string;
+  personalizacion?: string;
   codigo?: string;
   cantidad: number;
   precio: number;

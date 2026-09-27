@@ -22,7 +22,8 @@ import {
   Phone,
   Filter,
   DollarSign,
-  Edit
+  Edit,
+  Loader2
 } from 'lucide-react';
 import { Quote } from '../types';
 import { Button, Input, RefreshButton } from './ui';
@@ -40,6 +41,7 @@ interface QuotesViewProps {
   onConvertToSale: (quote: Quote) => void;
   onDeleteQuote: (quoteId: string) => void;
   onRefresh: () => void;
+  convertingQuoteId?: string | null;
 }
 
 export function QuotesView({
@@ -53,7 +55,8 @@ export function QuotesView({
   onOpenReceipt,
   onConvertToSale,
   onDeleteQuote,
-  onRefresh
+  onRefresh,
+  convertingQuoteId
 }: QuotesViewProps) {
   // Compute quote metrics
   const pendingQuotes = quotes.filter(q => q.estado === 'pendiente');
@@ -407,12 +410,22 @@ export function QuotesView({
                         {quote.estado === 'pendiente' && (
                           <Button
                             size="sm"
+                            disabled={convertingQuoteId === quote.id}
                             onClick={() => onConvertToSale(quote)}
-                            className="h-8 px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs shadow-sm"
+                            className="h-8 px-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-sm"
                             title="Aprobar presupuesto, registrar venta y descontar stock"
                           >
-                            <CheckCircle2 size={14} className="mr-1" />
-                            Aprobar
+                            {convertingQuoteId === quote.id ? (
+                              <>
+                                <Loader2 size={14} className="mr-1 animate-spin" />
+                                Aprobando...
+                              </>
+                            ) : (
+                              <>
+                                <CheckCircle2 size={14} className="mr-1" />
+                                Aprobar
+                              </>
+                            )}
                           </Button>
                         )}
 
@@ -564,12 +577,22 @@ export function QuotesView({
                     {quote.estado === 'pendiente' && (
                       <Button
                         size="sm"
+                        disabled={convertingQuoteId === quote.id}
                         onClick={() => onConvertToSale(quote)}
-                        className="h-8 px-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black shadow-sm"
+                        className="h-8 px-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-xs font-black shadow-sm"
                         title="Aprobar y descontar stock"
                       >
-                        <CheckCircle2 size={14} className="mr-1" />
-                        Vender
+                        {convertingQuoteId === quote.id ? (
+                          <>
+                            <Loader2 size={14} className="mr-1 animate-spin" />
+                            Aprobando...
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 size={14} className="mr-1" />
+                            Vender
+                          </>
+                        )}
                       </Button>
                     )}
 

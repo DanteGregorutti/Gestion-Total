@@ -27,7 +27,8 @@ import {
   AlertCircle,
   Send,
   Users,
-  UserCheck
+  UserCheck,
+  Sparkles
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Input, RefreshButton } from '../components/ui';
@@ -63,6 +64,10 @@ export default function Sales() {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = React.useState(false);
   const [saleToDelete, setSaleToDelete] = React.useState<string | null>(null);
   const [isDeleting, setIsDeleting] = React.useState(false);
+  const [selectedSaleIds, setSelectedSaleIds] = React.useState<string[]>([]);
+  const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = React.useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = React.useState(false);
+  const [convertingQuoteId, setConvertingQuoteId] = React.useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [showFilters, setShowFilters] = React.useState(false);
   const [clients, setClients] = React.useState<Client[]>([]);
@@ -83,16 +88,27 @@ export default function Sales() {
     productNombre: string;
     variantId?: string;
     variantNombre?: string;
+    personalizacion?: string;
     cantidad: number;
     total: number;
   }[]>([]);
 
   const [salePriceMode, setSalePriceMode] = React.useState<'unit' | 'total'>('unit');
-  const [currentItem, setCurrentItem] = React.useState({
+  const [currentItem, setCurrentItem] = React.useState<{
+    productId: string;
+    productNombre: string;
+    variantId?: string;
+    variantNombre?: string;
+    customVariantText?: string;
+    cantidad: number;
+    precioUnitario: number;
+    total: number;
+  }>({
     productId: '',
     productNombre: '',
     variantId: '',
     variantNombre: '',
+    customVariantText: '',
     cantidad: 1,
     precioUnitario: 0,
     total: 0
@@ -180,7 +196,13 @@ export default function Sales() {
     const unsubQuotes = inventoryService.subscribeToQuotes((quotesList) => {
       setQuotes(quotesList);
     });
-    return () => unsubQuotes();
+    const unsubSales = inventoryService.subscribeToSales((salesList) => {
+      setSales(salesList);
+    }, 30);
+    return () => {
+      unsubQuotes();
+      unsubSales();
+    };
   }, []);
 
   React.useEffect(() => {
@@ -255,19 +277,26 @@ export default function Sales() {
   };
 
   const handleConvertToSale = async (quote: Quote) => {
+    if (convertingQuoteId) return;
+    setConvertingQuoteId(quote.id);
     // Remove immediately from state so it vanishes from pending quotes without waiting
     setQuotes(prev => prev.filter(q => q.id !== quote.id && q.numero !== quote.numero));
     if (selectedReceiptQuote?.id === quote.id || selectedReceiptQuote?.numero === quote.numero) {
       setSelectedReceiptQuote(null);
     }
     try {
-      await inventoryService.convertQuoteToSale(quote);
-      toast.success('¡Cotización aprobada! Venta registrada y cotización eliminada de pendientes.');
+      const createdSales = await inventoryService.convertQuoteToSale(quote);
+      if (createdSales && createdSales.length > 0) {
+        setSales(prev => [...createdSales, ...prev.filter(s => !createdSales.some(c => c.id === s.id))]);
+      }
+      toast.success('¡Cotización aprobada! Venta registrada y stock actualizado.');
       await refreshData();
     } catch (error) {
       console.error('Error al convertir cotización:', error);
       toast.error('Error al convertir la cotización en venta');
       await refreshData();
+    } finally {
+      setConvertingQuoteId(null);
     }
   };
 
@@ -299,6 +328,7 @@ export default function Sales() {
       productNombre: item.productNombre,
       variantId: item.variantId,
       variantNombre: item.variantNombre,
+      personalizacion: item.personalizacion,
       cantidad: item.cantidad,
       precio: item.total / item.cantidad,
       total: item.total
@@ -325,7 +355,7 @@ export default function Sales() {
       setIsAddModalOpen(false);
       setCart([]);
       setSelectedClient(null);
-      setCurrentItem({ productId: '', productNombre: '', variantId: '', variantNombre: '', cantidad: 1, precioUnitario: 0, total: 0 });
+      setCurrentItem({ productId: '', productNombre: '', variantId: '', variantNombre: '', customVariantText: '', cantidad: 1, precioUnitario: 0, total: 0 });
       
       toast.success(newQuote?.numero ? `Comprobante ${newQuote.numero} guardado con éxito` : 'Cotización guardada exitosamente');
       if (newQuote) {
@@ -486,7 +516,7 @@ export default function Sales() {
       setSelectedClient(null);
       setIsComboSale(false);
       setComboSaleName('');
-      setCurrentItem({ productId: '', productNombre: '', variantId: '', variantNombre: '', cantidad: 1, precioUnitario: 0, total: 0 });
+      setCurrentItem({ productId: '', productNombre: '', variantId: '', variantNombre: '', customVariantText: '', cantidad: 1, precioUnitario: 0, total: 0 });
       await refreshData();
     } catch (error) {
       toast.error(t('sale_registered_error'));
@@ -516,13 +546,53 @@ export default function Sales() {
       }
     }
 
-    if (availableStock < currentItem.cantidad) {
-      toast.error(t('insufficient_stock_error'));
+    // Check how much of this product is already in the cart to avoid exceeding total stock
+    const inCartQty = cart
+      .filter(item => item.productId === currentItem.productId && (!currentItem.variantId || item.variantId === currentItem.variantId))
+      .reduce((sum, item) => sum + (Number(item.cantidad) || 0), 0);
+
+    const totalRequested = inCartQty + currentItem.cantidad;
+    if (availableStock < totalRequested) {
+      toast.error(`Stock insuficiente. Stock total disponible: ${availableStock}. Ya tienes ${inCartQty} en el carrito.`);
       return;
     }
 
-    setCart([...cart, { ...currentItem }]);
-    setCurrentItem({ productId: '', productNombre: '', variantId: '', variantNombre: '', cantidad: 1, precioUnitario: 0, total: 0 });
+    // Format variant name with custom user-chosen variant if present
+    const baseVariant = currentItem.variantNombre && currentItem.variantNombre !== 'N/A' && currentItem.variantNombre !== 'Único' ? currentItem.variantNombre : '';
+    const customVar = currentItem.customVariantText?.trim() || '';
+
+    let finalVariantNombre = '';
+    if (baseVariant && customVar) {
+      finalVariantNombre = `${baseVariant} (${customVar})`;
+    } else if (customVar) {
+      finalVariantNombre = customVar;
+    } else if (baseVariant) {
+      finalVariantNombre = baseVariant;
+    }
+
+    const newItem = {
+      productId: currentItem.productId,
+      productNombre: currentItem.productNombre,
+      variantId: currentItem.variantId,
+      variantNombre: finalVariantNombre || undefined,
+      personalizacion: customVar || undefined,
+      cantidad: currentItem.cantidad,
+      total: currentItem.total
+    };
+
+    setCart([...cart, newItem]);
+    setCurrentItem({
+      productId: '',
+      productNombre: '',
+      variantId: '',
+      variantNombre: '',
+      customVariantText: '',
+      cantidad: 1,
+      precioUnitario: 0,
+      total: 0
+    });
+    setSelectedBaseProduct(null);
+    toast.success('Producto agregado al carrito con su variante');
   };
 
   const removeFromCart = (index: number) => {
@@ -534,7 +604,8 @@ export default function Sales() {
     const idToDelete = saleToDelete;
     setIsDeleting(true);
     // Optimistic UI removal
-    setSales(prev => prev.filter(s => s.id !== idToDelete));
+    setSales(prev => prev.filter(s => s.id !== idToDelete && (s as any).transactionId !== idToDelete));
+    setSelectedSaleIds(prev => prev.filter(id => id !== idToDelete));
     setIsDeleteModalOpen(false);
     setSaleToDelete(null);
     try {
@@ -547,6 +618,27 @@ export default function Sales() {
       await refreshData();
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleBulkDeleteSales = async () => {
+    if (selectedSaleIds.length === 0) return;
+    setIsBulkDeleting(true);
+    const idsToDelete = [...selectedSaleIds];
+    // Optimistic UI removal
+    setSales(prev => prev.filter(s => !idsToDelete.includes(s.id) && !idsToDelete.includes((s as any).transactionId)));
+    setSelectedSaleIds([]);
+    setIsBulkDeleteModalOpen(false);
+    try {
+      await inventoryService.bulkDeleteSales(idsToDelete);
+      toast.success(`${idsToDelete.length} venta(s) eliminada(s) correctamente`);
+      await refreshData();
+    } catch (error) {
+      console.error('Error in bulk delete sales:', error);
+      toast.error('Error al eliminar las ventas seleccionadas');
+      await refreshData();
+    } finally {
+      setIsBulkDeleting(false);
     }
   };
 
@@ -711,6 +803,7 @@ export default function Sales() {
             setIsDeleteQuoteModalOpen(true);
           }}
           onRefresh={refreshData}
+          convertingQuoteId={convertingQuoteId}
         />
       ) : (
         <>
@@ -872,12 +965,53 @@ export default function Sales() {
         )}
       </AnimatePresence>
 
+      {/* Bulk Action Bar */}
+      {selectedSaleIds.length > 0 && (
+        <div className="flex items-center justify-between p-4 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 rounded-3xl animate-in fade-in">
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-bold text-rose-800 dark:text-rose-200">
+              {selectedSaleIds.length} venta(s) seleccionada(s)
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSelectedSaleIds([])}
+              className="text-xs text-rose-600 dark:text-rose-400 hover:underline h-7 px-2"
+            >
+              Deseleccionar
+            </Button>
+          </div>
+          <Button
+            size="sm"
+            onClick={() => setIsBulkDeleteModalOpen(true)}
+            className="bg-rose-600 hover:bg-rose-700 text-white rounded-xl shadow-sm text-xs font-bold"
+          >
+            <Trash2 className="w-4 h-4 mr-1.5" />
+            Eliminar seleccionadas
+          </Button>
+        </div>
+      )}
+
       {/* Table Section (Desktop) / Card Section (Mobile) */}
       <div className={cn("bg-white dark:bg-gray-900 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm overflow-hidden", mobileCompactMode ? "hidden" : "block")}>
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-gray-50/50 dark:bg-gray-800/50 border-b border-gray-100 dark:border-gray-800">
+                <th className="w-12 px-4 py-4 text-center">
+                  <input
+                    type="checkbox"
+                    className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-gray-300 dark:border-gray-700 dark:bg-gray-800 cursor-pointer"
+                    checked={filteredSales.length > 0 && selectedSaleIds.length === filteredSales.length}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedSaleIds(filteredSales.map(s => s.id));
+                      } else {
+                        setSelectedSaleIds([]);
+                      }
+                    }}
+                  />
+                </th>
                 <th className="px-6 py-4 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('product')}</th>
                 <th className="px-6 py-4 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('qty')}</th>
                 <th className="px-6 py-4 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('price')}</th>
@@ -889,7 +1023,7 @@ export default function Sales() {
             <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
               {filteredSales.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
+                  <td colSpan={8} className="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
                     {t('no_sales_found')}
                   </td>
                 </tr>
@@ -902,11 +1036,31 @@ export default function Sales() {
                   } catch (e) {
                     date = new Date();
                   }
+                  const isSelected = selectedSaleIds.includes(sale.id);
                   return (
-                    <tr key={sale.id} className="hover:bg-gray-50/80 dark:hover:bg-gray-800/50 transition-colors group">
+                    <tr key={sale.id} className={cn("hover:bg-gray-50/80 dark:hover:bg-gray-800/50 transition-colors group", isSelected && "bg-rose-50/40 dark:bg-rose-950/20")}>
+                      <td className="w-12 px-4 py-4 text-center">
+                        <input
+                          type="checkbox"
+                          className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-gray-300 dark:border-gray-700 dark:bg-gray-800 cursor-pointer"
+                          checked={isSelected}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedSaleIds(prev => [...prev, sale.id]);
+                            } else {
+                              setSelectedSaleIds(prev => prev.filter(id => id !== sale.id));
+                            }
+                          }}
+                        />
+                      </td>
                       <td className="px-6 py-4">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <p className="text-sm font-bold text-gray-900 dark:text-white">{sale.productNombre || t('no_name')}</p>
+                          {sale.variantNombre && (
+                            <span className="px-2 py-0.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-300 text-[10px] font-black uppercase tracking-wider rounded-lg border border-indigo-100 dark:border-indigo-900/60">
+                              {sale.variantNombre}
+                            </span>
+                          )}
                           {sale.isCombo && (
                             <span className="px-2 py-0.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 text-[10px] font-black uppercase tracking-widest rounded-full">
                               Combo
@@ -985,19 +1139,39 @@ export default function Sales() {
             } catch (e) {
               date = new Date();
             }
+            const isSelected = selectedSaleIds.includes(sale.id);
             return (
-              <div key={sale.id} className="bg-white dark:bg-gray-900 p-5 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm space-y-4">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-bold text-gray-900 dark:text-white leading-tight">{sale.productNombre || t('no_name')}</p>
-                      {sale.isCombo && (
-                        <span className="px-2 py-0.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 text-[10px] font-black uppercase tracking-widest rounded-full">
-                          Combo
-                        </span>
-                      )}
+              <div key={sale.id} className={cn("bg-white dark:bg-gray-900 p-5 rounded-3xl border shadow-sm space-y-4 transition-colors", isSelected ? "border-rose-300 dark:border-rose-900 bg-rose-50/20 dark:bg-rose-950/10" : "border-gray-100 dark:border-gray-800")}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-gray-300 dark:border-gray-700 dark:bg-gray-800 cursor-pointer"
+                      checked={isSelected}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedSaleIds(prev => [...prev, sale.id]);
+                        } else {
+                          setSelectedSaleIds(prev => prev.filter(id => id !== sale.id));
+                        }
+                      }}
+                    />
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-bold text-gray-900 dark:text-white leading-tight">{sale.productNombre || t('no_name')}</p>
+                        {sale.variantNombre && (
+                          <span className="px-2 py-0.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-300 text-[10px] font-black uppercase tracking-wider rounded-lg border border-indigo-100 dark:border-indigo-900/60">
+                            {sale.variantNombre}
+                          </span>
+                        )}
+                        {sale.isCombo && (
+                          <span className="px-2 py-0.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 text-[10px] font-black uppercase tracking-widest rounded-full">
+                            Combo
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{date.toLocaleDateString()}</p>
                     </div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{date.toLocaleDateString()}</p>
                   </div>
                   <div className="flex justify-end gap-2">
                     <Button 
@@ -1424,6 +1598,74 @@ export default function Sales() {
 
               {currentItem.productId && (
                 <div className="space-y-3 pt-2 border-t border-gray-100 dark:border-gray-800 animate-in fade-in slide-in-from-left-2 duration-300">
+                  {/* Custom Variant / Personalization Selector */}
+                  <div className="p-3.5 bg-indigo-50/70 dark:bg-indigo-950/30 rounded-2xl border border-indigo-100 dark:border-indigo-900/40 space-y-2.5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                      <label className="text-xs font-black text-indigo-700 dark:text-indigo-300 uppercase tracking-wider flex items-center gap-1.5">
+                        <Sparkles size={14} className="text-indigo-600 dark:text-indigo-400" />
+                        Variante o Personalización (Elegida por vos)
+                      </label>
+                      <span className="text-[10px] text-gray-500 dark:text-gray-400 font-medium">
+                        Opcional: podés agregar este mismo producto varias veces con distintas variantes
+                      </span>
+                    </div>
+
+                    {/* Quick-choice chips */}
+                    <div className="flex flex-wrap gap-1.5 items-center">
+                      {['Sin personalizar', 'Personalizado', 'Con logo', 'Estampado', 'Bordado', 'Sublimado'].map((chip) => {
+                        const isSelected = currentItem.customVariantText === chip;
+                        return (
+                          <button
+                            key={chip}
+                            type="button"
+                            onClick={() => {
+                              setCurrentItem(prev => ({
+                                ...prev,
+                                customVariantText: isSelected ? '' : chip
+                              }));
+                            }}
+                            className={cn(
+                              "px-2.5 py-1 rounded-lg text-xs font-bold transition-all border",
+                              isSelected
+                                ? "bg-indigo-600 border-indigo-600 text-white shadow-sm"
+                                : "bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-indigo-300"
+                            )}
+                          >
+                            {chip}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Custom text field */}
+                    <div className="flex items-center gap-2 pt-0.5">
+                      <div className="flex-1 relative">
+                        <Input
+                          placeholder="O escribí tu variante personalizada (ej: Personalizados con nombre, Talle especial...)"
+                          value={currentItem.customVariantText || ''}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setCurrentItem(prev => ({
+                              ...prev,
+                              customVariantText: val
+                            }));
+                          }}
+                          className="text-xs bg-white dark:bg-gray-900"
+                        />
+                      </div>
+                      {currentItem.customVariantText && (
+                        <button
+                          type="button"
+                          onClick={() => setCurrentItem(prev => ({ ...prev, customVariantText: '' }))}
+                          className="p-2 text-gray-400 hover:text-rose-500 rounded-xl hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
+                          title="Limpiar variante personalizada"
+                        >
+                          <X size={16} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
                   {/* Price Mode Selector */}
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-gray-500 dark:text-gray-400">
@@ -1563,9 +1805,16 @@ export default function Sales() {
                         <div className="p-1.5 bg-indigo-50 dark:bg-indigo-900/40 rounded-lg">
                           <Package size={14} className="text-indigo-600" />
                         </div>
-                        <p className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-tight">
-                          {item.productNombre}
-                        </p>
+                        <div className="min-w-0">
+                          <p className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-tight truncate">
+                            {item.productNombre}
+                          </p>
+                          {item.variantNombre && (
+                            <span className="inline-block mt-0.5 px-2 py-0.5 text-[10px] font-black rounded-md bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 border border-indigo-100 dark:border-indigo-800">
+                              Variante: {item.variantNombre}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <div className="flex items-center gap-2 mt-1 ml-8">
                         <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest bg-gray-50 dark:bg-gray-800 px-1.5 py-0.5 rounded">
@@ -1708,6 +1957,17 @@ export default function Sales() {
         message={t('delete_sale_confirm')}
         confirmLabel={t('delete')}
         isLoading={isDeleting}
+      />
+
+      {/* Confirmation Modal for Bulk Delete Sales */}
+      <ConfirmationModal 
+        isOpen={isBulkDeleteModalOpen}
+        onClose={() => setIsBulkDeleteModalOpen(false)}
+        onConfirm={handleBulkDeleteSales}
+        title="Eliminar Ventas Seleccionadas"
+        message={`¿Estás seguro de que deseas eliminar las ${selectedSaleIds.length} ventas seleccionadas? Esta acción restaurará el stock correspondiente en el inventario.`}
+        confirmLabel={isBulkDeleting ? "Eliminando..." : "Eliminar seleccionadas"}
+        isLoading={isBulkDeleting}
       />
 
       {/* Confirmation Modal for Quotes */}

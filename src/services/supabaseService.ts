@@ -287,6 +287,7 @@ export const supabaseService = {
       productNombre: s.productNombre || '',
       variantId: s.variantId || '',
       variantNombre: s.variantNombre || '',
+      personalizacion: s.personalizacion || '',
       cantidad: Number(s.cantidad) || 1,
       precio: Number(s.precio) || 0,
       total: Number(s.total) || 0,
@@ -304,26 +305,54 @@ export const supabaseService = {
     const cached = getLocal<Sale[]>('sales', []);
     setLocal('sales', [...formattedSales, ...cached]);
 
-    // Deduct stock in local cache and Supabase products
+    // Deduct stock in local cache and Supabase products (consolidating all lines per product)
     try {
       const cachedProducts = getLocal<Product[]>('products', []);
+
+      // Group deductions by productId to ensure multiple lines for the same product accumulate
+      const deductionsByProduct = new Map<string, {
+        totalQuantity: number;
+        variantDeductions: Record<string, number>;
+      }>();
+
       for (const sale of formattedSales) {
-        if (!sale.productId) continue;
-        const prod = cachedProducts.find(p => p.id === sale.productId);
+        if (!sale.productId || sale.productId.startsWith('manual_') || sale.productId.startsWith('custom_') || sale.productId === 'quote_item') {
+          continue;
+        }
+        const existing = deductionsByProduct.get(sale.productId) || {
+          totalQuantity: 0,
+          variantDeductions: {}
+        };
+        existing.totalQuantity += sale.cantidad;
+        if (sale.variantId) {
+          existing.variantDeductions[sale.variantId] = (existing.variantDeductions[sale.variantId] || 0) + sale.cantidad;
+        }
+        deductionsByProduct.set(sale.productId, existing);
+      }
+
+      for (const [productId, deduction] of deductionsByProduct.entries()) {
+        const prod = cachedProducts.find(p => p.id === productId);
         if (prod) {
-          const newTotal = Math.max(0, (prod.cantidad || 0) - sale.cantidad);
+          const newTotal = Math.max(0, (prod.cantidad || 0) - deduction.totalQuantity);
           let newVariants = prod.variants;
-          if (sale.variantId && prod.variants?.length) {
-            newVariants = prod.variants.map(v => 
-              v.id === sale.variantId ? { ...v, cantidad: Math.max(0, (v.cantidad || 0) - sale.cantidad) } : v
-            );
+          if (prod.variants?.length) {
+            newVariants = prod.variants.map(v => {
+              const varDeduct = deduction.variantDeductions[v.id] || 0;
+              return varDeduct > 0 ? { ...v, cantidad: Math.max(0, (v.cantidad || 0) - varDeduct) } : v;
+            });
           }
-          await supabaseService.updateProduct(sale.productId, {
+          await supabaseService.updateProduct(productId, {
             cantidad: newTotal,
             variants: newVariants
           });
+          prod.cantidad = newTotal;
+          prod.variants = newVariants;
         }
       }
+
+      // Persist updated product cache so UI reflects the deduction immediately
+      setLocal('products', cachedProducts);
+      setLocal('sb_cache_products', cachedProducts);
     } catch (e) {
       console.warn('Error updating product stock after sale:', e);
     }
@@ -371,10 +400,10 @@ export const supabaseService = {
   },
 
   deleteSale: async (id: string): Promise<void> => {
-    // 1. Remove from local cache
+    // 1. Remove from local cache immediately
     const cached = getLocal<Sale[]>('sales', []);
-    const saleToDelete = cached.find(s => s.id === id);
-    setLocal('sales', cached.filter(s => s.id !== id));
+    const saleToDelete = cached.find(s => s.id === id || (s as any).transactionId === id);
+    setLocal('sales', cached.filter(s => s.id !== id && (s as any).transactionId !== id));
 
     // 2. Restore stock in local cache and supabase
     if (saleToDelete) {
@@ -410,11 +439,22 @@ export const supabaseService = {
       }
     }
 
-    // 3. Delete from Supabase table
+    // 3. Delete from Supabase table by ID or transactionId
     try {
-      await supabase.from('sales').delete().eq('id', id);
+      await supabase.from('sales').delete().or(`id.eq.${id},transactionId.eq.${id}`);
     } catch (e) {
       console.warn('Supabase deleteSale error:', e);
+    }
+  },
+
+  bulkDeleteSales: async (ids: string[]): Promise<void> => {
+    if (!ids || ids.length === 0) return;
+    const idSet = new Set(ids);
+    const cached = getLocal<Sale[]>('sales', []);
+    setLocal('sales', cached.filter(s => !idSet.has(s.id) && !idSet.has((s as any).transactionId)));
+
+    for (const id of ids) {
+      await supabaseService.deleteSale(id);
     }
   },
 
@@ -586,6 +626,51 @@ export const supabaseService = {
     } catch (e) {
       console.warn('Supabase deleteQuote error:', e);
     }
+  },
+
+  updateQuote: async (id: string, updates: Partial<Quote>): Promise<void> => {
+    const cached = getLocal<Quote[]>('quotes', []);
+    setLocal('quotes', cached.map(q => q.id === id ? { ...q, ...updates } : q));
+
+    try {
+      await supabase.from('quotes').update(updates).eq('id', id);
+    } catch (e) {
+      console.warn('Supabase updateQuote error:', e);
+    }
+  },
+
+  subscribeToQuotes: (onData: (quotes: Quote[]) => void): (() => void) => {
+    supabaseService.getQuotes().then(onData);
+
+    const channelName = 'sb_rt_quotes_' + Math.random().toString(36).substring(2, 9);
+    const channel = supabase
+      .channel(channelName)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'quotes' }, async () => {
+        const fresh = await supabaseService.getQuotes();
+        onData(fresh);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  },
+
+  subscribeToSales: (onData: (sales: Sale[]) => void): (() => void) => {
+    supabaseService.getSales(30).then(onData);
+
+    const channelName = 'sb_rt_sales_' + Math.random().toString(36).substring(2, 9);
+    const channel = supabase
+      .channel(channelName)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, async () => {
+        const fresh = await supabaseService.getSales(30);
+        onData(fresh);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   },
 
   // --- CLIENTS ---

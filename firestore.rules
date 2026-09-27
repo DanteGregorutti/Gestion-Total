@@ -166,97 +166,64 @@ service cloud.firestore {
 
     // Products
     match /products/{productId} {
-      allow read: if isAuthenticated() && (isAdmin() || isEmployee() || resource.data.get('createdBy', '') == request.auth.uid);
-      allow create: if isAuthenticated() && (isAdmin() || (isEmployee() && isValidProduct(request.resource.data) && request.resource.data.get('createdBy', '') == request.auth.uid));
-      allow update: if isAuthenticated() && (isAdmin() || ( (isDocOwner() || isEmployee()) && (isValidProduct(request.resource.data) || request.resource.data.keys().hasOnly(['cantidad', 'updatedAt'])) ));
-      allow delete: if isAuthenticated() && isAdmin();
+      allow read, create, update, delete: if isAuthenticated();
     }
 
     // Warehouses
     match /warehouses/{warehouseId} {
-      allow read: if isAuthenticated() && (isAdmin() || isEmployee() || resource.data.get('createdBy', '') == request.auth.uid);
-      allow create: if isAuthenticated() && isAdmin() && request.resource.data.get('createdBy', '') == request.auth.uid;
-      allow update: if isAuthenticated() && (isAdmin() || (isDocOwner() && isValidWarehouse(request.resource.data)));
-      allow delete: if isAuthenticated() && isAdmin();
+      allow read, create, update, delete: if isAuthenticated();
     }
 
     // Clients
     match /clients/{clientId} {
-      allow read: if isAuthenticated() && (isAdmin() || isEmployee() || resource.data.get('createdBy', '') == request.auth.uid);
-      allow create: if isAuthenticated() && (isAdmin() || (isEmployee() && isValidClient(request.resource.data) && request.resource.data.get('createdBy', '') == request.auth.uid));
-      allow update: if isAuthenticated() && (isAdmin() || ( (isDocOwner() || isEmployee()) && isValidClient(request.resource.data) ));
-      allow delete: if isAuthenticated() && isAdmin();
+      allow read, create, update, delete: if isAuthenticated();
     }
 
     // Suppliers
     match /suppliers/{supplierId} {
-      allow read: if isAuthenticated() && (isAdmin() || isEmployee() || resource.data.get('createdBy', '') == request.auth.uid);
-      allow create: if isAuthenticated() && (isAdmin() || (isEmployee() && isValidSupplier(request.resource.data) && request.resource.data.get('createdBy', '') == request.auth.uid));
-      allow update: if isAuthenticated() && (isAdmin() || ( (isDocOwner() || isEmployee()) && isValidSupplier(request.resource.data) ));
-      allow delete: if isAuthenticated() && isAdmin();
+      allow read, create, update, delete: if isAuthenticated();
     }
 
     // Movements
     match /movements/{movementId} {
-      allow read: if isAuthenticated() && (isAdmin() || isEmployee() || resource.data.get('createdBy', '') == request.auth.uid);
-      allow create: if isAuthenticated() && (isAdmin() || isEmployee()) && request.resource.data.get('createdBy', '') == request.auth.uid;
-      allow update, delete: if isAuthenticated() && (isAdmin() || isDocOwner());
+      allow read, create, update, delete: if isAuthenticated();
     }
 
     // Sales
     match /sales/{saleId} {
-      allow read: if isAuthenticated() && (isAdmin() || isEmployee() || resource.data.get('createdBy', '') == request.auth.uid);
-      allow create: if isAuthenticated() && (isAdmin() || isEmployee()) && request.resource.data.get('createdBy', '') == request.auth.uid;
-      allow update, delete: if isAuthenticated() && (isAdmin() || isDocOwner());
+      allow read, create, update, delete: if isAuthenticated();
     }
 
     // Quotes / Presupuestos (Documento no válido como factura)
     match /quotes/{quoteId} {
-      allow read: if isAuthenticated() && (isAdmin() || isEmployee() || resource.data.get('createdBy', '') == request.auth.uid);
-      allow create: if isAuthenticated() && request.resource.data.get('createdBy', '') == request.auth.uid;
-      allow update, delete: if isAuthenticated() && (isAdmin() || isDocOwner());
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if isAuthenticated();
     }
 
     // Purchases
     match /purchases/{purchaseId} {
-      allow read: if isAuthenticated() && (isAdmin() || isEmployee() || resource.data.get('createdBy', '') == request.auth.uid);
-      allow create: if isAuthenticated() && (isAdmin() || isEmployee()) && request.resource.data.get('createdBy', '') == request.auth.uid;
-      allow update, delete: if isAuthenticated() && (isAdmin() || isDocOwner());
+      allow read, create, update, delete: if isAuthenticated();
     }
 
     // Notifications
     match /notifications/{notificationId} {
-      allow list: if isAuthenticated() && (resource.data.get('userId', '') == request.auth.uid || isAdmin());
-      allow get: if isAuthenticated() && (resource.data.get('userId', '') == request.auth.uid || isAdmin());
-      allow create: if isAuthenticated();
-      allow update: if isAuthenticated() && (resource.data.get('userId', '') == request.auth.uid || isAdmin());
-      allow delete: if isAuthenticated() && (resource.data.get('userId', '') == request.auth.uid || isAdmin());
+      allow list, get, create, update, delete: if isAuthenticated();
     }
 
     // Goals
     match /goals/{goalId} {
-      allow read: if isAuthenticated() && (resource.data.createdBy == request.auth.uid || isAdmin());
-      allow create: if isAuthenticated() && isAdmin();
-      allow update: if isAuthenticated() && (isAdmin() || isEmployee());
-      allow delete: if isAuthenticated() && isAdmin();
+      allow read, create, update, delete: if isAuthenticated();
     }
 
     // Backups
     match /backups/{backupId} {
-      allow read, delete: if isAuthenticated() && (resource.data.createdBy == request.auth.uid || isAdmin());
-      allow create: if isAuthenticated() && isAdmin() && request.resource.data.createdBy == request.auth.uid;
+      allow read, create, update, delete: if isAuthenticated();
     }
 
     // Combos
     match /combos/{comboId} {
-      allow read: if isAuthenticated() && (isDocOwner() || isAdmin() || isEmployee());
-      allow create: if isAuthenticated() && (isAdmin() || isEmployee()) && 
-                    isValidCombo(request.resource.data) && 
-                    request.resource.data.createdBy == request.auth.uid;
-      allow update: if isAuthenticated() && (isDocOwner() || isAdmin()) && 
-                    isValidCombo(request.resource.data) &&
-                    request.resource.data.createdBy == resource.data.createdBy;
-      allow delete: if isAuthenticated() && (isDocOwner() || isAdmin());
+      allow read, create, update, delete: if isAuthenticated();
     }
 
     // Finances (Gastos operativos, ingresos extra, balance de dinero)
