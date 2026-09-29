@@ -17,7 +17,11 @@ import {
   TrendingUp,
   MinusCircle,
   Package,
-  X
+  X,
+  Zap,
+  Globe,
+  Cloud,
+  Radio
 } from 'lucide-react';
 import { telegramBot, TelegramBotStatus } from '../../services/telegramBotManager';
 import { Button } from '../ui';
@@ -33,6 +37,15 @@ export function TelegramBotModal({ isOpen, onClose }: TelegramBotModalProps) {
   const [tokenInput, setTokenInput] = useState<string>(telegramBot.getToken());
   const [copied, setCopied] = useState<boolean>(false);
   const [showConfig, setShowConfig] = useState<boolean>(false);
+  const [showWebhookSetup, setShowWebhookSetup] = useState<boolean>(false);
+  const [webhookUrlInput, setWebhookUrlInput] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return `${window.location.origin}/api/telegram-webhook`;
+    }
+    return '';
+  });
+  const [testingConnection, setTestingConnection] = useState<boolean>(false);
+  const [activatingWebhook, setActivatingWebhook] = useState<boolean>(false);
 
   useEffect(() => {
     const unsub = telegramBot.subscribe((newStatus) => {
@@ -52,6 +65,25 @@ export function TelegramBotModal({ isOpen, onClose }: TelegramBotModalProps) {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleTestConnection = async () => {
+    setTestingConnection(true);
+    try {
+      const token = telegramBot.getToken();
+      const res = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+      const data = await res.json();
+      if (data.ok) {
+        toast.success(`¡Bot verificado! @${data.result.username} (${data.result.first_name})`);
+        telegramBot.restart();
+      } else {
+        toast.error(`Telegram respondió: ${data.description || 'Token inválido'}`);
+      }
+    } catch (e: any) {
+      toast.error('Error de red al consultar Telegram API');
+    } finally {
+      setTestingConnection(false);
+    }
+  };
+
   const handleSaveToken = () => {
     if (!tokenInput.trim()) {
       toast.error('Ingresa un token válido');
@@ -62,6 +94,43 @@ export function TelegramBotModal({ isOpen, onClose }: TelegramBotModalProps) {
     setShowConfig(false);
   };
 
+  const handleActivateWebhook = async () => {
+    if (!webhookUrlInput.trim() || !webhookUrlInput.startsWith('https://')) {
+      toast.error('Telegram requiere una URL pública segura que empiece con https:// (ej: tu dominio en Vercel)');
+      return;
+    }
+    setActivatingWebhook(true);
+    try {
+      const result = await telegramBot.setWebhook(webhookUrlInput.trim());
+      if (result.ok) {
+        toast.success('¡Modo 24/7 en la Nube Activado! Telegram enviará los mensajes directo al servidor sin requerir la app abierta.');
+        setShowWebhookSetup(false);
+      } else {
+        toast.error(`Telegram no pudo activar el webhook: ${result.description}`);
+      }
+    } catch (e: any) {
+      toast.error('Error de red al activar Webhook');
+    } finally {
+      setActivatingWebhook(false);
+    }
+  };
+
+  const handleDeactivateWebhook = async () => {
+    setActivatingWebhook(true);
+    try {
+      const result = await telegramBot.removeWebhook();
+      if (result.ok) {
+        toast.success('Webhook desactivado. Se reactivó el modo Pestaña (Polling).');
+      } else {
+        toast.error(`Error: ${result.description}`);
+      }
+    } catch (e: any) {
+      toast.error('Error al desactivar Webhook');
+    } finally {
+      setActivatingWebhook(false);
+    }
+  };
+
   const handleFlushQueue = async () => {
     try {
       await telegramBot.flushQueue();
@@ -70,6 +139,8 @@ export function TelegramBotModal({ isOpen, onClose }: TelegramBotModalProps) {
       toast.error('Error al sincronizar cola');
     }
   };
+
+  const isWebhookActive = status.isWebhookActive || status.mode === 'webhook';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
@@ -134,6 +205,96 @@ export function TelegramBotModal({ isOpen, onClose }: TelegramBotModalProps) {
                 {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
               </button>
             </div>
+
+            {/* Operational Mode Banner */}
+            {isWebhookActive ? (
+              <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 text-left border border-emerald-200 dark:border-emerald-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-800 dark:text-emerald-200">
+                    <Cloud className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                    Modo 24/7 en la Nube (Activo)
+                  </span>
+                  <span className="text-[10px] bg-emerald-200 dark:bg-emerald-900/60 text-emerald-900 dark:text-emerald-200 px-2 py-0.5 rounded-full font-bold">
+                    Webhook
+                  </span>
+                </div>
+                <p className="text-[11px] text-emerald-900 dark:text-emerald-300 leading-relaxed">
+                  Telegram envía los mensajes directamente a tu servidor en la nube. <strong>El bot responde las 24 horas del día aunque tengas la app cerrada, tu celular bloqueado o la PC apagada.</strong>
+                </p>
+                <div className="pt-1 flex items-center justify-between text-[11px]">
+                  <span className="font-mono text-[10px] text-gray-500 dark:text-gray-400 truncate max-w-[240px]">
+                    {status.webhookUrl || 'URL en la nube configurada'}
+                  </span>
+                  <button
+                    onClick={handleDeactivateWebhook}
+                    disabled={activatingWebhook}
+                    className="text-xs text-rose-600 dark:text-rose-400 hover:underline font-semibold"
+                  >
+                    Volver a modo Pestaña
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/30 text-left border border-amber-200/80 dark:border-amber-800/60 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-900 dark:text-amber-200">
+                    <Radio className="w-4 h-4 text-amber-600 dark:text-amber-400 animate-pulse" />
+                    Modo Pestaña (Local / Navegador)
+                  </span>
+                  <span className="text-[10px] bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 px-2 py-0.5 rounded-full font-bold">
+                    Escucha Activa
+                  </span>
+                </div>
+                
+                <p className="text-[11px] text-amber-900 dark:text-amber-300 leading-relaxed">
+                  El bot responde en vivo mientras mantengas la aplicación abierta en una pestaña o en segundo plano en tu celular.
+                </p>
+
+                <div className="p-2 rounded-xl bg-white/70 dark:bg-gray-900/70 border border-amber-200 dark:border-amber-800/50 text-[11px] text-amber-950 dark:text-amber-200">
+                  <span className="font-bold">❓ ¿Por qué no respondió si nunca abriste la app?</span>
+                  <p className="mt-0.5 text-gray-600 dark:text-gray-400">
+                    En este modo, tu navegador web es quien consulta a Telegram. Si la app nunca se encendió, no hay nadie para procesar el mensaje.
+                  </p>
+                </div>
+
+                <div className="pt-1">
+                  <Button
+                    onClick={() => setShowWebhookSetup(prev => !prev)}
+                    className="w-full text-xs font-bold py-2 bg-gradient-to-r from-amber-600 to-indigo-600 hover:from-amber-700 hover:to-indigo-700 text-white rounded-xl shadow-sm inline-flex items-center justify-center gap-1.5"
+                  >
+                    <Zap className="w-3.5 h-3.5" />
+                    {showWebhookSetup ? 'Cerrar configuración 24/7' : '⚡ Activar Modo 24/7 (Sin necesidad de abrir la app)'}
+                  </Button>
+                </div>
+
+                {showWebhookSetup && (
+                  <div className="mt-2 p-3 rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 space-y-2 text-xs">
+                    <div className="font-bold text-gray-800 dark:text-gray-200">
+                      Conectar Webhook de Vercel / Servidor:
+                    </div>
+                    <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                      Ingresa la URL pública de tu app en Vercel terminada en <code className="text-indigo-600 dark:text-indigo-400 font-mono">/api/telegram-webhook</code>:
+                    </p>
+                    <input
+                      type="text"
+                      value={webhookUrlInput}
+                      onChange={(e) => setWebhookUrlInput(e.target.value)}
+                      placeholder="https://tu-proyecto.vercel.app/api/telegram-webhook"
+                      className="w-full px-3 py-2 text-xs font-mono bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white"
+                    />
+                    <div className="flex gap-2 justify-end">
+                      <Button
+                        onClick={handleActivateWebhook}
+                        disabled={activatingWebhook}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-1.5 px-3 rounded-lg font-bold"
+                      >
+                        {activatingWebhook ? 'Conectando...' : 'Conectar y Activar 24/7'}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Quick instructions */}
@@ -223,12 +384,23 @@ export function TelegramBotModal({ isOpen, onClose }: TelegramBotModalProps) {
           {/* Bot Maintenance / Token Configuration */}
           <div className="pt-2 border-t border-gray-100 dark:border-gray-800 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <button
-                onClick={() => setShowConfig(prev => !prev)}
-                className="text-xs text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium"
-              >
-                {showConfig ? 'Ocultar ajustes del Token' : '⚙️ Cambiar Token (Avanzado)'}
-              </button>
+              <div className="flex items-center gap-2">
+                <Button
+                  onClick={handleTestConnection}
+                  disabled={testingConnection}
+                  className="text-xs bg-sky-500 hover:bg-sky-600 text-white font-bold py-1.5 px-3 rounded-xl inline-flex items-center gap-1.5 shadow-sm"
+                >
+                  <RefreshCw className={`w-3 h-3 ${testingConnection ? 'animate-spin' : ''}`} />
+                  {testingConnection ? 'Verificando...' : 'Probar conexión'}
+                </Button>
+
+                <button
+                  onClick={() => setShowConfig(prev => !prev)}
+                  className="text-xs text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium"
+                >
+                  {showConfig ? 'Ocultar token' : '⚙️ Configurar token'}
+                </button>
+              </div>
 
               <button
                 onClick={handleFlushQueue}
@@ -236,7 +408,7 @@ export function TelegramBotModal({ isOpen, onClose }: TelegramBotModalProps) {
                 title="Descarta mensajes viejos encolados en Telegram y sincroniza desde ahora"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
-                Sincronizar / Limpiar cola
+                Limpiar cola
               </button>
             </div>
 

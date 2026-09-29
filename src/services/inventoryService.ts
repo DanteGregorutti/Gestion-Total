@@ -191,29 +191,43 @@ export function isNameInCode(code?: string): boolean {
 
 export const inventoryService = {
   // Products
-  getProducts: async () => {
-    if (!auth.currentUser) {
-      return [];
+  getProducts: async (): Promise<Product[]> => {
+    // 1. Try Firestore if user is authenticated
+    if (auth.currentUser) {
+      const path = 'products';
+      try {
+        const q = query(
+          collection(db, path),
+          where('createdBy', '==', auth.currentUser.uid)
+        );
+        const snapshot = await getDocs(q);
+        if (!snapshot.empty) {
+          const list = snapshot.docs
+            .map(doc => ({ id: doc.id, ...doc.data() } as Product))
+            .sort((a, b) => {
+              const dateA = (a.createdAt as any)?.toDate ? (a.createdAt as any).toDate() : new Date(a.createdAt as any || 0);
+              const dateB = (b.createdAt as any)?.toDate ? (b.createdAt as any).toDate() : new Date(b.createdAt as any || 0);
+              return dateB.getTime() - dateA.getTime();
+            });
+          return list;
+        }
+      } catch (error) {
+        console.warn('Firestore getProducts error, falling back to Supabase:', error);
+      }
     }
-    const path = 'products';
+
+    // 2. Fallback to Supabase (works 24/7 in Node.js server & browser)
     try {
-      const q = query(
-        collection(db, path),
-        where('createdBy', '==', auth.currentUser.uid)
-      );
-      const snapshot = await getDocs(q);
-      const list = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Product))
-        .sort((a, b) => {
-          const dateA = (a.createdAt as any)?.toDate ? (a.createdAt as any).toDate() : new Date(a.createdAt as any || 0);
-          const dateB = (b.createdAt as any)?.toDate ? (b.createdAt as any).toDate() : new Date(b.createdAt as any || 0);
-          return dateB.getTime() - dateA.getTime();
-        });
-      return list;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, path);
-      return [];
+      const sbProducts = await supabaseService.getProducts();
+      if (sbProducts && sbProducts.length > 0) {
+        return sbProducts;
+      }
+    } catch (e) {
+      console.warn('Supabase getProducts fallback error:', e);
     }
+
+    // 3. Fallback to local cache
+    return getLocal<Product[]>('products', []);
   },
 
   getProductsPaginated: async (pageSize: number = 20, lastVisible: any = null) => {
@@ -3049,8 +3063,8 @@ export const inventoryService = {
         productId: 'custom_quote_item',
         productNombre: `Cotización ${quote.numero || ''} - ${quote.clientNombre || 'Cliente'}`,
         cantidad: 1,
-        precio: Number(quote.total) || 0,
-        total: Number(quote.total) || 0,
+        precio: Math.max(0, Number(quote.subtotal || (quote.total - (quote.costoEnvio || 0)))) || 0,
+        total: Math.max(0, Number(quote.subtotal || (quote.total - (quote.costoEnvio || 0)))) || 0,
         variantId: '',
         variantNombre: ''
       }];

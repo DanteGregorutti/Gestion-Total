@@ -5,7 +5,138 @@
 
 import { Product, Sale, Purchase, Movement, Client, Supplier, Warehouse, WorkOrder, RepairQuote } from '../types';
 
+export interface AskAiOptions {
+  apiKey?: string;
+  model?: 'gemini-3.8-flash' | 'gemini-3.1-flash-lite' | 'gemini-flash-latest';
+  performanceMode?: 'fast' | 'balanced' | 'deep';
+  temperature?: number;
+  responseStyle?: 'concise' | 'balanced' | 'comprehensive';
+  historyDays?: number;
+}
+
 export const geminiService = {
+  /**
+   * Helper to get active Gemini API key from parameters, settings or environment
+   */
+  getApiKey: (explicitKey?: string): string => {
+    if (explicitKey && explicitKey.trim().length > 5) {
+      return explicitKey.trim();
+    }
+    try {
+      const local = localStorage.getItem('app_settings');
+      if (local) {
+        const parsed = JSON.parse(local);
+        if (parsed?.geminiApiKey && typeof parsed.geminiApiKey === 'string' && parsed.geminiApiKey.trim()) {
+          return parsed.geminiApiKey.trim();
+        }
+      }
+    } catch {}
+    
+    const envKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || (import.meta as any).env?.GEMINI_API_KEY;
+    return envKey ? envKey.trim() : '';
+  },
+
+  /**
+   * Quick connection test to verify API key & measure latency in ms
+   */
+  testConnection: async (explicitKey?: string, explicitModel?: string): Promise<{
+    ok: boolean;
+    latencyMs: number;
+    source: 'vercel' | 'direct' | 'server';
+    model: string;
+    message: string;
+  }> => {
+    const startTime = Date.now();
+    const apiKey = geminiService.getApiKey(explicitKey);
+    const modelToUse = explicitModel || 'gemini-3.8-flash';
+
+    // 1. Try testing via /api/ai/ask first
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+      const response = await fetch("/api/ai/ask", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          ...(apiKey ? { "x-gemini-key": apiKey } : {})
+        },
+        body: JSON.stringify({ 
+          prompt: "__ping__", 
+          apiKey,
+          model: modelToUse
+        }),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        const latency = Date.now() - startTime;
+        return {
+          ok: true,
+          latencyMs: latency,
+          source: data.source === 'vercel_serverless' ? 'vercel' : 'server',
+          model: modelToUse,
+          message: `Conexión exitosa a través del servidor (${latency}ms).`
+        };
+      }
+    } catch (apiErr) {
+      console.warn("[geminiService.testConnection] Server endpoint test failed, testing direct client SDK:", apiErr);
+    }
+
+    // 2. Direct browser test using @google/genai SDK
+    if (!apiKey) {
+      return {
+        ok: false,
+        latencyMs: Date.now() - startTime,
+        source: 'direct',
+        model: modelToUse,
+        message: 'No hay ninguna clave API configurada. Por favor introduce tu GEMINI_API_KEY.'
+      };
+    }
+
+    try {
+      const { GoogleGenAI } = await import('@google/genai');
+      const ai = new GoogleGenAI({ apiKey });
+      const resp = await ai.models.generateContent({
+        model: modelToUse,
+        contents: "Responde únicamente 'OK'",
+        config: {
+          temperature: 0.1
+        }
+      });
+
+      const latency = Date.now() - startTime;
+      if (resp.text) {
+        return {
+          ok: true,
+          latencyMs: latency,
+          source: 'direct',
+          model: modelToUse,
+          message: `Conexión directa del navegador exitosa (${latency}ms).`
+        };
+      }
+    } catch (sdkErr: any) {
+      return {
+        ok: false,
+        latencyMs: Date.now() - startTime,
+        source: 'direct',
+        model: modelToUse,
+        message: sdkErr?.message || 'Error al conectar directamente con Google Gemini.'
+      };
+    }
+
+    return {
+      ok: false,
+      latencyMs: Date.now() - startTime,
+      source: 'direct',
+      model: modelToUse,
+      message: 'No se pudo establecer conexión con la IA.'
+    };
+  },
+
   askAboutBusiness: async (
     prompt: string, 
     context: { 
@@ -18,136 +149,216 @@ export const geminiService = {
       warehouses: Warehouse[];
       workOrders?: WorkOrder[];
       repairQuotes?: RepairQuote[];
-    }
-  ) => {
+    },
+    options?: AskAiOptions
+  ): Promise<string> => {
     const formatDate = (date: any) => {
       if (!date) return 'N/A';
-      if (date.toDate) return date.toDate().toLocaleDateString();
-      if (typeof date === 'string') return new Date(date).toLocaleDateString();
+      if (date.toDate) return date.toDate().toLocaleDateString('es-AR');
+      if (typeof date === 'string') return new Date(date).toLocaleDateString('es-AR');
       return date.toString();
     };
 
+    const effectiveApiKey = geminiService.getApiKey(options?.apiKey);
+    const effectiveModel = options?.model || 'gemini-3.8-flash';
+    const effectiveTemperature = typeof options?.temperature === 'number' ? options?.temperature : 0.3;
+    const performanceMode = options?.performanceMode || 'fast';
+    const responseStyle = options?.responseStyle || 'balanced';
+
+    // --- SMART HIGH-SIGNAL COMPACT CONTEXT GENERATION ---
+    // Avoid sending megabytes of uncompressed history over Vercel serverless!
+    const totalInventoryUnits = context.products.reduce((acc, p) => acc + (Number(p.cantidad) || 0), 0);
+    const totalInventoryCost = context.products.reduce((acc, p) => acc + ((Number(p.costo) || 0) * (Number(p.cantidad) || 0)), 0);
+    const totalInventoryRetail = context.products.reduce((acc, p) => acc + ((Number(p.precio) || 0) * (Number(p.cantidad) || 0)), 0);
+
+    const lowStockItems = context.products.filter(p => (Number(p.cantidad) || 0) <= (Number(p.minStock) || 3));
+    
+    // Sort products by sales frequency or low stock
+    const lowStockPreview = lowStockItems.slice(0, 15).map(p => 
+      `- [${p.codigo || 'S/C'}] ${p.descripcion}: Stock actual ${p.cantidad} (Mínimo: ${p.minStock || 3}). Precio: $${p.precio}, Costo: $${p.costo || 0}. Ubic: ${p.ubicacion || 'Principal'}`
+    ).join('\n');
+
+    // Workshop Metrics
     const workOrdersList = context.workOrders || [];
     const repairQuotesList = context.repairQuotes || [];
     const activeOrders = workOrdersList.filter(o => o.estado !== 'entregado' && o.estado !== 'cancelado');
     const readyOrders = workOrdersList.filter(o => o.estado === 'listo');
-    const totalTallerPending = activeOrders.reduce((acc, o) => acc + (o.saldoPendiente || 0), 0);
+    const totalTallerPending = activeOrders.reduce((acc, o) => acc + (Number(o.saldoPendiente) || 0), 0);
+
+    const activeOrdersPreview = activeOrders.slice(0, 15).map(o => 
+      `- #${o.numero}: ${o.equipo} (${o.marcaModelo || '-'}) | Cliente: ${o.clientNombre} | Estado: ${o.estado.toUpperCase()} | Falla: ${o.fallaReportada || '-'} | Saldo Pendiente: $${o.saldoPendiente} | Total: $${o.total}`
+    ).join('\n');
+
+    // Sales Metrics & Recent Sample (bounded to 25 items max for ultra-low latency)
+    const totalSalesRevenue = context.sales.reduce((acc, s) => acc + (Number(s.total) || 0), 0);
+    const recentSales = context.sales.slice(0, performanceMode === 'deep' ? 35 : 18);
+    const recentSalesPreview = recentSales.map(s => 
+      `- ${formatDate(s.fecha)}: ${s.productNombre} (x${s.cantidad}) -> $${s.total} [Cliente: ${s.clientNombre || 'Consumidor Final'}]`
+    ).join('\n');
+
+    // Top selling products calculation
+    const salesCountByProduct: Record<string, { qty: number; total: number; name: string }> = {};
+    context.sales.forEach(s => {
+      const key = s.productNombre || 'Producto';
+      if (!salesCountByProduct[key]) {
+        salesCountByProduct[key] = { qty: 0, total: 0, name: key };
+      }
+      salesCountByProduct[key].qty += (Number(s.cantidad) || 1);
+      salesCountByProduct[key].total += (Number(s.total) || 0);
+    });
+
+    const topSellers = Object.values(salesCountByProduct)
+      .sort((a, b) => b.qty - a.qty)
+      .slice(0, 5)
+      .map(t => `- ${t.name}: ${t.qty} unidades vendidas (Recaudación: $${t.total})`)
+      .join('\n');
+
+    // Purchases summary
+    const totalPurchasesCost = context.purchases.reduce((acc, p) => acc + (Number(p.total) || 0), 0);
+    const recentPurchases = context.purchases.slice(0, 8).map(p => 
+      `- ${formatDate(p.fecha)}: ${p.productNombre} (x${p.cantidad}) de ${p.proveedor} -> Total: $${p.total}`
+    ).join('\n');
 
     const systemInstruction = `
-      Eres un asistente experto en gestión de inventarios, taller mecánico de reparaciones y analista de negocios estratégico para la aplicación "Gestión Total" y "PulseStore".
-      Tu objetivo es proporcionar análisis profundos, informes financieros, estado del taller y consejos operativos basados en los datos reales del negocio.
+      Eres el Asistente Ejecutivo Inteligente de "Gestión Total" y "PulseStore".
+      Brindas respuestas operativas de alta precisión para gestión de inventarios, taller de reparaciones, finanzas y ventas.
 
-      RESUMEN DEL UNIVERSO DE DATOS:
-      - Inventario: ${context.products.length} productos registrados.
-      - Clientes: ${context.clients.length} registrados.
-      - Proveedores: ${context.suppliers.length} registrados.
+      ESTILO DE RESPUESTA REQUERIDO:
+      - Tono: Profesional, ejecutivo, ágil y servicial.
+      - Idioma: Español.
+      ${responseStyle === 'concise' 
+        ? '- Sé sumamente breve, directo al grano y conciso, utilizando listas de viñetas cortas.' 
+        : responseStyle === 'comprehensive' 
+        ? '- Ofrece análisis detallado con tablas comparativas en Markdown y recomendaciones estratégicas.'
+        : '- Brinda un equilibrio claro entre resumen numérico y explicaciones prácticas.'}
+
+      RESUMEN FINANCIERO Y OPERATIVO DEL NEGOCIO:
+      - Inventario: ${context.products.length} productos registrados (${totalInventoryUnits} unidades en total).
+        * Valorización a costo: $${totalInventoryCost.toLocaleString('es-AR')}.
+        * Valorización a precio de venta estimado: $${totalInventoryRetail.toLocaleString('es-AR')}.
+        * Artículos con stock bajo o agotado: ${lowStockItems.length}.
+      - Ventas Totales: ${context.sales.length} operaciones registradas por $${totalSalesRevenue.toLocaleString('es-AR')}.
+      - Compras a Proveedores: ${context.purchases.length} operaciones registradas por $${totalPurchasesCost.toLocaleString('es-AR')}.
+      - Clientes Registrados: ${context.clients.length}.
+      - Proveedores Registrados: ${context.suppliers.length}.
       - Almacenes: ${context.warehouses.map(w => w.nombre).join(', ') || 'Principal'}.
-      - Actividad Comercial: ${context.sales.length} ventas, ${context.purchases.length} compras y ${context.movements.length} movimientos de stock registrados.
-      - Taller & Reparaciones: ${workOrdersList.length} órdenes en total (${activeOrders.length} activas, ${readyOrders.length} listas para retirar), ${repairQuotesList.length} cotizaciones de reparación, saldo pendiente por cobrar en taller: $${totalTallerPending.toLocaleString('es-AR')}.
+      - Taller Mecánico & Reparaciones:
+        * Órdenes totales: ${workOrdersList.length}.
+        * Órdenes activas en taller: ${activeOrders.length}.
+        * Órdenes listas para entrega al cliente: ${readyOrders.length}.
+        * Saldo pendiente de cobro en taller: $${totalTallerPending.toLocaleString('es-AR')}.
+        * Cotizaciones de taller pendientes: ${repairQuotesList.filter(q => q.estado === 'pendiente').length}.
 
-      --- TALLER & ÓRDENES DE TRABAJO ACTIVAS ---
-      ${activeOrders.map(o => `- [${o.numero}] ${o.equipo} (${o.marcaModelo || '-'}) - Cliente: ${o.clientNombre} (Tel: ${o.clientTelefono || '-'}). Estado: ${o.estado.toUpperCase()}. Falla: "${o.fallaReportada || '-'}". Total: $${o.total}, Saldo Pendiente: $${o.saldoPendiente}. Prioridad: ${o.prioridad}.`).join('\n')}
+      TOP PRODUCTOS MÁS VENDIDOS:
+      ${topSellers || 'Sin suficientes datos de ventas aún.'}
 
-      --- COTIZACIONES DE TALLER PENDIENTES ---
-      ${repairQuotesList.filter(q => q.estado === 'pendiente').map(q => `- [${q.numero}] ${q.equipo} - Cliente: ${q.clientNombre}. Total Presupuestado: $${q.total}. Estado: Pendiente de aprobación.`).join('\n')}
+      ARTÍCULOS CON STOCK BAJO O CRÍTICO:
+      ${lowStockPreview || 'Todos los productos cuentan con stock adecuado por encima del mínimo.'}
 
-      --- LISTA COMPLETA DE PRODUCTOS ---
-      ${context.products.map(p => {
-        const warehouse = context.warehouses.find(w => w.id === p.almacenId)?.nombre || 'Principal';
-        return `- [${p.codigo}] ${p.descripcion} (ID: ${p.id}): Precio: $${p.precio}, Costo: $${p.costo || 0}, Stock: ${p.cantidad} ${p.cantidad <= (p.minStock || 3) ? '⚠️ BAJO STOCK' : ''}. Ubicación: ${p.ubicacion}, Almacén: ${warehouse}, Talle/Género: ${p.talle || '-'}/${p.genero || '-'}.`;
-      }).join('\n')}
+      ÓRDENES ACTIVAS EN TALLER:
+      ${activeOrdersPreview || 'No hay órdenes activas pendientes en este momento.'}
 
-      --- LOG HISTÓRICO DE VENTAS ---
-      ${context.sales.map(s => `- ${formatDate(s.fecha)}: ${s.productNombre} (x${s.cantidad}) a ${s.clientNombre || 'Consumidor Final'}. Unit: $${s.precio}, Total: $${s.total}. Costo unitario al vender: $${s.costo || 0}.`).join('\n')}
+      ÚLTIMAS VENTAS REGISTRADAS:
+      ${recentSalesPreview || 'No hay ventas recientes.'}
 
-      --- LOG HISTÓRICO DE COMPRAS ---
-      ${context.purchases.map(p => `- ${formatDate(p.fecha)}: ${p.productNombre} (x${p.cantidad}) de ${p.proveedor}. Unit: $${p.costo}, Total: $${p.total}.`).join('\n')}
-      
-      --- LOG DE MOVIMIENTOS RECIENTES ---
-      ${context.movements.map(m => `- ${formatDate(m.fecha)}: ${m.tipo.toUpperCase()} de ${m.productNombre} (${m.cantidad} unidades). Notas: ${m.notas || '-'}`).join('\n')}
+      ÚLTIMAS COMPRAS REGISTRADAS:
+      ${recentPurchases || 'No hay compras registradas.'}
 
-      --- RELACIONES ---
-      - Los Clientes compran productos y traen equipos al Taller.
-      - En el Taller se reparan equipos, se utilizan repuestos del inventario y se cobran saldos.
-      - Los Proveedores suministran productos y repuestos.
-      - Los Almacenes guardan los productos.
-
-      TAREAS Y RESPONSABILIDADES:
-      1. ESTADO DEL TALLER: Si te preguntan por reparaciones u órdenes, detalla cuántas están en diagnóstico, en taller, listas para retirar o si faltan repuestos.
-      2. ANALISTA FINANCIERO: Si te preguntan cuánto ganaron o saldos pendientes, calcula ventas netas y suma saldos deudores de clientes y taller.
-      3. GESTIÓN DE STOCK: Si el stock total es <= minStock, avisa proactivamente.
-      4. RENTABILIDAD: Puedes decir qué producto tiene el mayor margen de ganancia porcentual.
-      5. AUDITOR: Puedes ver si hubo discrepancias o ajustes de stock manuales en los movimientos.
-
-      REGLAS DE ORO:
-      - Responde SIEMPRE en español con tono servicial, claro y profesional.
-      - Usa tablas o listas de Markdown con viñetas para mostrar datos comparativos.
-      - No inventes datos. Si no existe un registro, indícalo transparentemente.
-      - Si te preguntan "dime todo" o "resumen general", incluye inventario, finanzas y estado del taller.
+      REGLAS DE AUDITORÍA:
+      - Usa datos exactos de los resúmenes anteriores.
+      - Si te preguntan por un repuesto o producto específico que no esté en la lista reducida, indícalo amablemente sugiriendo verificar el buscador de Inventario.
+      - Si preguntan sobre salud del negocio, sintetiza margen bruto, saldos por cobrar de taller y alertas de reposición.
     `;
 
-    const tryClientFallback = async (): Promise<string | null> => {
-      const clientApiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY;
-      if (!clientApiKey) return null;
+    // Direct Browser Client Fallback routine using modern @google/genai SDK
+    const runDirectBrowserAi = async (): Promise<string | null> => {
+      if (!effectiveApiKey) return null;
 
       try {
         const { GoogleGenAI } = await import('@google/genai');
-        const ai = new GoogleGenAI({ apiKey: clientApiKey });
-        const models = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
-        for (const model of models) {
+        const ai = new GoogleGenAI({ apiKey: effectiveApiKey });
+
+        const modelsToTry = [
+          effectiveModel,
+          'gemini-3.8-flash',
+          'gemini-3.1-flash-lite'
+        ];
+
+        for (const m of Array.from(new Set(modelsToTry))) {
           try {
             const resp = await ai.models.generateContent({
-              model,
+              model: m,
               contents: prompt,
               config: {
-                systemInstruction: systemInstruction || "Eres un asistente experto para Gestión Total y PulseStore.",
+                systemInstruction,
+                temperature: effectiveTemperature
               }
             });
             if (resp.text) return resp.text;
-          } catch (mErr) {
-            console.warn(`[Client AI fallback] Model ${model} failed:`, mErr);
+          } catch (mErr: any) {
+            console.warn(`[Client Direct AI] Model ${m} failed:`, mErr?.message || mErr);
           }
         }
-      } catch (err) {
-        console.error('[Client AI fallback] Error:', err);
+      } catch (sdkInitErr) {
+        console.error("[Client Direct AI] SDK Init Error:", sdkInitErr);
       }
       return null;
     };
 
+    // 1. Attempt Vercel Serverless / Express proxy first with tight 14s timeout
     try {
+      const controller = new AbortController();
+      const timeoutTimer = setTimeout(() => controller.abort(), 14000);
+
       const response = await fetch("/api/ai/ask", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, systemInstruction }),
+        headers: { 
+          "Content-Type": "application/json",
+          ...(effectiveApiKey ? { "x-gemini-key": effectiveApiKey } : {})
+        },
+        body: JSON.stringify({ 
+          prompt, 
+          systemInstruction,
+          apiKey: effectiveApiKey,
+          model: effectiveModel,
+          temperature: effectiveTemperature
+        }),
+        signal: controller.signal
       });
 
+      clearTimeout(timeoutTimer);
+
       const contentType = response.headers.get("content-type") || "";
-      if (!contentType.includes("application/json")) {
-        const textPreview = await response.text();
-        console.error("Non-JSON response from /api/ai/ask:", textPreview.slice(0, 200));
-        
-        // Attempt client fallback if available
-        const fallbackAnswer = await tryClientFallback();
-        if (fallbackAnswer) return fallbackAnswer;
-
-        return "No se pudo conectar con el endpoint de IA (/api/ai/ask). Si estás en Vercel, asegúrate de haber subido la carpeta `/api` en tu repositorio y haber agregado la variable `GEMINI_API_KEY` en tu panel de Vercel (Settings -> Environment Variables) y realizado un Redeploy.";
+      if (contentType.includes("application/json")) {
+        const data = await response.json();
+        if (response.ok && data.text) {
+          return data.text;
+        }
+        if (data.error) {
+          console.warn("[Vercel /api/ai/ask] Server error:", data.error);
+          // Try direct fallback
+          const directText = await runDirectBrowserAi();
+          if (directText) return directText;
+          return data.error;
+        }
+      } else {
+        // Non-JSON response (e.g. 504 Gateway Timeout or HTML error from Vercel)
+        console.warn("[Vercel /api/ai/ask] Non-JSON response received, switching to direct client AI fallback");
+        const directText = await runDirectBrowserAi();
+        if (directText) return directText;
       }
-
-      const data = await response.json();
-      if (!response.ok || data.error) {
-        const fallbackAnswer = await tryClientFallback();
-        if (fallbackAnswer) return fallbackAnswer;
-
-        return data.error || `Error del servidor (${response.status}): Por favor intenta de nuevo.`;
-      }
-      return data.text;
-    } catch (error: any) {
-      console.error("Error calling Gemini API proxy:", error);
-
-      const fallbackAnswer = await tryClientFallback();
-      if (fallbackAnswer) return fallbackAnswer;
-
-      return `Hubo un error de conexión al consultar el asistente IA (${error?.message || 'Error de red'}). Por favor, verifica la configuración de la variable GEMINI_API_KEY en tu panel de Vercel y tu conexión.`;
+    } catch (networkOrTimeoutErr: any) {
+      console.warn("[Vercel /api/ai/ask] Request timed out or failed:", networkOrTimeoutErr?.message);
+      // Seamlessly execute client-side direct fallback
+      const directText = await runDirectBrowserAi();
+      if (directText) return directText;
     }
+
+    // If both failed, provide crystal clear resolution steps
+    if (!effectiveApiKey) {
+      return "⚠️ **Asistente IA no configurado**: Para utilizar la Inteligencia Artificial en Vercel, por favor abre **Configuración -> Inteligencia Artificial** en la aplicación y pega tu clave API de Google AI Studio (GEMINI_API_KEY). ¡Es 100% gratuita y toma 30 segundos activarla!";
+    }
+
+    return "⚠️ **Tiempo de espera agotado o error de conexión**: La solicitud de IA no pudo completarse. Por favor verifica tu clave API en **Configuración -> Inteligencia Artificial** y utiliza el botón «Probar Conexión» para comprobar el estado.";
   }
 };

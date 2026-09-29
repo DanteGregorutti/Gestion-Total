@@ -22,6 +22,7 @@ import {
 import { Button } from '../ui';
 import { WorkOrder, WorkOrderItem, WorkOrderStatus, WorkOrderPriority, Client, Product } from '../../types';
 import { inventoryService } from '../../services/inventoryService';
+import { useSettings } from '../../contexts/SettingsContext';
 
 interface WorkOrderModalProps {
   isOpen: boolean;
@@ -36,6 +37,7 @@ export function WorkOrderModal({
   onClose,
   onSave
 }: WorkOrderModalProps) {
+  const { appSettings } = useSettings();
   const [clients, setClients] = useState<Client[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -58,7 +60,7 @@ export function WorkOrderModal({
   const [costoManoObra, setCostoManoObra] = useState<number>(0);
   const [anticipo, setAnticipo] = useState<number>(0);
   const [estado, setEstado] = useState<WorkOrderStatus>('ingresado');
-  const [prioridad, setPrioridad] = useState<WorkOrderPriority>('normal');
+  const [prioridad, setPrioridad] = useState<WorkOrderPriority>(appSettings?.defaultWorkOrderPriority || 'normal');
   const [fechaPrometida, setFechaPrometida] = useState('');
   const [notasInternas, setNotasInternas] = useState('');
 
@@ -112,7 +114,7 @@ export function WorkOrderModal({
       setCostoManoObra(0);
       setAnticipo(0);
       setEstado('ingresado');
-      setPrioridad('normal');
+      setPrioridad(appSettings?.defaultWorkOrderPriority || 'normal');
       setFechaPrometida('');
       setNotasInternas('');
       setAiTip(null);

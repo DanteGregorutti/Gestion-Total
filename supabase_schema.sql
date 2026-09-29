@@ -179,6 +179,7 @@ CREATE TABLE IF NOT EXISTS public.quotes (
   items JSONB DEFAULT '[]'::jsonb,
   subtotal NUMERIC DEFAULT 0,
   descuento NUMERIC DEFAULT 0,
+  "costoEnvio" NUMERIC DEFAULT 0,
   total NUMERIC DEFAULT 0,
   fecha TIMESTAMPTZ DEFAULT NOW(),
   "validezDias" NUMERIC DEFAULT 7,

@@ -26,6 +26,7 @@ export interface ReceiptData {
   items: ReceiptItem[];
   subtotal: number;
   discount: number;
+  shipping?: number;
   total: number;
   validUntilText?: string;
   notas?: string;
@@ -233,14 +234,24 @@ export function generateReceiptHtml(data: ReceiptData, style: QuoteStyle | 'a4' 
 
   <div class="double-divider"></div>
 
-  ${data.discount > 0 ? `
+  ${(data.discount > 0 || (data.shipping && data.shipping > 0)) ? `
     <div class="item-row">
       <span>Subtotal:</span>
       <span>$${data.subtotal.toLocaleString('es-AR')}</span>
     </div>
+  ` : ''}
+
+  ${data.discount > 0 ? `
     <div class="item-row">
       <span>Descuento:</span>
       <span>-$${data.discount.toLocaleString('es-AR')}</span>
+    </div>
+  ` : ''}
+
+  ${data.shipping && data.shipping > 0 ? `
+    <div class="item-row">
+      <span>Costo de Envío:</span>
+      <span>+$${data.shipping.toLocaleString('es-AR')}</span>
     </div>
   ` : ''}
 
@@ -442,9 +453,14 @@ export function generateReceiptHtml(data: ReceiptData, style: QuoteStyle | 'a4' 
       </div>
     </div>
     <div class="total-box">
-      ${data.discount > 0 ? `
+      ${(data.discount > 0 || (data.shipping && data.shipping > 0)) ? `
         <div style="font-size: 12px; margin-bottom: 2px;">Subtotal: $${data.subtotal.toLocaleString('es-AR')}</div>
-        <div style="font-size: 12px; color: #166534; margin-bottom: 4px;">Descuento: -$${data.discount.toLocaleString('es-AR')}</div>
+      ` : ''}
+      ${data.discount > 0 ? `
+        <div style="font-size: 12px; color: #166534; margin-bottom: 2px;">Descuento: -$${data.discount.toLocaleString('es-AR')}</div>
+      ` : ''}
+      ${data.shipping && data.shipping > 0 ? `
+        <div style="font-size: 12px; color: #1d4ed8; margin-bottom: 4px;">Costo de Envío: +$${data.shipping.toLocaleString('es-AR')}</div>
       ` : ''}
       <div style="font-size: 13px; font-weight: bold; text-transform: uppercase;">Importe Total:</div>
       <div class="total-val">$${data.total.toLocaleString('es-AR')}</div>
@@ -604,9 +620,14 @@ export function generateReceiptHtml(data: ReceiptData, style: QuoteStyle | 'a4' 
       ${data.notas ? `<div>${data.notas}</div>` : ''}
     </div>
     <div style="text-align: right;">
-      ${data.discount > 0 ? `
+      ${(data.discount > 0 || (data.shipping && data.shipping > 0)) ? `
         <div style="color: #6b7280; font-size: 11px;">Subtotal: $${data.subtotal.toLocaleString('es-AR')}</div>
+      ` : ''}
+      ${data.discount > 0 ? `
         <div style="color: #059669; font-size: 11px;">Descuento: -$${data.discount.toLocaleString('es-AR')}</div>
+      ` : ''}
+      ${data.shipping && data.shipping > 0 ? `
+        <div style="color: #2563eb; font-size: 11px;">Envío: +$${data.shipping.toLocaleString('es-AR')}</div>
       ` : ''}
       <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #6b7280; margin-top: 4px;">Total General</div>
       <div class="total-display">$${data.total.toLocaleString('es-AR')}</div>
@@ -787,9 +808,14 @@ export function generateReceiptHtml(data: ReceiptData, style: QuoteStyle | 'a4' 
       ${data.notas ? `<div><strong>NOTAS TÉCNICAS:</strong> ${data.notas}</div>` : ''}
     </div>
     <div style="text-align: right; min-width: 200px;">
-      ${data.discount > 0 ? `
+      ${(data.discount > 0 || (data.shipping && data.shipping > 0)) ? `
         <div style="font-size: 11px;">SUBTOTAL: $${data.subtotal.toLocaleString('es-AR')}</div>
+      ` : ''}
+      ${data.discount > 0 ? `
         <div style="font-size: 11px; color: #16a34a;">DESCUENTO: -$${data.discount.toLocaleString('es-AR')}</div>
+      ` : ''}
+      ${data.shipping && data.shipping > 0 ? `
+        <div style="font-size: 11px; color: #0284c7;">ENVÍO: +$${data.shipping.toLocaleString('es-AR')}</div>
       ` : ''}
       <div style="font-size: 11px; color: #64748b;">TOTAL ESTIMADO:</div>
       <div style="font-size: 18px; font-weight: bold; color: #0284c7;">$${data.total.toLocaleString('es-AR')}</div>
@@ -1039,9 +1065,14 @@ export function generateReceiptHtml(data: ReceiptData, style: QuoteStyle | 'a4' 
     </div>
 
     <div class="total-box">
-      ${data.discount > 0 ? `
+      ${(data.discount > 0 || (data.shipping && data.shipping > 0)) ? `
         <div class="total-row"><span>Subtotal:</span><span>$${data.subtotal.toLocaleString('es-AR')}</span></div>
+      ` : ''}
+      ${data.discount > 0 ? `
         <div class="total-row" style="color: #16a34a; font-weight: bold;"><span>Descuento:</span><span>-$${data.discount.toLocaleString('es-AR')}</span></div>
+      ` : ''}
+      ${data.shipping && data.shipping > 0 ? `
+        <div class="total-row" style="color: #2563eb; font-weight: bold;"><span>Envío:</span><span>+$${data.shipping.toLocaleString('es-AR')}</span></div>
       ` : ''}
       <div class="total-row grand-total">
         <span>TOTAL PRESUPUESTO:</span>
@@ -1267,12 +1298,19 @@ export function generateReceiptHtml(data: ReceiptData, style: QuoteStyle | 'a4' 
       </div>
 
       <div class="totals-gold">
-        ${data.discount > 0 ? `
+        ${(data.discount > 0 || (data.shipping && data.shipping > 0)) ? `
           <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;">
             <span>Subtotal:</span><span>$${data.subtotal.toLocaleString('es-AR')}</span>
           </div>
+        ` : ''}
+        ${data.discount > 0 ? `
           <div style="display: flex; justify-content: space-between; font-size: 11px; color: #15803d; font-weight: bold; margin-bottom: 4px;">
             <span>Bonificación:</span><span>-$${data.discount.toLocaleString('es-AR')}</span>
+          </div>
+        ` : ''}
+        ${data.shipping && data.shipping > 0 ? `
+          <div style="display: flex; justify-content: space-between; font-size: 11px; color: #b45309; font-weight: bold; margin-bottom: 4px;">
+            <span>Envío a domicilio:</span><span>+$${data.shipping.toLocaleString('es-AR')}</span>
           </div>
         ` : ''}
         <div class="main-total">
@@ -1403,6 +1441,7 @@ export function generateReceiptHtml(data: ReceiptData, style: QuoteStyle | 'a4' 
     </div>
     <div style="text-align: right;">
       ${data.discount > 0 ? `<span style="font-size: 10px; color: #16a34a; margin-right: 8px;">Desc: -$${data.discount.toLocaleString('es-AR')}</span>` : ''}
+      ${data.shipping && data.shipping > 0 ? `<span style="font-size: 10px; color: #0284c7; margin-right: 8px;">Envío: +$${data.shipping.toLocaleString('es-AR')}</span>` : ''}
       <span style="font-size: 14px; font-weight: 900; color: #059669;">TOTAL: $${data.total.toLocaleString('es-AR')}</span>
     </div>
   </div>
@@ -1688,14 +1727,22 @@ export function generateReceiptHtml(data: ReceiptData, style: QuoteStyle | 'a4' 
     </div>
 
     <div class="totals-box">
-      ${data.discount > 0 ? `
+      ${(data.discount > 0 || (data.shipping && data.shipping > 0)) ? `
         <div class="totals-row">
           <span>Subtotal:</span>
           <span>$${data.subtotal.toLocaleString('es-AR')}</span>
         </div>
+      ` : ''}
+      ${data.discount > 0 ? `
         <div class="totals-row" style="color: #059669; font-weight: 600;">
           <span>Descuento:</span>
           <span>-$${data.discount.toLocaleString('es-AR')}</span>
+        </div>
+      ` : ''}
+      ${data.shipping && data.shipping > 0 ? `
+        <div class="totals-row" style="color: #2563eb; font-weight: 600;">
+          <span>Costo de Envío:</span>
+          <span>+$${data.shipping.toLocaleString('es-AR')}</span>
         </div>
       ` : ''}
       <div class="totals-row final">
@@ -1965,17 +2012,30 @@ export function downloadReceiptPdf(data: ReceiptData, style: QuoteStyle = 'moder
     const totalsBoxW = 74;
     let currentY = finalY + 5;
 
-    if (data.discount > 0) {
+    if (data.discount > 0 || (data.shipping && data.shipping > 0)) {
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(8.5);
       doc.setTextColor(mutedText[0], mutedText[1], mutedText[2]);
       doc.text('Subtotal:', totalsBoxX, currentY);
       doc.text(`$${data.subtotal.toLocaleString('es-AR')}`, 196, currentY, { align: 'right' });
       currentY += 4.5;
+    }
 
+    if (data.discount > 0) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
       doc.setTextColor(5, 150, 105); // Emerald
       doc.text('Descuento:', totalsBoxX, currentY);
-      doc.text(`-$${data.discount.toLocaleString('es-AR')} ${data.discount > 0 ? '' : ''}`, 196, currentY, { align: 'right' });
+      doc.text(`-$${data.discount.toLocaleString('es-AR')}`, 196, currentY, { align: 'right' });
+      currentY += 4.5;
+    }
+
+    if (data.shipping && data.shipping > 0) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(37, 99, 235); // Blue
+      doc.text('Costo de Envío:', totalsBoxX, currentY);
+      doc.text(`+$${data.shipping.toLocaleString('es-AR')}`, 196, currentY, { align: 'right' });
       currentY += 4.5;
     }
 

@@ -17,9 +17,19 @@ import {
   Tag,
   PenLine,
   Layers,
-  Sparkles
+  Sparkles,
+  Truck,
+  User,
+  Users,
+  Search,
+  Phone,
+  Mail,
+  UserPlus,
+  CheckCircle2
 } from 'lucide-react';
-import { Product, Quote, QuoteItem } from '../types';
+import { Product, Quote, QuoteItem, Client } from '../types';
+import { inventoryService } from '../services/inventoryService';
+import { useSettings } from '../contexts/SettingsContext';
 import { Button, Input } from './ui';
 import Modal from './Modal';
 import ProductSearch from './ProductSearch';
@@ -30,7 +40,7 @@ interface NewQuoteModalProps {
   isOpen: boolean;
   onClose: () => void;
   products: Product[];
-  clients?: any[]; // Kept optional for backward compatibility
+  clients?: Client[];
   quoteToEdit?: Quote | null;
   onSaveQuote: (quoteData: Omit<Quote, 'id' | 'fecha' | 'createdBy' | 'numero'> & { numero?: string }) => Promise<Quote | void>;
   onUpdateQuote?: (quoteId: string, quoteData: Partial<Quote>) => Promise<void>;
@@ -41,16 +51,34 @@ export function NewQuoteModal({
   isOpen,
   onClose,
   products,
+  clients: propClients = [],
   quoteToEdit,
   onSaveQuote,
   onUpdateQuote,
   onSaveAndOpenReceipt
 }: NewQuoteModalProps) {
-  // Client & metadata - simple optional reference
-  const [clientReference, setClientReference] = useState('');
-  const [validityDays, setValidityDays] = useState(7);
-  const [notes, setNotes] = useState('Presupuesto válido por 7 días. Precios sujetos a confirmación.');
+  const { appSettings } = useSettings();
+
+  // Clients state
+  const [clientsList, setClientsList] = useState<Client[]>(propClients);
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [clientNombre, setClientNombre] = useState('');
+  const [clientTelefono, setClientTelefono] = useState('');
+  const [clientEmail, setClientEmail] = useState('');
+  const [clientSearchTerm, setClientSearchTerm] = useState('');
+
+  // Quick new client modal/form state
+  const [isQuickNewClientOpen, setIsQuickNewClientOpen] = useState(false);
+  const [newQuickName, setNewQuickName] = useState('');
+  const [newQuickPhone, setNewQuickPhone] = useState('');
+  const [newQuickEmail, setNewQuickEmail] = useState('');
+  const [isSavingQuickClient, setIsSavingQuickClient] = useState(false);
+
+  // Metadata & Conditions from Settings
+  const [validityDays, setValidityDays] = useState(appSettings?.defaultQuoteValidityDays || 7);
+  const [notes, setNotes] = useState(appSettings?.defaultQuoteNotes || 'Presupuesto válido por 7 días. Precios sujetos a confirmación.');
   const [discountAmount, setDiscountAmount] = useState(0);
+  const [shippingCost, setShippingCost] = useState(appSettings?.defaultShippingCost || 0);
 
   // Cart / Items in Quote
   const [items, setItems] = useState<QuoteItem[]>([]);
@@ -138,13 +166,19 @@ export function NewQuoteModal({
     return items.reduce((acc, item) => acc + (Number(item.total) || 0), 0);
   }, [items]);
 
-  const finalTotal = Math.max(0, subtotal - discountAmount);
+  const finalTotal = Math.max(0, subtotal - discountAmount) + shippingCost;
 
   const resetForm = () => {
-    setClientReference('');
-    setValidityDays(7);
-    setNotes('Presupuesto válido por 7 días. Precios sujetos a confirmación.');
+    setSelectedClient(null);
+    setClientNombre('');
+    setClientTelefono('');
+    setClientEmail('');
+    setClientSearchTerm('');
+    setIsQuickNewClientOpen(false);
+    setValidityDays(appSettings?.defaultQuoteValidityDays || 7);
+    setNotes(appSettings?.defaultQuoteNotes || 'Presupuesto válido por 7 días. Precios sujetos a confirmación.');
     setDiscountAmount(0);
+    setShippingCost(appSettings?.defaultShippingCost || 0);
     setItems([]);
     setSelectedBaseProduct(null);
     setPriceMode('unit');
@@ -159,6 +193,56 @@ export function NewQuoteModal({
     });
   };
 
+  const handleSelectClient = (client: Client | null) => {
+    setSelectedClient(client);
+    if (client) {
+      setClientNombre(client.nombre);
+      setClientTelefono(client.telefono || '');
+      setClientEmail(client.email || '');
+      setClientSearchTerm('');
+    } else {
+      setClientNombre('');
+      setClientTelefono('');
+      setClientEmail('');
+    }
+  };
+
+  const handleCreateQuickClient = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!newQuickName.trim()) {
+      toast.error('El nombre del cliente es obligatorio');
+      return;
+    }
+    setIsSavingQuickClient(true);
+    try {
+      const createdId = await inventoryService.addClient({
+        nombre: newQuickName.trim(),
+        telefono: newQuickPhone.trim() || undefined,
+        email: newQuickEmail.trim() || undefined
+      });
+      const newClientObj: Client = {
+        id: typeof createdId === 'string' && createdId ? createdId : `client_${Date.now()}`,
+        nombre: newQuickName.trim(),
+        telefono: newQuickPhone.trim() || undefined,
+        email: newQuickEmail.trim() || undefined,
+        createdAt: new Date().toISOString(),
+        createdBy: 'user'
+      };
+      setClientsList(prev => [newClientObj, ...prev.filter(c => c.id !== newClientObj.id)]);
+      handleSelectClient(newClientObj);
+      setNewQuickName('');
+      setNewQuickPhone('');
+      setNewQuickEmail('');
+      setIsQuickNewClientOpen(false);
+      toast.success(`Cliente ${newClientObj.nombre} guardado y seleccionado`);
+    } catch (err: any) {
+      console.error('Error al registrar cliente rápido:', err);
+      toast.error(err?.message || 'Error al guardar el cliente');
+    } finally {
+      setIsSavingQuickClient(false);
+    }
+  };
+
   const hasItemsReady = useMemo(() => {
     if (items.length > 0) return true;
     const desc = (entryMode === 'manual' ? manualDescription : currentItem.productNombre).trim();
@@ -168,16 +252,38 @@ export function NewQuoteModal({
   }, [items, currentItem, entryMode, manualDescription]);
 
   React.useEffect(() => {
+    if (propClients && propClients.length > 0) {
+      setClientsList(propClients);
+    }
+  }, [propClients]);
+
+  React.useEffect(() => {
     if (isOpen) {
+      // Refresh clients from inventoryService to ensure any newly added clients appear immediately
+      inventoryService.getClients()
+        .then(c => {
+          if (c && c.length > 0) {
+            setClientsList(c);
+          }
+        })
+        .catch(console.warn);
+
       if (quoteToEdit) {
-        setClientReference(
-          quoteToEdit.clientTelefono
-            ? `${quoteToEdit.clientNombre} (${quoteToEdit.clientTelefono})`
-            : quoteToEdit.clientNombre
+        setClientNombre(quoteToEdit.clientNombre || '');
+        setClientTelefono(quoteToEdit.clientTelefono || '');
+        setClientEmail(quoteToEdit.clientEmail || '');
+
+        const currentClients = propClients && propClients.length > 0 ? propClients : clientsList;
+        const matched = currentClients.find(c => 
+          (quoteToEdit.clientId && c.id === quoteToEdit.clientId) || 
+          (c.nombre && c.nombre.trim().toLowerCase() === quoteToEdit.clientNombre?.trim().toLowerCase())
         );
+        setSelectedClient(matched || null);
+
         setValidityDays(quoteToEdit.validezDias || 7);
         setNotes(quoteToEdit.notas || '');
         setDiscountAmount(quoteToEdit.descuento || 0);
+        setShippingCost(quoteToEdit.costoEnvio || 0);
         setItems(quoteToEdit.items || []);
         setSelectedBaseProduct(null);
       } else {
@@ -343,14 +449,18 @@ export function NewQuoteModal({
     }
 
     const calculatedSubtotal = finalItems.reduce((acc, it) => acc + (Number(it.total) || 0), 0);
-    const calculatedTotal = Math.max(0, calculatedSubtotal - discountAmount);
-    const displayName = clientReference.trim() || 'Consumidor Final';
+    const calculatedTotal = Math.max(0, calculatedSubtotal - discountAmount) + shippingCost;
+    const displayName = (clientNombre.trim() || selectedClient?.nombre || 'Consumidor Final');
 
     return {
+      clientId: selectedClient?.id || (quoteToEdit?.clientId ?? undefined),
       clientNombre: displayName,
+      clientTelefono: (clientTelefono.trim() || selectedClient?.telefono || undefined),
+      clientEmail: (clientEmail.trim() || selectedClient?.email || undefined),
       items: finalItems,
       subtotal: calculatedSubtotal,
       descuento: discountAmount,
+      costoEnvio: shippingCost,
       total: calculatedTotal,
       validezDias: Number(validityDays) || 7,
       estado: 'pendiente' as const,
@@ -366,10 +476,14 @@ export function NewQuoteModal({
     try {
       if (quoteToEdit && onUpdateQuote) {
         await onUpdateQuote(quoteToEdit.id, {
+          clientId: payload.clientId,
           clientNombre: payload.clientNombre,
+          clientTelefono: payload.clientTelefono,
+          clientEmail: payload.clientEmail,
           items: payload.items,
           subtotal: payload.subtotal,
           descuento: payload.descuento,
+          costoEnvio: payload.costoEnvio,
           total: payload.total,
           validezDias: payload.validezDias,
           notas: payload.notas
@@ -401,10 +515,14 @@ export function NewQuoteModal({
     try {
       if (quoteToEdit && onUpdateQuote) {
         await onUpdateQuote(quoteToEdit.id, {
+          clientId: payload.clientId,
           clientNombre: payload.clientNombre,
+          clientTelefono: payload.clientTelefono,
+          clientEmail: payload.clientEmail,
           items: payload.items,
           subtotal: payload.subtotal,
           descuento: payload.descuento,
+          costoEnvio: payload.costoEnvio,
           total: payload.total,
           validezDias: payload.validezDias,
           notas: payload.notas
@@ -436,6 +554,17 @@ export function NewQuoteModal({
     }
   };
 
+  // Filtered clients based on search query
+  const filteredClients = useMemo(() => {
+    if (!clientSearchTerm.trim()) return clientsList;
+    const term = clientSearchTerm.toLowerCase().trim();
+    return clientsList.filter(c => 
+      (c.nombre && c.nombre.toLowerCase().includes(term)) ||
+      (c.telefono && c.telefono.toLowerCase().includes(term)) ||
+      (c.email && c.email.toLowerCase().includes(term))
+    );
+  }, [clientsList, clientSearchTerm]);
+
   return (
     <Modal
       isOpen={isOpen}
@@ -460,19 +589,257 @@ export function NewQuoteModal({
           </div>
         </div>
 
-        {/* Reference & Conditions Section (No complicated client selector) */}
-        <div className="p-4 bg-gray-50 dark:bg-gray-800/40 rounded-2xl border border-gray-100 dark:border-gray-800">
-          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3.5">
-            <div className="sm:col-span-6">
-              <Input
-                label="Referencia / Nombre (Opcional)"
-                placeholder="Ej: Consumidor Final, Juan, o N° de Consulta"
-                value={clientReference}
-                onChange={(e) => setClientReference(e.target.value)}
-              />
+        {/* Client & Conditions Section */}
+        <div className="p-4 sm:p-5 bg-gray-50 dark:bg-gray-800/40 rounded-3xl border border-gray-100 dark:border-gray-800 space-y-4">
+          
+          {/* Header of Client Section */}
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-gray-200/70 dark:border-gray-700/60">
+            <div className="flex items-center gap-2">
+              <Users size={16} className="text-indigo-600 dark:text-indigo-400" />
+              <h4 className="text-xs font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest">
+                Cliente / Destinatario
+              </h4>
+              {selectedClient ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 flex items-center gap-1">
+                  <CheckCircle2 size={11} /> Guardado
+                </span>
+              ) : (
+                <span className="text-[11px] text-gray-500 dark:text-gray-400 font-medium">
+                  ({clientsList.length} clientes guardados)
+                </span>
+              )}
             </div>
 
-            <div className="sm:col-span-3">
+            <div className="flex items-center gap-2">
+              {!isQuickNewClientOpen && (
+                <button
+                  type="button"
+                  onClick={() => setIsQuickNewClientOpen(true)}
+                  className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 flex items-center gap-1 hover:underline px-2 py-1 rounded-lg"
+                >
+                  <UserPlus size={13} />
+                  <span>+ Nuevo Cliente</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Quick Create New Client Inline Form */}
+          {isQuickNewClientOpen && (
+            <div className="p-4 bg-indigo-50/70 dark:bg-indigo-950/30 rounded-2xl border border-indigo-200 dark:border-indigo-800/60 space-y-3 animate-in fade-in duration-200">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-indigo-900 dark:text-indigo-300 flex items-center gap-1.5">
+                  <UserPlus size={14} /> Registrar y vincular nuevo cliente
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsQuickNewClientOpen(false)}
+                  className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <Input
+                  label="Nombre Completo *"
+                  placeholder="Ej: Carlos Gómez"
+                  value={newQuickName}
+                  onChange={(e) => setNewQuickName(e.target.value)}
+                  autoFocus
+                />
+                <Input
+                  label="WhatsApp / Teléfono"
+                  placeholder="Ej: 3435123456"
+                  value={newQuickPhone}
+                  onChange={(e) => setNewQuickPhone(e.target.value)}
+                />
+                <Input
+                  label="Email (Opcional)"
+                  placeholder="cliente@ejemplo.com"
+                  value={newQuickEmail}
+                  onChange={(e) => setNewQuickEmail(e.target.value)}
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setIsQuickNewClientOpen(false)}
+                  disabled={isSavingQuickClient}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleCreateQuickClient}
+                  disabled={isSavingQuickClient || !newQuickName.trim()}
+                  className="font-bold shadow-sm"
+                >
+                  {isSavingQuickClient ? 'Guardando...' : 'Guardar y Vincular'}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Selected Client Card OR Selection Controls */}
+          {selectedClient ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-gradient-to-r from-emerald-50/80 to-indigo-50/60 dark:from-emerald-950/20 dark:to-indigo-950/20 rounded-2xl border border-emerald-200/80 dark:border-emerald-800/60">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-600 text-white font-black flex items-center justify-center text-sm shadow-sm">
+                  {selectedClient.nombre.slice(0, 2).toUpperCase()}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="font-black text-sm text-gray-900 dark:text-white">
+                      {selectedClient.nombre}
+                    </p>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300">
+                      Cliente Guardado
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    {clientTelefono && (
+                      <span className="flex items-center gap-1 font-medium">
+                        <Phone size={12} className="text-emerald-600 dark:text-emerald-400" />
+                        {clientTelefono}
+                      </span>
+                    )}
+                    {clientEmail && (
+                      <span className="flex items-center gap-1 font-medium">
+                        <Mail size={12} className="text-indigo-500" />
+                        {clientEmail}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleSelectClient(null)}
+                  className="text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30 border-rose-200 dark:border-rose-900/60 rounded-xl"
+                >
+                  <X size={14} className="mr-1" />
+                  Cambiar cliente
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {/* Dropdown to pick from saved clients */}
+              <div>
+                <label className="text-xs font-bold text-gray-700 dark:text-gray-300 block mb-1.5 flex items-center justify-between">
+                  <span>Seleccionar de mis Clientes Guardados</span>
+                  {clientsList.length > 0 && (
+                    <span className="text-[11px] text-indigo-600 dark:text-indigo-400 font-semibold">
+                      {clientsList.length} registrados
+                    </span>
+                  )}
+                </label>
+                <div className="space-y-2">
+                  <select
+                    value={selectedClient?.id || ''}
+                    onChange={(e) => {
+                      const found = clientsList.find(c => c.id === e.target.value);
+                      if (found) {
+                        handleSelectClient(found);
+                      }
+                    }}
+                    className="w-full px-3.5 py-2.5 bg-white dark:bg-gray-900 border border-indigo-200 dark:border-indigo-900/50 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-gray-900 dark:text-gray-100 shadow-sm"
+                  >
+                    <option value="">
+                      {clientsList.length === 0 
+                        ? 'No hay clientes guardados aún (escribe los datos abajo)' 
+                        : '👉 Elige un cliente guardado de la lista...'}
+                    </option>
+                    {(filteredClients.length > 0 ? filteredClients : clientsList).map(c => (
+                      <option key={c.id} value={c.id}>
+                        👤 {c.nombre} {c.telefono ? `| 📞 ${c.telefono}` : ''} {c.email ? `| ✉️ ${c.email}` : ''}
+                      </option>
+                    ))}
+                  </select>
+
+                  {/* Filter input if there are more than 3 clients */}
+                  {clientsList.length > 3 && (
+                    <div className="relative">
+                      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                      <input
+                        type="text"
+                        placeholder="Filtrar clientes por nombre o teléfono..."
+                        value={clientSearchTerm}
+                        onChange={(e) => setClientSearchTerm(e.target.value)}
+                        className="w-full pl-8 pr-7 py-1.5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-xs placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      />
+                      {clientSearchTerm && (
+                        <button
+                          type="button"
+                          onClick={() => setClientSearchTerm('')}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Quick frequent client chips if available */}
+              {clientsList.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                  <span className="text-[11px] font-bold text-gray-400 mr-1">Rápidos:</span>
+                  {(filteredClients.length > 0 ? filteredClients : clientsList).slice(0, appSettings?.quickClientChipsLimit || 5).map(c => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => handleSelectClient(c)}
+                      className="text-xs px-2.5 py-1 rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 hover:border-indigo-500 hover:text-indigo-600 dark:hover:text-indigo-400 text-gray-700 dark:text-gray-300 font-medium transition-colors flex items-center gap-1 shadow-2xs"
+                    >
+                      <User size={11} className="text-gray-400" />
+                      <span>{c.nombre}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Editable Name & Phone row */}
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 pt-1">
+                <div className="sm:col-span-6">
+                  <Input
+                    label="Nombre / Razón Social"
+                    placeholder="Ej: Consumidor Final, Juan Pérez..."
+                    value={clientNombre}
+                    onChange={(e) => setClientNombre(e.target.value)}
+                  />
+                </div>
+                <div className="sm:col-span-3">
+                  <Input
+                    label="Teléfono / WhatsApp"
+                    placeholder="Ej: 3435123456"
+                    value={clientTelefono}
+                    onChange={(e) => setClientTelefono(e.target.value)}
+                  />
+                </div>
+                <div className="sm:col-span-3">
+                  <Input
+                    label="Email (Opcional)"
+                    placeholder="cliente@ejemplo.com"
+                    value={clientEmail}
+                    onChange={(e) => setClientEmail(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Validity, Discount, Shipping & Notes */}
+          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3.5 pt-2 border-t border-gray-200/70 dark:border-gray-700/60">
+            <div className="sm:col-span-4">
               <label className="text-xs font-bold text-gray-600 dark:text-gray-300 block mb-1.5">
                 Validez
               </label>
@@ -488,9 +855,9 @@ export function NewQuoteModal({
               </select>
             </div>
 
-            <div className="sm:col-span-3">
+            <div className="sm:col-span-4">
               <Input
-                label="Descuento Global ($)"
+                label="Descuento ($)"
                 type="number"
                 min="0"
                 value={discountAmount || ''}
@@ -498,6 +865,29 @@ export function NewQuoteModal({
                 onChange={(e) => setDiscountAmount(Math.max(0, Number(e.target.value) || 0))}
               />
             </div>
+
+            <div className="sm:col-span-4">
+              <Input
+                label="🚚 Precio Envío ($)"
+                type="number"
+                min="0"
+                value={shippingCost || ''}
+                placeholder="0"
+                title="Precio del envío a cargo del cliente (solo visual, no se suma ni resta en billetera)"
+                onChange={(e) => setShippingCost(Math.max(0, Number(e.target.value) || 0))}
+              />
+            </div>
+
+            {shippingCost > 0 && (
+              <div className="sm:col-span-12 -mt-1">
+                <div className="flex items-center gap-2 text-[11px] text-blue-700 dark:text-blue-300 bg-blue-50/80 dark:bg-blue-950/40 px-3 py-2 rounded-xl border border-blue-200/80 dark:border-blue-900/50">
+                  <Truck size={14} className="shrink-0 text-blue-600 dark:text-blue-400" />
+                  <span>
+                    <strong>Envío a cargo del cliente (+${shippingCost.toLocaleString('es-AR')}):</strong> Se muestra en el comprobante para que el cliente tenga el total completo con flete, <strong>no suma ni resta en tu billetera o caja</strong>.
+                  </span>
+                </div>
+              </div>
+            )}
 
             <div className="sm:col-span-12">
               <Input
@@ -904,7 +1294,7 @@ export function NewQuoteModal({
 
         {/* Summary and Actions */}
         <div className="pt-4 border-t border-gray-100 dark:border-gray-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <div>
               <span className="text-[11px] font-black text-gray-400 uppercase tracking-widest block">
                 Total Cotización
@@ -916,6 +1306,13 @@ export function NewQuoteModal({
             {discountAmount > 0 && (
               <span className="text-xs font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-1 rounded-lg">
                 Descuento: -${discountAmount.toLocaleString('es-AR')}
+              </span>
+            )}
+            {shippingCost > 0 && (
+              <span className="text-xs font-bold text-blue-600 bg-blue-50 dark:bg-blue-950/40 px-2.5 py-1 rounded-lg flex items-center gap-1.5 border border-blue-200/50 dark:border-blue-900/40" title="Costo de envío a cargo del cliente (no afecta tu billetera)">
+                <Truck size={13} className="shrink-0" />
+                Envío: +${shippingCost.toLocaleString('es-AR')}
+                <span className="text-[10px] text-blue-500 font-semibold">(visual cliente)</span>
               </span>
             )}
           </div>

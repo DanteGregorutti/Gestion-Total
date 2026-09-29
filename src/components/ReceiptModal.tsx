@@ -62,13 +62,19 @@ export function ReceiptModal({
   salesGroup,
   onConvertToSale 
 }: ReceiptModalProps) {
-  const { companyProfile } = useSettings();
+  const { companyProfile, appSettings } = useSettings();
   const [copied, setCopied] = useState(false);
   const [isConverting, setIsConverting] = useState(false);
-  const [selectedStyle, setSelectedStyle] = useState<QuoteStyle>('modern');
+  const [selectedStyle, setSelectedStyle] = useState<QuoteStyle>(appSettings?.defaultReceiptStyle || 'modern');
   const [isPrinting, setIsPrinting] = useState(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [showBrandingModal, setShowBrandingModal] = useState(false);
+
+  React.useEffect(() => {
+    if (isOpen && appSettings?.defaultReceiptStyle) {
+      setSelectedStyle(appSettings.defaultReceiptStyle);
+    }
+  }, [isOpen, appSettings?.defaultReceiptStyle]);
 
   if (!isOpen || (!quote && !sale && (!salesGroup || salesGroup.length === 0))) {
     return null;
@@ -131,6 +137,7 @@ export function ReceiptModal({
     : items.reduce((acc, item) => acc + (Number(item.total) || 0), 0);
 
   const discount = isQuote ? (quote.descuento || 0) : 0;
+  const shipping = isQuote ? (quote.costoEnvio || 0) : 0;
   const finalTotal = isQuote ? quote.total : subtotal;
 
   let validUntilText = '';
@@ -152,6 +159,7 @@ export function ReceiptModal({
     items,
     subtotal,
     discount,
+    shipping,
     total: finalTotal,
     validUntilText,
     notas: isQuote ? quote.notas : undefined,
@@ -184,9 +192,14 @@ export function ReceiptModal({
     });
 
     msg += `--------------------------------\n`;
-    if (discount > 0) {
+    if (discount > 0 || shipping > 0) {
       msg += `Subtotal: $${subtotal.toLocaleString('es-AR')}\n`;
+    }
+    if (discount > 0) {
       msg += `Descuento: -$${discount.toLocaleString('es-AR')}\n`;
+    }
+    if (shipping > 0) {
+      msg += `🚚 Envío a domicilio: +$${shipping.toLocaleString('es-AR')} (a cargo del cliente)\n`;
     }
     msg += `💰 *TOTAL: $${finalTotal.toLocaleString('es-AR')}*\n\n`;
 
@@ -495,17 +508,23 @@ export function ReceiptModal({
               </div>
 
               <div className="border-t-2 border-gray-800 pt-2 space-y-1">
+                {(discount > 0 || shipping > 0) && (
+                  <div className="flex justify-between text-[11px]">
+                    <span>Subtotal:</span>
+                    <span>${subtotal.toLocaleString('es-AR')}</span>
+                  </div>
+                )}
                 {discount > 0 && (
-                  <>
-                    <div className="flex justify-between text-[11px]">
-                      <span>Subtotal:</span>
-                      <span>${subtotal.toLocaleString('es-AR')}</span>
-                    </div>
-                    <div className="flex justify-between text-[11px] text-emerald-700 font-bold">
-                      <span>Descuento:</span>
-                      <span>-${discount.toLocaleString('es-AR')}</span>
-                    </div>
-                  </>
+                  <div className="flex justify-between text-[11px] text-emerald-700 font-bold">
+                    <span>Descuento:</span>
+                    <span>-${discount.toLocaleString('es-AR')}</span>
+                  </div>
+                )}
+                {shipping > 0 && (
+                  <div className="flex justify-between text-[11px] text-blue-700 font-bold">
+                    <span>Costo de Envío:</span>
+                    <span>+${shipping.toLocaleString('es-AR')}</span>
+                  </div>
                 )}
                 <div className="flex justify-between items-baseline font-black text-sm pt-1">
                   <span>TOTAL:</span>
@@ -607,10 +626,11 @@ export function ReceiptModal({
                 </div>
 
                 <div className="border-2 border-gray-900 p-3 w-60 text-right font-sans">
-                  {discount > 0 && (
+                  {(discount > 0 || shipping > 0) && (
                     <div className="text-xs space-y-0.5 mb-1 pb-1 border-b border-gray-300">
                       <div>Subtotal: ${subtotal.toLocaleString('es-AR')}</div>
-                      <div className="text-emerald-700 font-bold">Descuento: -${discount.toLocaleString('es-AR')}</div>
+                      {discount > 0 && <div className="text-emerald-700 font-bold">Descuento: -${discount.toLocaleString('es-AR')}</div>}
+                      {shipping > 0 && <div className="text-blue-700 font-bold">Costo de Envío: +${shipping.toLocaleString('es-AR')}</div>}
                     </div>
                   )}
                   <span className="text-[10px] font-bold uppercase tracking-wider block text-gray-600">Importe Total:</span>
@@ -690,10 +710,11 @@ export function ReceiptModal({
                   {isQuote && quote.notas && <p className="italic">{quote.notas}</p>}
                 </div>
                 <div className="text-right">
-                  {discount > 0 && (
+                  {(discount > 0 || shipping > 0) && (
                     <div className="text-xs space-y-0.5 mb-1 text-gray-500">
                       <div>Subtotal: ${subtotal.toLocaleString('es-AR')}</div>
-                      <div className="text-emerald-700 font-semibold">Descuento: -${discount.toLocaleString('es-AR')}</div>
+                      {discount > 0 && <div className="text-emerald-700 font-semibold">Descuento: -${discount.toLocaleString('es-AR')}</div>}
+                      {shipping > 0 && <div className="text-blue-600 font-semibold">Envío: +${shipping.toLocaleString('es-AR')}</div>}
                     </div>
                   )}
                   <span className="text-[10px] uppercase tracking-widest text-gray-400 block mb-1">Total General</span>
@@ -778,10 +799,11 @@ export function ReceiptModal({
                   <p className="text-[10px] text-slate-500">Valores sujetos a revisión técnica final previa a instalación.</p>
                 </div>
                 <div className="text-right w-56">
-                  {discount > 0 && (
+                  {(discount > 0 || shipping > 0) && (
                     <div className="text-[11px] space-y-0.5 mb-1 pb-1 border-b border-slate-200">
                       <div>SUBTOTAL: ${subtotal.toLocaleString('es-AR')}</div>
-                      <div className="text-emerald-700 font-bold">DESCUENTO: -${discount.toLocaleString('es-AR')}</div>
+                      {discount > 0 && <div className="text-emerald-700 font-bold">DESCUENTO: -${discount.toLocaleString('es-AR')}</div>}
+                      {shipping > 0 && <div className="text-sky-700 font-bold">ENVÍO: +${shipping.toLocaleString('es-AR')}</div>}
                     </div>
                   )}
                   <span className="text-[10px] text-slate-500 block">TOTAL ESTIMADO:</span>
@@ -886,14 +908,21 @@ export function ReceiptModal({
                 </div>
 
                 <div className="w-64 bg-slate-50 border-2 border-slate-900 rounded-xl p-3 text-xs">
-                  {discount > 0 && (
+                  {(discount > 0 || shipping > 0) && (
                     <>
                       <div className="flex justify-between text-slate-600 mb-1">
                         <span>Subtotal:</span><span>${subtotal.toLocaleString('es-AR')}</span>
                       </div>
-                      <div className="flex justify-between text-emerald-700 font-bold mb-1">
-                        <span>Bonificación:</span><span>-${discount.toLocaleString('es-AR')}</span>
-                      </div>
+                      {discount > 0 && (
+                        <div className="flex justify-between text-emerald-700 font-bold mb-1">
+                          <span>Bonificación:</span><span>-${discount.toLocaleString('es-AR')}</span>
+                        </div>
+                      )}
+                      {shipping > 0 && (
+                        <div className="flex justify-between text-blue-700 font-bold mb-1">
+                          <span>Envío:</span><span>+${shipping.toLocaleString('es-AR')}</span>
+                        </div>
+                      )}
                     </>
                   )}
                   <div className="flex justify-between items-baseline pt-2 border-t-2 border-slate-900 text-red-600 font-black text-base">
@@ -1003,14 +1032,21 @@ export function ReceiptModal({
                 </div>
 
                 <div className="w-64 bg-amber-100/60 border border-amber-300 rounded-xl p-3 text-xs text-amber-950">
-                  {discount > 0 && (
+                  {(discount > 0 || shipping > 0) && (
                     <>
                       <div className="flex justify-between mb-1 text-slate-600">
                         <span>Subtotal:</span><span>${subtotal.toLocaleString('es-AR')}</span>
                       </div>
-                      <div className="flex justify-between mb-1 text-emerald-800 font-bold">
-                        <span>Descuento:</span><span>-${discount.toLocaleString('es-AR')}</span>
-                      </div>
+                      {discount > 0 && (
+                        <div className="flex justify-between mb-1 text-emerald-800 font-bold">
+                          <span>Descuento:</span><span>-${discount.toLocaleString('es-AR')}</span>
+                        </div>
+                      )}
+                      {shipping > 0 && (
+                        <div className="flex justify-between mb-1 text-amber-900 font-bold">
+                          <span>Envío a domicilio:</span><span>+${shipping.toLocaleString('es-AR')}</span>
+                        </div>
+                      )}
                     </>
                   )}
                   <div className="flex justify-between items-baseline pt-2 border-t border-amber-300 text-amber-950 font-black text-base">
@@ -1076,6 +1112,7 @@ export function ReceiptModal({
                 </div>
                 <div className="text-right flex items-center gap-3">
                   {discount > 0 && <span className="text-emerald-700 font-bold">Desc: -${discount.toLocaleString('es-AR')}</span>}
+                  {shipping > 0 && <span className="text-blue-700 font-bold">Envío: +${shipping.toLocaleString('es-AR')}</span>}
                   <span className="text-base font-black text-emerald-700">TOTAL: ${finalTotal.toLocaleString('es-AR')}</span>
                 </div>
               </div>
@@ -1214,17 +1251,23 @@ export function ReceiptModal({
                 </div>
 
                 <div className="w-full sm:w-64 space-y-2 bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                  {(discount > 0 || shipping > 0) && (
+                    <div className="flex justify-between text-xs text-gray-600">
+                      <span>Subtotal:</span>
+                      <span>${subtotal.toLocaleString('es-AR')}</span>
+                    </div>
+                  )}
                   {discount > 0 && (
-                    <>
-                      <div className="flex justify-between text-xs text-gray-600">
-                        <span>Subtotal:</span>
-                        <span>${subtotal.toLocaleString('es-AR')}</span>
-                      </div>
-                      <div className="flex justify-between text-xs text-emerald-600 font-bold">
-                        <span>Descuento aplicado:</span>
-                        <span>-${discount.toLocaleString('es-AR')}</span>
-                      </div>
-                    </>
+                    <div className="flex justify-between text-xs text-emerald-600 font-bold">
+                      <span>Descuento aplicado:</span>
+                      <span>-${discount.toLocaleString('es-AR')}</span>
+                    </div>
+                  )}
+                  {shipping > 0 && (
+                    <div className="flex justify-between text-xs text-blue-600 font-bold">
+                      <span>Costo de Envío:</span>
+                      <span>+${shipping.toLocaleString('es-AR')}</span>
+                    </div>
                   )}
                   <div className="flex justify-between items-baseline pt-2 border-t border-gray-200">
                     <span className="text-xs font-black uppercase text-gray-800">Total a Pagar:</span>

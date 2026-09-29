@@ -8,6 +8,7 @@ import { inventoryService } from '../services/inventoryService';
 import { useAuth } from './AuthContext';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import { QuoteStyle } from '../utils/receiptPrinter';
 
 export interface CompanyProfile {
   name: string;
@@ -20,6 +21,206 @@ export interface CompanyProfile {
   bankAlias?: string;
   bankCbu?: string;
 }
+
+export interface ActivePaymentMethods {
+  efectivo: boolean;
+  transferencia: boolean;
+  debito: boolean;
+  credito: boolean;
+  mercadopago: boolean;
+  cuenta_corriente: boolean;
+  otro: boolean;
+}
+
+export interface PaymentMethodSurcharges {
+  efectivo: number; // Porcentaje de descuento (-) o recargo (+), ej: -10 para 10% descuento
+  transferencia: number;
+  debito: number;
+  credito: number;
+  mercadopago: number;
+  cuenta_corriente: number;
+  otro: number;
+}
+
+export interface SidebarModulesConfig {
+  dashboard: boolean;
+  sales: boolean;
+  inventory: boolean;
+  workshop: boolean;
+  purchases: boolean;
+  finances: boolean;
+  warehouses: boolean;
+}
+
+export interface AppSettings {
+  // Comercial / Moneda
+  currencySymbol: string;
+  currencyCode: string;
+  thousandsSeparator: string;
+  decimalPlaces: number;
+
+  // Ventas & Cotizaciones
+  defaultQuoteValidityDays: number;
+  defaultQuoteNotes: string;
+  defaultShippingCost: number;
+  defaultReceiptStyle: QuoteStyle;
+  autoPrintReceiptAfterSale: boolean;
+  enableDiscountsOnSale: boolean;
+  requireClientOnSale: boolean;
+  whatsappMessageTemplate: string;
+  quickClientChipsLimit: number;
+  quoteNumberPrefix: string;
+  saleNumberPrefix: string;
+  receiptFooterMessage: string;
+  enableTaxVat: boolean;
+  defaultTaxVatRate: number;
+  pricesIncludeTax: boolean;
+  blockSaleOnZeroStock: boolean;
+
+  // Inventario & Stock
+  lowStockThreshold: number;
+  allowNegativeStock: boolean;
+  showCostAndProfitColumns: boolean;
+  autoBarcodeScannerMode: boolean;
+  groupByCodeAndDesc: boolean;
+  suggestedProfitMargin: number;
+  playBeepOnScan: boolean;
+  defaultMeasurementUnit: string;
+  defaultInventorySort: 'nombre' | 'codigo' | 'stock_asc' | 'precio_desc' | 'reciente';
+
+  // Taller & Reparaciones
+  defaultWorkOrderWarrantyDays: number;
+  defaultWorkOrderTerms: string;
+  defaultWorkOrderPriority: 'baja' | 'normal' | 'urgente';
+  autoSendWhatsappOnWorkOrderReady: boolean;
+  requireTechnicianNoteOnDelivery: boolean;
+  workOrderPrefix: string;
+  defaultDiagnosticHours: number;
+  notifyClientOnStatusChange: boolean;
+
+  // Caja & Pagos
+  enforceCashShiftBeforeSale: boolean;
+  suggestedCashOpeningAmount: number;
+  activePaymentMethods: ActivePaymentMethods;
+  paymentMethodSurcharges: PaymentMethodSurcharges;
+  enableBlindCashClosing: boolean;
+  cashWithdrawalThreshold: number;
+
+  // Inteligencia Artificial (IA & Gemini en Vercel y Local)
+  geminiApiKey: string;
+  aiModel: 'gemini-3.8-flash' | 'gemini-3.1-flash-lite' | 'gemini-flash-latest';
+  aiPerformanceMode: 'fast' | 'balanced' | 'deep';
+  aiTemperature: number;
+  aiResponseStyle: 'concise' | 'balanced' | 'comprehensive';
+  aiSalesHistoryDays: number;
+  aiAssistantVisible: boolean;
+  aiWelcomeMessage: string;
+
+  // Interfaz & Navegación
+  defaultStartPage: string;
+  accentColor: 'indigo' | 'purple' | 'emerald' | 'blue' | 'amber' | 'rose' | 'cyan' | 'crimson';
+  enableSoundEffects: boolean;
+  compactCardsView: boolean;
+  showSystemVersionBadge: boolean;
+  sidebarModules: SidebarModulesConfig;
+}
+
+export const defaultAppSettings: AppSettings = {
+  // Comercial / Moneda
+  currencySymbol: '$',
+  currencyCode: 'ARS',
+  thousandsSeparator: '.',
+  decimalPlaces: 0,
+
+  // Ventas & Cotizaciones
+  defaultQuoteValidityDays: 7,
+  defaultQuoteNotes: 'Presupuesto válido por 7 días. Precios sujetos a confirmación.',
+  defaultShippingCost: 0,
+  defaultReceiptStyle: 'modern',
+  autoPrintReceiptAfterSale: true,
+  enableDiscountsOnSale: true,
+  requireClientOnSale: false,
+  whatsappMessageTemplate: '¡Hola! Te compartimos el detalle de tu comprobante comercial.',
+  quickClientChipsLimit: 5,
+  quoteNumberPrefix: 'COT-',
+  saleNumberPrefix: 'TKT-',
+  receiptFooterMessage: '¡Gracias por su compra y confianza! Conserve este comprobante para cualquier reclamo o cambio.',
+  enableTaxVat: false,
+  defaultTaxVatRate: 21,
+  pricesIncludeTax: true,
+  blockSaleOnZeroStock: false,
+
+  // Inventario & Stock
+  lowStockThreshold: 5,
+  allowNegativeStock: true,
+  showCostAndProfitColumns: true,
+  autoBarcodeScannerMode: false,
+  groupByCodeAndDesc: true,
+  suggestedProfitMargin: 40,
+  playBeepOnScan: true,
+  defaultMeasurementUnit: 'unidades',
+  defaultInventorySort: 'nombre',
+
+  // Taller & Reparaciones
+  defaultWorkOrderWarrantyDays: 30,
+  defaultWorkOrderTerms: 'El cliente autoriza la inspección técnica y el desarme previo del equipo para elaboración de presupuesto.',
+  defaultWorkOrderPriority: 'normal',
+  autoSendWhatsappOnWorkOrderReady: true,
+  requireTechnicianNoteOnDelivery: false,
+  workOrderPrefix: 'OT-',
+  defaultDiagnosticHours: 48,
+  notifyClientOnStatusChange: true,
+
+  // Caja & Pagos
+  enforceCashShiftBeforeSale: false,
+  suggestedCashOpeningAmount: 0,
+  activePaymentMethods: {
+    efectivo: true,
+    transferencia: true,
+    debito: true,
+    credito: true,
+    mercadopago: true,
+    cuenta_corriente: true,
+    otro: true,
+  },
+  paymentMethodSurcharges: {
+    efectivo: 0,
+    transferencia: 0,
+    debito: 0,
+    credito: 10,
+    mercadopago: 0,
+    cuenta_corriente: 0,
+    otro: 0,
+  },
+  enableBlindCashClosing: false,
+  cashWithdrawalThreshold: 0,
+
+  // Inteligencia Artificial (IA & Gemini)
+  geminiApiKey: '',
+  aiModel: 'gemini-3.8-flash',
+  aiPerformanceMode: 'fast',
+  aiTemperature: 0.3,
+  aiResponseStyle: 'balanced',
+  aiSalesHistoryDays: 30,
+  aiAssistantVisible: true,
+  aiWelcomeMessage: '¡Hola! Soy tu asistente de negocios inteligente. ¿En qué puedo ayudarte hoy?',
+
+  // Interfaz & Navegación
+  defaultStartPage: '/ventas',
+  accentColor: 'indigo',
+  enableSoundEffects: true,
+  compactCardsView: false,
+  showSystemVersionBadge: true,
+  sidebarModules: {
+    dashboard: true,
+    sales: true,
+    inventory: true,
+    workshop: true,
+    purchases: true,
+    finances: true,
+    warehouses: true,
+  }
+};
 
 type Theme = 'light' | 'dark';
 
@@ -34,6 +235,9 @@ interface SettingsContextType {
   setMobileCompactMode: (value: boolean) => void;
   companyProfile: CompanyProfile;
   updateCompanyProfile: (profile: Partial<CompanyProfile>) => Promise<void>;
+  appSettings: AppSettings;
+  updateAppSettings: (settings: Partial<AppSettings>) => Promise<void>;
+  resetAppSettingsToDefault: () => Promise<void>;
 }
 
 const translations: Record<string, string> = {
@@ -604,6 +808,163 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  // App Settings (Full configurability)
+  const [appSettings, setAppSettings] = useState<AppSettings>(() => {
+    try {
+      const userKey = user?.uid ? `app_settings_${user.uid}` : 'app_settings';
+      const saved = localStorage.getItem(userKey) || localStorage.getItem('app_settings');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return {
+          ...defaultAppSettings,
+          ...parsed,
+          activePaymentMethods: {
+            ...defaultAppSettings.activePaymentMethods,
+            ...(parsed.activePaymentMethods || {})
+          }
+        };
+      }
+    } catch (e) {
+      console.warn('Error reading app settings from localStorage', e);
+    }
+    return defaultAppSettings;
+  });
+
+  // Sync app settings with Firestore if logged in
+  useEffect(() => {
+    if (!user?.uid) return;
+    const userKey = `app_settings_${user.uid}`;
+    try {
+      const savedLocal = localStorage.getItem(userKey);
+      if (savedLocal) {
+        const parsed = JSON.parse(savedLocal);
+        setAppSettings(prev => ({
+          ...prev,
+          ...parsed,
+          activePaymentMethods: {
+            ...prev.activePaymentMethods,
+            ...(parsed.activePaymentMethods || {})
+          },
+          paymentMethodSurcharges: {
+            ...prev.paymentMethodSurcharges,
+            ...(parsed.paymentMethodSurcharges || {})
+          },
+          sidebarModules: {
+            ...prev.sidebarModules,
+            ...(parsed.sidebarModules || {})
+          }
+        }));
+      }
+    } catch (e) {}
+
+    const loadAppSettingsFromFirestore = async () => {
+      try {
+        const userDocRef = doc(db, 'users', user.uid);
+        const snap = await getDoc(userDocRef);
+        if (snap.exists() && snap.data()?.appSettings) {
+          const remote = snap.data().appSettings as Partial<AppSettings>;
+          setAppSettings(prev => {
+            const merged = {
+              ...prev,
+              ...remote,
+              activePaymentMethods: {
+                ...prev.activePaymentMethods,
+                ...(remote.activePaymentMethods || {})
+              },
+              paymentMethodSurcharges: {
+                ...prev.paymentMethodSurcharges,
+                ...(remote.paymentMethodSurcharges || {})
+              },
+              sidebarModules: {
+                ...prev.sidebarModules,
+                ...(remote.sidebarModules || {})
+              }
+            };
+            try {
+              localStorage.setItem(userKey, JSON.stringify(merged));
+              localStorage.setItem('app_settings', JSON.stringify(merged));
+            } catch {}
+            return merged;
+          });
+        }
+      } catch (err) {}
+    };
+    loadAppSettingsFromFirestore();
+  }, [user?.uid]);
+
+  const updateAppSettings = async (partial: Partial<AppSettings>) => {
+    let nextState: AppSettings = { 
+      ...appSettings, 
+      ...partial,
+      activePaymentMethods: {
+        ...appSettings.activePaymentMethods,
+        ...(partial.activePaymentMethods || {})
+      },
+      paymentMethodSurcharges: {
+        ...appSettings.paymentMethodSurcharges,
+        ...(partial.paymentMethodSurcharges || {})
+      },
+      sidebarModules: {
+        ...appSettings.sidebarModules,
+        ...(partial.sidebarModules || {})
+      }
+    };
+
+    setAppSettings(prev => {
+      const updated = {
+        ...prev,
+        ...partial,
+        activePaymentMethods: {
+          ...prev.activePaymentMethods,
+          ...(partial.activePaymentMethods || {})
+        },
+        paymentMethodSurcharges: {
+          ...prev.paymentMethodSurcharges,
+          ...(partial.paymentMethodSurcharges || {})
+        },
+        sidebarModules: {
+          ...prev.sidebarModules,
+          ...(partial.sidebarModules || {})
+        }
+      };
+      try {
+        if (user?.uid) {
+          localStorage.setItem(`app_settings_${user.uid}`, JSON.stringify(updated));
+        }
+        localStorage.setItem('app_settings', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Error saving app settings to localStorage', e);
+      }
+      return updated;
+    });
+
+    if (user?.uid) {
+      try {
+        const userDocRef = doc(db, 'users', user.uid);
+        await setDoc(userDocRef, { appSettings: nextState }, { merge: true });
+      } catch (err) {
+        console.warn('Could not sync app settings to Firestore', err);
+      }
+    }
+  };
+
+  const resetAppSettingsToDefault = async () => {
+    setAppSettings(defaultAppSettings);
+    try {
+      if (user?.uid) {
+        localStorage.setItem(`app_settings_${user.uid}`, JSON.stringify(defaultAppSettings));
+      }
+      localStorage.setItem('app_settings', JSON.stringify(defaultAppSettings));
+    } catch {}
+
+    if (user?.uid) {
+      try {
+        const userDocRef = doc(db, 'users', user.uid);
+        await setDoc(userDocRef, { appSettings: defaultAppSettings }, { merge: true });
+      } catch (err) {}
+    }
+  };
+
   const togglePreference = (key: string) => {
     setPreferences(prev => ({ ...prev, [key]: !prev[key] }));
   };
@@ -623,7 +984,10 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       mobileCompactMode,
       setMobileCompactMode,
       companyProfile,
-      updateCompanyProfile
+      updateCompanyProfile,
+      appSettings,
+      updateAppSettings,
+      resetAppSettingsToDefault
     }}>
       {children}
     </SettingsContext.Provider>

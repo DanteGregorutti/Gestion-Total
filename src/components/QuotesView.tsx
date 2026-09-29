@@ -23,7 +23,8 @@ import {
   Filter,
   DollarSign,
   Edit,
-  Loader2
+  Loader2,
+  Truck
 } from 'lucide-react';
 import { Quote } from '../types';
 import { Button, Input, RefreshButton } from './ui';
@@ -91,6 +92,12 @@ export function QuotesView({
     if (q.descuento && q.descuento > 0) {
       msg += `Subtotal: $${(q.subtotal || q.total).toLocaleString('es-AR')}\n`;
       msg += `Descuento: -$${q.descuento.toLocaleString('es-AR')}\n`;
+    }
+    if (q.costoEnvio && q.costoEnvio > 0) {
+      if (!q.descuento || q.descuento === 0) {
+        msg += `Subtotal artículos: $${(q.subtotal || (q.total - q.costoEnvio)).toLocaleString('es-AR')}\n`;
+      }
+      msg += `🚚 Envío a domicilio: +$${q.costoEnvio.toLocaleString('es-AR')} (a cargo del cliente)\n`;
     }
     msg += `💰 *TOTAL: $${q.total.toLocaleString('es-AR')}*\n\n`;
     if (q.notas) {
@@ -340,8 +347,16 @@ export function QuotesView({
                     </td>
 
                     {/* Total */}
-                    <td className="py-4 px-6 font-black text-sm text-gray-900 dark:text-white">
-                      ${quote.total.toLocaleString('es-AR')}
+                    <td className="py-4 px-6">
+                      <div className="font-black text-sm text-gray-900 dark:text-white">
+                        ${quote.total.toLocaleString('es-AR')}
+                      </div>
+                      {quote.costoEnvio && quote.costoEnvio > 0 ? (
+                        <div className="text-[10px] font-bold text-blue-600 dark:text-blue-400 flex items-center gap-1 mt-0.5" title="Envío a cargo del cliente (no entra a billetera)">
+                          <Truck size={10} className="shrink-0" />
+                          <span>+${quote.costoEnvio.toLocaleString('es-AR')} envío</span>
+                        </div>
+                      ) : null}
                     </td>
 
                     {/* Date & Validity */}
@@ -515,6 +530,11 @@ export function QuotesView({
                     <span className="text-lg font-black text-indigo-600 dark:text-indigo-400">
                       ${quote.total.toLocaleString('es-AR')}
                     </span>
+                    {quote.costoEnvio && quote.costoEnvio > 0 ? (
+                      <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 flex items-center justify-end gap-1 mt-0.5">
+                        <Truck size={10} /> +${quote.costoEnvio.toLocaleString('es-AR')} envío
+                      </span>
+                    ) : null}
                   </div>
                 </div>
 

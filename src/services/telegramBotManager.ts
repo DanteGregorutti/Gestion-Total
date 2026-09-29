@@ -13,12 +13,45 @@ export interface TelegramBotStatus {
   lastSync?: string;
   processedCount: number;
   lastMessage?: string;
+  mode?: 'webhook' | 'polling';
+  webhookUrl?: string;
+  isWebhookActive?: boolean;
 }
 
 const DEFAULT_TOKEN = '8655329307:AAEEnvrWo4lrG4i6myrIDhtlUqTgpxroSKc';
 const STORAGE_KEY = 'gestion_total_telegram_token';
 const LAST_UPDATE_KEY = 'gestion_total_telegram_last_update_id';
 const PROCESSED_UPDATES_KEY = 'gestion_total_telegram_processed_updates';
+
+const memoryStorage = new Map<string, string>();
+const safeStorage = {
+  getItem: (key: string): string | null => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        return window.localStorage.getItem(key);
+      } catch (e) {
+        return memoryStorage.get(key) || null;
+      }
+    }
+    return memoryStorage.get(key) || null;
+  },
+  setItem: (key: string, value: string): void => {
+    memoryStorage.set(key, value);
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        window.localStorage.setItem(key, value);
+      } catch (e) {}
+    }
+  },
+  removeItem: (key: string): void => {
+    memoryStorage.delete(key);
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        window.localStorage.removeItem(key);
+      } catch (e) {}
+    }
+  }
+};
 
 export interface MatchedProductInfo {
   product: Product;
@@ -624,6 +657,7 @@ class TelegramBotManager {
   private isStarting: boolean = false;
   private isFetching: boolean = false;
   private pollInterval: any = null;
+  private pollTimeout: any = null;
   private heartbeatInterval: any = null;
   private lastUpdateId: number = 0;
   private processedCount: number = 0;
@@ -634,14 +668,25 @@ class TelegramBotManager {
   private processedMessageKeys: Set<string> = new Set();
   private sessionStartTime: number = Date.now();
   private tabId: string = Math.random().toString(36).substring(2, 9);
+  private cachedProducts: Product[] = [];
+  private lastProductsFetchTime: number = 0;
+  private wakeListenerAttached: boolean = false;
+  private mode: 'webhook' | 'polling' = 'polling';
+  private webhookUrl: string = '';
+  private isWebhookActive: boolean = false;
   private static LEADER_TAB_KEY = 'gestion_total_telegram_leader_tab';
   private static LEADER_HEARTBEAT_KEY = 'gestion_total_telegram_leader_heartbeat';
   private static PROCESSED_MESSAGES_KEY = 'gestion_total_telegram_processed_messages';
 
   constructor() {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      this.token = saved;
+    if (saved && saved.startsWith('8655329307:')) {
+      this.token = saved.trim();
+    } else {
+      this.token = DEFAULT_TOKEN;
+      try {
+        localStorage.setItem(STORAGE_KEY, DEFAULT_TOKEN);
+      } catch (e) {}
     }
 
     const savedLastUpdate = localStorage.getItem(LAST_UPDATE_KEY);
@@ -748,13 +793,59 @@ class TelegramBotManager {
 
   public getStatus(): TelegramBotStatus {
     return {
-      isActive: this.isPolling,
+      isActive: this.isPolling || this.isWebhookActive,
       botUsername: this.botInfo.username || 'GestionTotalBot',
       botName: this.botInfo.first_name || 'Bot de Ventas',
       processedCount: this.processedCount,
       lastMessage: this.lastMessage,
-      lastSync: new Date().toLocaleTimeString()
+      lastSync: new Date().toLocaleTimeString(),
+      mode: this.mode,
+      webhookUrl: this.webhookUrl,
+      isWebhookActive: this.isWebhookActive
     };
+  }
+
+  public async setWebhook(url: string): Promise<{ ok: boolean; description?: string }> {
+    try {
+      this.stop();
+      const res = await fetch(`https://api.telegram.org/bot${this.token}/setWebhook?url=${encodeURIComponent(url)}&drop_pending_updates=false`);
+      const data = await res.json();
+      if (data.ok) {
+        this.isWebhookActive = true;
+        this.webhookUrl = url;
+        this.mode = 'webhook';
+        this.isPolling = true;
+        this.notify();
+        return { ok: true };
+      }
+      return { ok: false, description: data.description || 'Error desconocido al registrar Webhook' };
+    } catch (e: any) {
+      return { ok: false, description: e?.message || 'Error de red' };
+    }
+  }
+
+  public async removeWebhook(): Promise<{ ok: boolean; description?: string }> {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${this.token}/deleteWebhook?drop_pending_updates=false`);
+      const data = await res.json();
+      this.isWebhookActive = false;
+      this.webhookUrl = '';
+      this.mode = 'polling';
+      this.restart();
+      return { ok: data.ok, description: data.description };
+    } catch (e: any) {
+      return { ok: false, description: e?.message };
+    }
+  }
+
+  public async getWebhookInfo(): Promise<any> {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${this.token}/getWebhookInfo`);
+      const data = await res.json();
+      return data.ok ? data.result : null;
+    } catch {
+      return null;
+    }
   }
 
   public async start() {
@@ -795,28 +886,32 @@ class TelegramBotManager {
         return;
       }
 
-      // 2. Clear any conflicting Webhooks and drop old pending retry storms
+      // 2. Check if a 24/7 Webhook is registered (e.g. Vercel deployment)
+      try {
+        const webhookRes = await fetch(`https://api.telegram.org/bot${this.token}/getWebhookInfo`);
+        const webhookData = await webhookRes.json();
+        if (webhookData.ok && webhookData.result?.url) {
+          this.isWebhookActive = true;
+          this.webhookUrl = webhookData.result.url;
+          this.mode = 'webhook';
+          this.isPolling = true;
+          this.notify();
+          console.log('[TelegramBot] 24/7 Webhook is active on:', this.webhookUrl);
+          return; // Do NOT delete webhook, and do NOT poll getUpdates
+        }
+      } catch (err) {
+        // network issue, proceed to polling mode
+      }
+
+      this.isWebhookActive = false;
+      this.webhookUrl = '';
+      this.mode = 'polling';
+
+      // 3. Clear any conflicting Webhooks and ensure polling mode is clean
       try {
         await fetch(`https://api.telegram.org/bot${this.token}/deleteWebhook?drop_pending_updates=false`);
       } catch (err) {
         // ignore network error
-      }
-
-      // 3. If lastUpdateId is 0 (first run on this browser), flush pending historical backlog
-      if (this.lastUpdateId === 0) {
-        try {
-          const flushRes = await fetch(`https://api.telegram.org/bot${this.token}/getUpdates?offset=-1&limit=1`);
-          const flushData = await flushRes.json();
-          if (flushData.ok && Array.isArray(flushData.result) && flushData.result.length > 0) {
-            const latestId = flushData.result[0].update_id;
-            this.lastUpdateId = latestId;
-            localStorage.setItem(LAST_UPDATE_KEY, String(latestId));
-            // Acknowledge this ID so Telegram drops past queue
-            await fetch(`https://api.telegram.org/bot${this.token}/getUpdates?offset=${latestId + 1}&limit=1`);
-          }
-        } catch (err) {
-          console.warn('Initial Telegram backlog flush:', err);
-        }
       }
 
       this.isPolling = true;
@@ -824,9 +919,29 @@ class TelegramBotManager {
 
       if (this.pollInterval) {
         clearInterval(this.pollInterval);
+        this.pollInterval = null;
+      }
+      if (this.pollTimeout) {
+        clearTimeout(this.pollTimeout);
+        this.pollTimeout = null;
       }
       if (this.heartbeatInterval) {
         clearInterval(this.heartbeatInterval);
+        this.heartbeatInterval = null;
+      }
+
+      // Attach wake listeners to instantly poll when user switches to app or screen wakes
+      if (!this.wakeListenerAttached && typeof window !== 'undefined') {
+        this.wakeListenerAttached = true;
+        const triggerImmediateWake = () => {
+          if (this.isPolling && !this.isFetching) {
+            this.pollUpdates();
+          }
+        };
+        window.addEventListener('focus', triggerImmediateWake);
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') triggerImmediateWake();
+        });
       }
 
       // Heartbeat every 2.5 seconds to maintain leadership without interruption
@@ -836,12 +951,14 @@ class TelegramBotManager {
         }
       }, 2500);
 
-      // Start Polling loop every 3 seconds safely
+      // Safety watchdog every 5 seconds in case background throttling paused the timer
       this.pollInterval = setInterval(() => {
-        this.pollUpdates();
-      }, 3000);
+        if (this.isPolling && !this.isFetching) {
+          this.pollUpdates();
+        }
+      }, 5000);
 
-      // Run once immediately
+      // Run immediately with high-speed polling
       this.pollUpdates();
     } catch (e) {
       console.error('Error starting telegram bot:', e);
@@ -851,6 +968,10 @@ class TelegramBotManager {
   }
 
   public stop() {
+    if (this.pollTimeout) {
+      clearTimeout(this.pollTimeout);
+      this.pollTimeout = null;
+    }
     if (this.pollInterval) {
       clearInterval(this.pollInterval);
       this.pollInterval = null;
@@ -863,6 +984,67 @@ class TelegramBotManager {
     this.isStarting = false;
     this.isFetching = false;
     this.notify();
+  }
+
+  private scheduleNextPoll(delayMs: number = 600) {
+    if (this.pollTimeout) {
+      clearTimeout(this.pollTimeout);
+      this.pollTimeout = null;
+    }
+    if (!this.isPolling) return;
+    this.pollTimeout = setTimeout(() => {
+      this.pollUpdates();
+    }, delayMs);
+  }
+
+  /**
+   * Sends immediate "typing..." action so Telegram user sees instant feedback in < 200ms
+   */
+  public async sendChatAction(chatId: number, action: string = 'typing') {
+    try {
+      await fetch(`https://api.telegram.org/bot${this.token}/sendChatAction`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, action })
+      });
+    } catch (e) {}
+  }
+
+  /**
+   * Fast in-memory and synchronous local cache product lookup.
+   * Matches products in < 2ms without waiting for cloud database roundtrips.
+   */
+  public async getFastProducts(): Promise<Product[]> {
+    const now = Date.now();
+    if (this.cachedProducts.length > 0 && (now - this.lastProductsFetchTime < 30000)) {
+      return this.cachedProducts;
+    }
+
+    try {
+      const local = safeStorage.getItem('products') || safeStorage.getItem('sb_cache_products');
+      if (local) {
+        const parsed = JSON.parse(local);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          this.cachedProducts = parsed;
+          this.lastProductsFetchTime = now;
+          // Refresh asynchronously in background without blocking user
+          inventoryService.getProducts().then(fresh => {
+            if (fresh && fresh.length > 0) {
+              this.cachedProducts = fresh;
+              this.lastProductsFetchTime = Date.now();
+            }
+          }).catch(() => {});
+          return this.cachedProducts;
+        }
+      }
+    } catch (e) {}
+
+    const fresh = await inventoryService.getProducts();
+    if (fresh && fresh.length > 0) {
+      this.cachedProducts = fresh;
+      this.lastProductsFetchTime = Date.now();
+    }
+    return this.cachedProducts;
   }
 
   public restart() {
@@ -991,24 +1173,22 @@ class TelegramBotManager {
     }
     this.loadProcessedKeys();
 
+    let hasNewMessages = false;
+
     try {
-      const url = `https://api.telegram.org/bot${this.token}/getUpdates?offset=${this.lastUpdateId + 1}&limit=10&timeout=2`;
+      const offsetParam = this.lastUpdateId > 0 ? this.lastUpdateId + 1 : 0;
+      const url = `https://api.telegram.org/bot${this.token}/getUpdates?offset=${offsetParam}&limit=10&timeout=1`;
       const response = await fetch(url);
       const data = await response.json();
 
       if (data.ok && Array.isArray(data.result) && data.result.length > 0) {
-        // Immediately record highest update_id to advance Telegram offset and prevent duplicate re-deliveries
-        const maxUpdateId = Math.max(...data.result.map((u: any) => u.update_id));
-        if (maxUpdateId >= this.lastUpdateId) {
-          this.lastUpdateId = maxUpdateId;
-          localStorage.setItem(LAST_UPDATE_KEY, String(this.lastUpdateId));
-        }
-
-        // Send IMMEDIATE acknowledgment to Telegram so it confirms receipt and cancels retry timeouts
-        fetch(`https://api.telegram.org/bot${this.token}/getUpdates?offset=${maxUpdateId + 1}&limit=1`).catch(() => {});
-
+        hasNewMessages = true;
         for (const update of data.result) {
           const updateId = update.update_id;
+          if (updateId >= this.lastUpdateId) {
+            this.lastUpdateId = updateId;
+            localStorage.setItem(LAST_UPDATE_KEY, String(this.lastUpdateId));
+          }
 
           // Deduplication check #1: update_id already processed
           if (this.processedUpdateIds.has(updateId)) {
@@ -1037,11 +1217,11 @@ class TelegramBotManager {
             }
             localStorage.setItem(lockKey, String(Date.now()));
 
-            // Deduplication check #4: Ignore messages sent more than 3 minutes ago
+            // Deduplication check #4: Ignore messages older than 24 hours
             const msgTimeSec = update.message.date || 0;
             const nowSec = Math.floor(Date.now() / 1000);
-            if (msgTimeSec > 0 && (nowSec - msgTimeSec > 180)) {
-              console.log('Skipping old message date:', update.message.text);
+            if (msgTimeSec > 0 && (nowSec - msgTimeSec > 86400)) {
+              console.log('Skipping message older than 24h:', update.message.text);
               continue;
             }
 
@@ -1054,6 +1234,10 @@ class TelegramBotManager {
       // Network hiccup or temporary timeout; safely ignore and resume next interval
     } finally {
       this.isFetching = false;
+      if (this.isPolling) {
+        const nextDelay = hasNewMessages ? 50 : 600;
+        this.scheduleNextPoll(nextDelay);
+      }
     }
   }
 
@@ -1063,6 +1247,9 @@ class TelegramBotManager {
     const rawText = (msg.text || '').trim();
     const lower = rawText.toLowerCase();
     const sender = msg.from?.first_name || 'Compañero';
+
+    // Immediate visual feedback: show "escribiendo..." in Telegram in < 200ms
+    this.sendChatAction(chatId, 'typing').catch(() => {});
 
     this.lastMessage = rawText;
     this.notify();
@@ -1357,7 +1544,7 @@ _¡También podés hablarme normalmente sin barra!_
 
   private async handleMediasStockQuery(chatId: number) {
     try {
-      const products = await inventoryService.getProducts();
+      const products = await this.getFastProducts();
 
       const mediaProducts = products.filter(p => {
         const baseName = normalizeSearchText(getProductBaseName(p));
@@ -1425,7 +1612,7 @@ _¡También podés hablarme normalmente sin barra!_
 
   private async handleGeneralStockQuery(chatId: number) {
     try {
-      const products = await inventoryService.getProducts();
+      const products = await this.getFastProducts();
       if (products.length === 0) {
         await this.sendMessage(chatId, `📋 *Tu inventario no tiene productos cargados aún.*`);
         return;
@@ -1492,7 +1679,7 @@ _¡También podés hablarme normalmente sin barra!_
         return;
       }
 
-      const products = await inventoryService.getProducts();
+      const products = await this.getFastProducts();
       if (products.length === 0) {
         await this.sendMessage(chatId, '📋 No hay productos cargados en el inventario.');
         return;
@@ -1567,7 +1754,7 @@ _¡También podés hablarme normalmente sin barra!_
 
   private async handlePricesQuery(chatId: number, filterTerm?: string) {
     try {
-      const products = await inventoryService.getProducts();
+      const products = await this.getFastProducts();
       if (products.length === 0) {
         await this.sendMessage(chatId, `📋 *No tenés productos cargados para consultar precios.*`);
         return;
@@ -1657,7 +1844,7 @@ _¡También podés hablarme normalmente sin barra!_
 
   private async handleLowStockQuery(chatId: number) {
     try {
-      const products = await inventoryService.getProducts();
+      const products = await this.getFastProducts();
       if (products.length === 0) {
         await this.sendMessage(chatId, '📋 No hay productos cargados en el inventario.');
         return;
@@ -1799,7 +1986,7 @@ _¡También podés hablarme normalmente sin barra!_
         return;
       }
 
-      const products = await inventoryService.getProducts();
+      const products = await this.getFastProducts();
       const match = findBestProductMatch(term, products);
       if (!match || match.confidence < 40) {
         await this.sendMessage(chatId, `🔍 No se encontró ningún producto similar a "*${term}*".`);
@@ -2067,7 +2254,9 @@ _Registra entradas de dinero ajenas a ventas de productos._
 
       const icon = tipo === 'ingreso' ? '🟢' : '🔴';
       const label = tipo === 'ingreso' ? 'Ingreso de Dinero' : 'Gasto Anotado';
-      await this.sendMessage(
+
+      // Send response immediately to Telegram while persisting in background
+      const replyPromise = this.sendMessage(
         chatId,
         `✅ *${icon} ${label} Exitoso*\n\n` +
         `• *Detalle:* ${cleanConcept}\n` +
@@ -2075,6 +2264,18 @@ _Registra entradas de dinero ajenas a ventas de productos._
         `• *Método:* ${metodo}\n\n` +
         `_Ya está reflejado en tu saldo de la aplicación web._`
       );
+
+      const savePromise = inventoryService.addFinanceTransaction({
+        tipo,
+        categoria: tipo === 'ingreso' ? 'sueldo_cobro' : 'otro',
+        concepto: cleanConcept,
+        monto: Math.round(amount),
+        metodo,
+        fecha: new Date().toISOString().split('T')[0],
+        notas: `Anotado vía Telegram: "${text}"`
+      }).catch(err => console.error('Background finance transaction error:', err));
+
+      await Promise.all([replyPromise, savePromise]);
     } catch (err: any) {
       console.error('Error saving finance via telegram:', err);
       await this.sendMessage(chatId, `❌ Ocurrió un error al guardar: ${err.message || 'Intenta de nuevo'}`);
@@ -2084,7 +2285,7 @@ _Registra entradas de dinero ajenas a ventas de productos._
   // Handle Purchase / Adding Stock
   private async handlePurchaseRecord(chatId: number, text: string) {
     try {
-      const products = await inventoryService.getProducts();
+      const products = await this.getFastProducts();
       const sizeInfo = extractSizeInfo(text);
       const matchResult = findBestProductMatch(text, products);
       const { cantidad, unitPrice, totalAmount } = parseQuantityAndPrice(text, sizeInfo);
@@ -2135,19 +2336,12 @@ _Registra entradas de dinero ajenas a ventas de productos._
 
       const totalSpent = Math.round(costPerUnit * cantidad);
 
-      // Register purchase in inventory
-      await inventoryService.registerPurchase({
-        productId: product.id,
-        productNombre: prodName,
-        variantId: variant?.id,
-        variantNombre: variant?.nombre,
-        cantidad: cantidad,
-        costo: costPerUnit,
-        proveedor: 'Compra vía Telegram'
-      });
-
       const newTotalStock = product.cantidad + cantidad;
       const newVariantStock = variant ? (variant.cantidad || 0) + cantidad : undefined;
+
+      // Update in-memory product immediately so consecutive queries are accurate
+      product.cantidad = newTotalStock;
+      if (variant && newVariantStock !== undefined) variant.cantidad = newVariantStock;
 
       const variantDetail = variant 
         ? `\n🏷️ *Talle / Variante:* ${variant.nombre}` 
@@ -2157,7 +2351,7 @@ _Registra entradas de dinero ajenas a ventas de productos._
         ? ` (Talle ${variant?.nombre}: ${newVariantStock} unid.)` 
         : '';
 
-      await this.sendMessage(
+      const replyPromise = this.sendMessage(
         chatId,
         `📥 *¡Stock y Compra Registrados!* ✨\n\n` +
         `📦 *Producto:* ${safeMarkdown(prodName)}${variantDetail}\n` +
@@ -2167,6 +2361,18 @@ _Registra entradas de dinero ajenas a ventas de productos._
         `📈 *Stock actual:* ${newTotalStock} unid.${variantStockDetail}\n\n` +
         `_Se sumó a tus Compras y se reflejó automáticamente en 'Dinero & Gastos'._`
       );
+
+      const savePromise = inventoryService.registerPurchase({
+        productId: product.id,
+        productNombre: prodName,
+        variantId: variant?.id,
+        variantNombre: variant?.nombre,
+        cantidad: cantidad,
+        costo: costPerUnit,
+        proveedor: 'Compra vía Telegram'
+      }).catch(err => console.error('Background registerPurchase error:', err));
+
+      await Promise.all([replyPromise, savePromise]);
     } catch (err: any) {
       console.error('Error saving purchase via telegram:', err);
       await this.sendMessage(chatId, `❌ Error al registrar compra: ${err.message || 'Intenta de nuevo'}`);
@@ -2183,7 +2389,7 @@ _Registra entradas de dinero ajenas a ventas de productos._
         return;
       }
 
-      const products = await inventoryService.getProducts();
+      const products = await this.getFastProducts();
       const sizeInfo = extractSizeInfo(text);
       const matchResult = findBestProductMatch(text, products);
       const { cantidad, unitPrice: parsedUnitPrice, totalAmount: parsedTotal } = parseQuantityAndPrice(text, sizeInfo);
@@ -2236,20 +2442,12 @@ _Registra entradas de dinero ajenas a ventas de productos._
         // Mark sale as done immediately to prevent race conditions
         localStorage.setItem(saleDoneKey, String(Date.now()));
 
-        // Register sale in Firestore & Supabase (discounts inventory stock)
-        await inventoryService.registerSale({
-          productId: product.id,
-          productNombre: prodName,
-          variantId: variant?.id,
-          variantNombre: variant?.nombre,
-          cantidad: cantidad,
-          precio: finalPrice,
-          total: finalTotal,
-          transactionId: telegramTxId
-        });
-
         const newStock = Math.max(0, product.cantidad - cantidad);
         const newVariantStock = variant ? Math.max(0, (variant.cantidad || 0) - cantidad) : undefined;
+
+        // Update in-memory cache immediately so subsequent commands see new stock with 0ms delay
+        product.cantidad = newStock;
+        if (variant && newVariantStock !== undefined) variant.cantidad = newVariantStock;
 
         const variantDetail = variant 
           ? `\n🏷️ *Talle / Variante:* ${variant.nombre}` 
@@ -2263,7 +2461,8 @@ _Registra entradas de dinero ajenas a ventas de productos._
         const actionTitle = isRemovalAction ? '📦 *¡Stock Descontado del Inventario!* 📉' : '🎉 *¡Venta Registrada Exitosamente!* 🚀';
         const actionQtyLabel = isRemovalAction ? '📉 *Cantidad retirada:*' : '🔢 *Cantidad vendida:*';
 
-        await this.sendMessage(
+        // Fire Telegram message immediately without waiting for database network roundtrip
+        const replyPromise = this.sendMessage(
           chatId,
           `${actionTitle}\n\n` +
           `📦 *Producto:* ${safeMarkdown(prodName)}${variantDetail}\n` +
@@ -2272,6 +2471,20 @@ _Registra entradas de dinero ajenas a ventas de productos._
           `📊 *Stock restante:* ${newStock} unid.${variantStockDetail}\n\n` +
           `_El stock y el saldo se actualizaron automáticamente en tu app web._`
         );
+
+        // Register sale in Firestore & Supabase in parallel
+        const savePromise = inventoryService.registerSale({
+          productId: product.id,
+          productNombre: prodName,
+          variantId: variant?.id,
+          variantNombre: variant?.nombre,
+          cantidad: cantidad,
+          precio: finalPrice,
+          total: finalTotal,
+          transactionId: telegramTxId
+        }).catch(err => console.error('Background registerSale error from telegram:', err));
+
+        await Promise.all([replyPromise, savePromise]);
         return;
       }
 

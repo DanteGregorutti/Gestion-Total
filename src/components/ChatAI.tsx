@@ -35,13 +35,13 @@ interface Message {
 }
 
 export function ChatAI() {
-  const { t } = useSettings();
+  const { t, appSettings } = useSettings();
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
-      text: '¡Hola! Soy tu asistente de Gestión Total. ¿En qué puedo ayudarte hoy?',
+      text: appSettings?.aiWelcomeMessage || '¡Hola! Soy tu asistente de Gestión Total. ¿En qué puedo ayudarte hoy?',
       sender: 'ai',
       timestamp: new Date()
     }
@@ -242,7 +242,8 @@ export function ChatAI() {
     setIsLoading(true);
 
     try {
-      // Fetch data only when needed to save quota
+      // Fetch data bounded by user configuration to ensure fast response times
+      const historyDays = appSettings?.aiSalesHistoryDays || 30;
       const [
         currentProducts, 
         currentSales, 
@@ -255,9 +256,9 @@ export function ChatAI() {
         currentRepairQuotes
       ] = await Promise.all([
         inventoryService.getProducts(),
-        inventoryService.getSales(1825), // Fetch last 5 years of sales
-        inventoryService.getPurchases(1825), // Fetch last 5 years of purchases
-        inventoryService.getMovements(1000), // Fetch last 1000 movements
+        inventoryService.getSales(historyDays),
+        inventoryService.getPurchases(historyDays),
+        inventoryService.getMovements(50),
         inventoryService.getClients(),
         inventoryService.getSuppliers(),
         inventoryService.getWarehouses(),
@@ -275,6 +276,13 @@ export function ChatAI() {
         warehouses: currentWarehouses,
         workOrders: currentWorkOrders,
         repairQuotes: currentRepairQuotes
+      }, {
+        apiKey: appSettings?.geminiApiKey,
+        model: appSettings?.aiModel,
+        performanceMode: appSettings?.aiPerformanceMode,
+        temperature: appSettings?.aiTemperature,
+        responseStyle: appSettings?.aiResponseStyle,
+        historyDays
       });
 
       const aiMessage: Message = {
@@ -298,6 +306,10 @@ export function ChatAI() {
       setIsLoading(false);
     }
   };
+
+  if (appSettings?.aiAssistantVisible === false) {
+    return null;
+  }
 
   return (
     <>

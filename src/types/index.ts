@@ -282,6 +282,7 @@ export interface Quote {
   items: QuoteItem[];
   subtotal: number;
   descuento?: number;
+  costoEnvio?: number;
   total: number;
   fecha: any;
   validezDias: number;

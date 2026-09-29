@@ -29,8 +29,11 @@ const generateId = () => {
 // Safe local storage cache helper
 const getLocal = <T>(key: string, defaultVal: T): T => {
   try {
-    const raw = localStorage.getItem(`sb_cache_${key}`);
-    return raw ? JSON.parse(raw) : defaultVal;
+    if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(`sb_cache_${key}`);
+      return raw ? JSON.parse(raw) : defaultVal;
+    }
+    return defaultVal;
   } catch {
     return defaultVal;
   }
@@ -38,9 +41,11 @@ const getLocal = <T>(key: string, defaultVal: T): T => {
 
 const setLocal = <T>(key: string, val: T): void => {
   try {
-    localStorage.setItem(`sb_cache_${key}`, JSON.stringify(val));
+    if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+      localStorage.setItem(`sb_cache_${key}`, JSON.stringify(val));
+    }
   } catch (e) {
-    console.warn('Error saving to local cache:', e);
+    // ignore in server context
   }
 };
 
@@ -330,8 +335,21 @@ export const supabaseService = {
         deductionsByProduct.set(sale.productId, existing);
       }
 
+      let productsList = cachedProducts;
+      if (!productsList || productsList.length === 0) {
+        const { data: dbProds } = await supabase.from('products').select('*');
+        if (dbProds && dbProds.length > 0) {
+          productsList = dbProds;
+        }
+      }
+
       for (const [productId, deduction] of deductionsByProduct.entries()) {
-        const prod = cachedProducts.find(p => p.id === productId);
+        let prod = productsList.find(p => p.id === productId);
+        if (!prod) {
+          const { data: singleProd } = await supabase.from('products').select('*').eq('id', productId).maybeSingle();
+          if (singleProd) prod = singleProd;
+        }
+
         if (prod) {
           const newTotal = Math.max(0, (prod.cantidad || 0) - deduction.totalQuantity);
           let newVariants = prod.variants;
@@ -459,6 +477,65 @@ export const supabaseService = {
   },
 
   // --- PURCHASES ---
+  registerPurchase: async (purchaseData: {
+    productId: string;
+    productNombre: string;
+    variantId?: string;
+    variantNombre?: string;
+    cantidad: number;
+    costo: number;
+    proveedor?: string;
+    notas?: string;
+  }): Promise<string> => {
+    const id = generateId();
+    const now = new Date().toISOString();
+    const total = (Number(purchaseData.costo) || 0) * (Number(purchaseData.cantidad) || 1);
+    const purchaseItem: Purchase = {
+      id,
+      productId: purchaseData.productId,
+      productNombre: purchaseData.productNombre,
+      variantId: purchaseData.variantId,
+      variantNombre: purchaseData.variantNombre,
+      cantidad: purchaseData.cantidad,
+      costo: purchaseData.costo,
+      total,
+      proveedor: purchaseData.proveedor || 'General',
+      fecha: now.split('T')[0],
+      createdBy: 'admin'
+    };
+
+    const cached = getLocal<Purchase[]>('purchases', []);
+    setLocal('purchases', [purchaseItem, ...cached]);
+
+    try {
+      await supabase.from('purchases').insert([purchaseItem]);
+    } catch (e) {
+      console.warn('Supabase registerPurchase error:', e);
+    }
+
+    try {
+      const cachedProducts = getLocal<Product[]>('products', []);
+      const prod = cachedProducts.find(p => p.id === purchaseData.productId);
+      if (prod) {
+        const newQty = (prod.cantidad || 0) + purchaseData.cantidad;
+        let newVariants = prod.variants;
+        if (purchaseData.variantId && prod.variants?.length) {
+          newVariants = prod.variants.map(v =>
+            v.id === purchaseData.variantId ? { ...v, cantidad: (v.cantidad || 0) + purchaseData.cantidad } : v
+          );
+        }
+        await supabaseService.updateProduct(purchaseData.productId, {
+          cantidad: newQty,
+          variants: newVariants
+        });
+      }
+    } catch (e) {
+      console.warn('Error updating product stock in registerPurchase:', e);
+    }
+
+    return id;
+  },
+
   getPurchases: async (limitCount?: number): Promise<Purchase[]> => {
     try {
       let query = supabase
@@ -540,13 +617,25 @@ export const supabaseService = {
         return getLocal<Quote[]>('quotes', []);
       }
 
-      const quotes = (data || []).map((q: any) => ({
-        ...q,
-        items: q.items || [],
-        subtotal: Number(q.subtotal) || 0,
-        total: Number(q.total) || 0,
-        descuento: Number(q.descuento) || 0
-      })) as Quote[];
+      const quotes = (data || []).map((q: any) => {
+        let shipping = Number(q.costoEnvio || q.costo_envio || 0);
+        if (!shipping && q.condiciones) {
+          try {
+            const parsed = typeof q.condiciones === 'string' ? JSON.parse(q.condiciones) : q.condiciones;
+            if (parsed && typeof parsed.costoEnvio === 'number') {
+              shipping = parsed.costoEnvio;
+            }
+          } catch (e) {}
+        }
+        return {
+          ...q,
+          items: q.items || [],
+          subtotal: Number(q.subtotal) || 0,
+          total: Number(q.total) || 0,
+          descuento: Number(q.descuento) || 0,
+          costoEnvio: shipping
+        };
+      }) as Quote[];
 
       setLocal('quotes', quotes);
       return quotes;
@@ -560,6 +649,7 @@ export const supabaseService = {
     const now = new Date().toISOString();
     const count = (getLocal<Quote[]>('quotes', []).length + 1).toString().padStart(4, '0');
     const numero = quoteData.numero || `COT-${count}`;
+    const costoEnvio = Number(quoteData.costoEnvio) || 0;
 
     const newQuote: Quote = {
       ...quoteData,
@@ -569,6 +659,7 @@ export const supabaseService = {
       subtotal: Number(quoteData.subtotal || quoteData.total || 0),
       total: Number(quoteData.total || 0),
       descuento: Number(quoteData.descuento || 0),
+      costoEnvio,
       validezDias: Number(quoteData.validezDias || 7),
       estado: quoteData.estado || 'pendiente',
       items: quoteData.items || [],
@@ -582,7 +673,7 @@ export const supabaseService = {
 
     // Persist to Supabase
     try {
-      const { error } = await supabase.from('quotes').insert([{
+      const payload: any = {
         id: newQuote.id,
         numero: newQuote.numero,
         clientId: newQuote.clientId || null,
@@ -598,9 +689,23 @@ export const supabaseService = {
         validezFecha: newQuote.validezFecha || null,
         estado: newQuote.estado,
         notas: newQuote.notas || null,
-        condiciones: newQuote.condiciones || null,
+        condiciones: newQuote.condiciones || (costoEnvio > 0 ? JSON.stringify({ costoEnvio }) : null),
         createdBy: newQuote.createdBy
-      }]);
+      };
+
+      if (costoEnvio > 0) {
+        payload.costoEnvio = costoEnvio;
+      }
+
+      let { error } = await supabase.from('quotes').insert([payload]);
+
+      // Graceful fallback if costoEnvio column does not exist on Supabase SQL yet
+      if (error && (error.message?.includes('costoEnvio') || error.message?.includes('column'))) {
+        delete payload.costoEnvio;
+        payload.condiciones = JSON.stringify({ costoEnvio, originalCondiciones: newQuote.condiciones || null });
+        const retry = await supabase.from('quotes').insert([payload]);
+        error = retry.error;
+      }
 
       if (error) {
         console.warn('Supabase quote insert error:', error.message);

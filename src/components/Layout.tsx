@@ -49,7 +49,7 @@ interface LayoutProps {
 }
 
 export default function Layout({ children, user, onLogout }: LayoutProps) {
-  const { t, mobileCompactMode, setMobileCompactMode, companyProfile } = useSettings();
+  const { t, mobileCompactMode, setMobileCompactMode, companyProfile, appSettings } = useSettings();
   const location = useLocation();
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(window.innerWidth > 1024);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
@@ -61,25 +61,35 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
   const storeLogo = companyProfile?.logoUrl || '';
   const storeSlogan = companyProfile?.slogan || 'Gestión Comercial & Stock';
 
-  React.useEffect(() => {
-    // Auto start telegram bot listener in background
-    telegramBot.start();
-  }, []);
-
-  const operationItems = [
-    { name: t('dashboard'), path: '/', icon: LayoutDashboard },
-    { name: 'Taller & Servicios', path: '/taller', icon: Wrench },
-    { name: t('inventory'), path: '/inventario', icon: Package },
-    { name: 'Ventas & Cotizar', path: '/ventas', icon: TrendingUp },
-    { name: t('purchases'), path: '/compras', icon: ShoppingCart },
+  const rawOperationItems = [
+    { key: 'dashboard', name: t('dashboard'), path: '/', icon: LayoutDashboard },
+    { key: 'workshop', name: 'Taller & Servicios', path: '/taller', icon: Wrench },
+    { key: 'inventory', name: t('inventory'), path: '/inventario', icon: Package },
+    { key: 'sales', name: 'Ventas & Cotizar', path: '/ventas', icon: TrendingUp },
+    { key: 'purchases', name: t('purchases'), path: '/compras', icon: ShoppingCart },
   ];
 
-  const managementItems = [
-    { name: t('clients') || 'Clientes', path: '/clientes', icon: Users },
-    { name: t('finances'), path: '/cuentas', icon: Wallet },
-    { name: t('warehouses'), path: '/almacenes', icon: Warehouse },
-    { name: t('catalog'), path: '/catalogo', icon: FileText },
+  const rawManagementItems = [
+    { key: 'clients', name: t('clients') || 'Clientes', path: '/clientes', icon: Users },
+    { key: 'finances', name: t('finances'), path: '/cuentas', icon: Wallet },
+    { key: 'warehouses', name: t('warehouses'), path: '/almacenes', icon: Warehouse },
+    { key: 'catalog', name: t('catalog'), path: '/catalogo', icon: FileText },
   ];
+
+  const operationItems = rawOperationItems.filter(item => {
+    if (!appSettings?.sidebarModules) return true;
+    const key = item.key as keyof typeof appSettings.sidebarModules;
+    return appSettings.sidebarModules[key] !== false;
+  });
+
+  const managementItems = rawManagementItems.filter(item => {
+    if (!appSettings?.sidebarModules) return true;
+    const key = item.key as keyof typeof appSettings.sidebarModules;
+    if (key in appSettings.sidebarModules) {
+      return appSettings.sidebarModules[key] !== false;
+    }
+    return true;
+  });
 
   const systemItems = [
     { name: t('settings'), path: '/configuracion', icon: Settings },
@@ -97,6 +107,15 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  React.useEffect(() => {
+    // Automatically start Telegram Bot listener in background when the app opens
+    try {
+      telegramBot.start();
+    } catch (e) {
+      console.warn('Failed to start telegram bot on layout mount:', e);
+    }
   }, []);
 
   const closeMobileMenu = () => setIsMobileMenuOpen(false);
@@ -437,7 +456,7 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-4 lg:p-8 pb-6 sm:pb-8">
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 lg:p-8 pb-6 sm:pb-8">
           {children}
         </div>
       </main>
