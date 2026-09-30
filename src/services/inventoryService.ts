@@ -28,6 +28,13 @@ import { db, auth } from '../firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { supabase } from '../supabase';
 import { supabaseService } from './supabaseService';
+import { 
+  markQuoteAsDeleted, 
+  unmarkQuoteDeleted, 
+  isQuoteDeleted, 
+  filterOutDeletedQuotes, 
+  scrubQuoteFromLocalStorage 
+} from '../utils/quoteTombstones';
 
 const getLocal = <T>(key: string, fallback: T): T => {
   try {
@@ -2723,7 +2730,9 @@ export const inventoryService = {
           const parsed = JSON.parse(cached);
           if (Array.isArray(parsed)) {
             parsed.forEach(q => {
-              if (q && q.id) allQuotesMap.set(q.id, q);
+              if (q && q.id && !isQuoteDeleted(q.id, q.numero)) {
+                allQuotesMap.set(q.id, q);
+              }
             });
           }
         }
@@ -2735,7 +2744,14 @@ export const inventoryService = {
       const sbQuotes = await supabaseService.getQuotes();
       if (Array.isArray(sbQuotes) && sbQuotes.length > 0) {
         sbQuotes.forEach(q => {
-          if (q && q.id) allQuotesMap.set(q.id, q);
+          if (q && q.id) {
+            if (!isQuoteDeleted(q.id, q.numero)) {
+              allQuotesMap.set(q.id, q);
+            } else {
+              // Asynchronously clean zombie from Supabase
+              supabaseService.deleteQuote(q.id, q.numero).catch(() => {});
+            }
+          }
         });
       }
     } catch (e) {
@@ -2747,8 +2763,16 @@ export const inventoryService = {
       const path = 'quotes';
       try {
         const snapshot = await getDocs(collection(db, path));
-        snapshot.docs.forEach(doc => {
-          allQuotesMap.set(doc.id, { id: doc.id, ...doc.data() } as Quote);
+        snapshot.docs.forEach(docSnap => {
+          const data = docSnap.data() as Quote;
+          const qId = docSnap.id;
+          const qNum = data?.numero;
+          if (!isQuoteDeleted(qId, qNum)) {
+            allQuotesMap.set(qId, { id: qId, ...data });
+          } else {
+            // Asynchronously clean zombie doc from Firestore
+            deleteDoc(docSnap.ref).catch(() => {});
+          }
         });
       } catch (error) {
         try {
@@ -2757,8 +2781,15 @@ export const inventoryService = {
             where('createdBy', '==', auth.currentUser.uid)
           );
           const snapshot = await getDocs(q);
-          snapshot.docs.forEach(doc => {
-            allQuotesMap.set(doc.id, { id: doc.id, ...doc.data() } as Quote);
+          snapshot.docs.forEach(docSnap => {
+            const data = docSnap.data() as Quote;
+            const qId = docSnap.id;
+            const qNum = data?.numero;
+            if (!isQuoteDeleted(qId, qNum)) {
+              allQuotesMap.set(qId, { id: qId, ...data });
+            } else {
+              deleteDoc(docSnap.ref).catch(() => {});
+            }
           });
         } catch (e2) {
           console.warn('Firestore quote fetch fallback to local storage:', e2);
@@ -2766,7 +2797,11 @@ export const inventoryService = {
       }
     }
 
-    const merged = Array.from(allQuotesMap.values()).sort((a, b) => {
+    // Final safety filter ensuring no deleted quote can slip through
+    const rawList = Array.from(allQuotesMap.values());
+    const validQuotes = filterOutDeletedQuotes(rawList);
+
+    const merged = validQuotes.sort((a, b) => {
       const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
       const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
       return dateB.getTime() - dateA.getTime();
@@ -2778,34 +2813,39 @@ export const inventoryService = {
       setLocal('quotes', merged);
     } catch (e) {}
 
-    // Auto-sync quotes to cloud (Supabase & Firestore) so Vercel and other devices see all quotes
+    // Auto-sync quotes to cloud (Supabase & Firestore) - ONLY ACTIVE, NON-DELETED QUOTES
     if (merged.length > 0) {
       setTimeout(async () => {
         try {
-          const quotesToSync = merged.map(q => ({
-            id: String(q.id),
-            numero: q.numero || '',
-            clientId: q.clientId || '',
-            clientNombre: q.clientNombre || 'Consumidor Final',
-            clientTelefono: q.clientTelefono || '',
-            clientEmail: q.clientEmail || '',
-            items: q.items || [],
-            subtotal: Number(q.subtotal) || 0,
-            descuento: Number(q.descuento) || 0,
-            total: Number(q.total) || 0,
-            fecha: (q.fecha as any)?.toDate ? (q.fecha as any).toDate().toISOString() : (q.fecha || new Date().toISOString()),
-            validezDias: Number(q.validezDias) || 7,
-            validezFecha: q.validezFecha || '',
-            estado: q.estado || 'pendiente',
-            notas: q.notas || '',
-            condiciones: q.condiciones || '',
-            createdBy: auth.currentUser?.uid || q.createdBy || 'admin'
-          }));
+          const quotesToSync = merged
+            .filter(q => !isQuoteDeleted(q.id, q.numero))
+            .map(q => ({
+              id: String(q.id),
+              numero: q.numero || '',
+              clientId: q.clientId || '',
+              clientNombre: q.clientNombre || 'Consumidor Final',
+              clientTelefono: q.clientTelefono || '',
+              clientEmail: q.clientEmail || '',
+              items: q.items || [],
+              subtotal: Number(q.subtotal) || 0,
+              descuento: Number(q.descuento) || 0,
+              total: Number(q.total) || 0,
+              fecha: (q.fecha as any)?.toDate ? (q.fecha as any).toDate().toISOString() : (q.fecha || new Date().toISOString()),
+              validezDias: Number(q.validezDias) || 7,
+              validezFecha: q.validezFecha || '',
+              estado: q.estado || 'pendiente',
+              notas: q.notas || '',
+              condiciones: q.condiciones || '',
+              createdBy: auth.currentUser?.uid || q.createdBy || 'admin'
+            }));
 
-          await supabase.from('quotes').upsert(quotesToSync, { onConflict: 'id' });
+          if (quotesToSync.length > 0) {
+            await supabase.from('quotes').upsert(quotesToSync, { onConflict: 'id' });
+          }
 
           if (auth.currentUser) {
             for (const q of merged) {
+              if (isQuoteDeleted(q.id, q.numero)) continue;
               try {
                 const docRef = doc(db, 'quotes', q.id);
                 await setDoc(docRef, sanitizeData({
@@ -2833,7 +2873,7 @@ export const inventoryService = {
       if (isUnsubscribed) return;
       try {
         const quotes = await inventoryService.getQuotes();
-        if (!isUnsubscribed) callback(quotes);
+        if (!isUnsubscribed) callback(filterOutDeletedQuotes(quotes));
       } catch (e) {}
     };
 
@@ -2951,6 +2991,7 @@ export const inventoryService = {
 
     // Local / Offline fallback (always succeeds)
     const created: Quote = { id: quoteId, ...newQuote };
+    unmarkQuoteDeleted(quoteId, numero);
     saveToCaches(created);
     return created;
   },
@@ -2989,18 +3030,29 @@ export const inventoryService = {
   },
 
   deleteQuote: async (id: string, numero?: string) => {
-    // 1. Clean from Supabase by ID and by Numero
-    try {
-      await supabaseService.deleteQuote(id, numero);
-    } catch (e) {
-      console.warn('Supabase deleteQuote fallback:', e);
+    // 0. Resolve quote number if not provided
+    let resolvedNumero = numero;
+    if (!resolvedNumero) {
+      try {
+        const cached = localStorage.getItem('quotes');
+        if (cached) {
+          const list = JSON.parse(cached);
+          if (Array.isArray(list)) {
+            const found = list.find((q: any) => q && (q.id === id || q.numero === id));
+            if (found?.numero) resolvedNumero = found.numero;
+          }
+        }
+      } catch (e) {}
     }
 
-    const path = `quotes/${id}`;
+    // 1. Mark permanently in tombstones FIRST so no concurrent read or sync resurrects it
+    markQuoteAsDeleted(id, resolvedNumero);
+
+    // 2. Aggressively scrub from ALL localStorage keys and cached arrays
+    scrubQuoteFromLocalStorage(id, resolvedNumero);
+
     const userId = auth.currentUser?.uid || 'user_offline';
     const cacheKey = `cached_quotes_${userId}`;
-
-    // 2. Clean from all known localStorage keys
     const keys = [cacheKey, 'cached_quotes_user_offline', 'cached_quotes_default', 'quotes', 'sb_cache_quotes'];
     for (const k of keys) {
       try {
@@ -3008,51 +3060,50 @@ export const inventoryService = {
         if (cached) {
           const list: Quote[] = JSON.parse(cached);
           if (Array.isArray(list)) {
-            const filtered = list.filter(q => q && q.id !== id && (!numero || q.numero !== numero));
+            const filtered = list.filter(q => q && q.id !== id && (!resolvedNumero || q.numero !== resolvedNumero));
             localStorage.setItem(k, JSON.stringify(filtered));
           }
         }
       } catch (e) {}
     }
 
-    // Scan any other keys in localStorage containing 'quote'
+    // 3. Clean from Supabase service and direct Supabase client
     try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && (key.includes('quote') || key.includes('cotizac'))) {
-          const cached = localStorage.getItem(key);
-          if (cached && (cached.includes(id) || (numero && cached.includes(numero)))) {
-            try {
-              const parsed = JSON.parse(cached);
-              if (Array.isArray(parsed)) {
-                const filtered = parsed.filter((q: any) => q && q.id !== id && (!numero || q.numero !== numero));
-                localStorage.setItem(key, JSON.stringify(filtered));
-              }
-            } catch (e) {}
-          }
-        }
-      }
-    } catch (e) {}
+      await supabaseService.deleteQuote(id, resolvedNumero);
+    } catch (e) {
+      console.warn('Supabase deleteQuote fallback:', e);
+    }
 
-    // 3. Clean from Firestore
-    if (auth.currentUser) {
+    try {
+      if (id) {
+        await supabase.from('quotes').delete().eq('id', id);
+      }
+      if (resolvedNumero) {
+        await supabase.from('quotes').delete().eq('numero', resolvedNumero);
+      }
+    } catch (e) {
+      console.warn('Direct Supabase delete warning:', e);
+    }
+
+    // 4. Clean from Firestore (try direct doc delete and queries)
+    try {
       if (id && !id.startsWith('local_')) {
-        try {
-          await deleteDoc(doc(db, 'quotes', id));
-        } catch (error) {
-          console.warn('Direct deleteDoc error in deleteQuote:', error);
+        await deleteDoc(doc(db, 'quotes', id)).catch(() => {});
+      }
+      if (resolvedNumero) {
+        const qNum = query(collection(db, 'quotes'), where('numero', '==', resolvedNumero));
+        const snapNum = await getDocs(qNum);
+        for (const d of snapNum.docs) {
+          await deleteDoc(doc(db, 'quotes', d.id)).catch(() => {});
         }
       }
-
-      if (numero) {
-        try {
-          const q = query(collection(db, 'quotes'), where('numero', '==', numero));
-          const snap = await getDocs(q);
-          for (const d of snap.docs) {
-            await deleteDoc(doc(db, 'quotes', d.id));
-          }
-        } catch (e) {}
+      const qId = query(collection(db, 'quotes'), where('id', '==', id));
+      const snapId = await getDocs(qId);
+      for (const d of snapId.docs) {
+        await deleteDoc(doc(db, 'quotes', d.id)).catch(() => {});
       }
+    } catch (error) {
+      console.warn('Firestore deleteQuote warning:', error);
     }
   },
 
@@ -3209,6 +3260,7 @@ export const inventoryService = {
         quotes = snap.docs.map(d => ({ id: d.id, ...d.data() } as Quote));
       } catch (e) {}
     }
+    quotes = filterOutDeletedQuotes(quotes);
 
     // 4. Collect sales
     let sales: Sale[] = [];

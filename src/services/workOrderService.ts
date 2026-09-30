@@ -19,6 +19,11 @@ import {
 import { db, auth } from '../firebase';
 import { WorkOrder, WorkOrderStatus, WorkOrderItem, RepairQuote } from '../types';
 import { inventoryService } from './inventoryService';
+import { 
+  markRepairQuoteAsDeleted, 
+  isRepairQuoteDeleted, 
+  filterOutDeletedRepairQuotes 
+} from '../utils/quoteTombstones';
 
 const getStorageKey = () => `taller_work_orders_${auth.currentUser?.uid || 'anon'}`;
 const getQuotesStorageKey = () => `taller_repair_quotes_${auth.currentUser?.uid || 'anon'}`;
@@ -410,11 +415,12 @@ export const workOrderService = {
         const dateB = new Date(b.createdAt || b.fecha || 0).getTime();
         return dateB - dateA;
       });
-      setLocalRepairQuotes(sorted);
-      return sorted;
+      const valid = filterOutDeletedRepairQuotes(sorted);
+      setLocalRepairQuotes(valid);
+      return valid;
     } catch (e) {
       console.warn('Firestore repair quotes fallback to local:', e);
-      return local;
+      return filterOutDeletedRepairQuotes(local);
     }
   },
 
@@ -424,7 +430,7 @@ export const workOrderService = {
       return () => {};
     }
     const uid = auth.currentUser.uid;
-    const local = getLocalRepairQuotes();
+    const local = filterOutDeletedRepairQuotes(getLocalRepairQuotes());
     callback(local);
 
     try {
@@ -442,8 +448,9 @@ export const workOrderService = {
           const dateB = new Date(b.createdAt || b.fecha || 0).getTime();
           return dateB - dateA;
         });
-        setLocalRepairQuotes(sorted);
-        callback(sorted);
+        const valid = filterOutDeletedRepairQuotes(sorted);
+        setLocalRepairQuotes(valid);
+        callback(valid);
       }, (error) => {
         console.warn('Repair quotes snapshot error, using local:', error);
       });
@@ -546,6 +553,9 @@ export const workOrderService = {
 
   async deleteRepairQuote(id: string): Promise<void> {
     const current = getLocalRepairQuotes();
+    const target = current.find(q => q.id === id || q.numero === id);
+    markRepairQuoteAsDeleted(id, target?.numero);
+
     const filtered = current.filter(q => q.id !== id && q.numero !== id);
     setLocalRepairQuotes(filtered);
 

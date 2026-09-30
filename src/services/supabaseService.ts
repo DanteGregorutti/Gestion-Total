@@ -18,6 +18,13 @@ import {
   CashAudit,
   Quote
 } from '../types';
+import { 
+  markQuoteAsDeleted, 
+  unmarkQuoteDeleted, 
+  isQuoteDeleted, 
+  filterOutDeletedQuotes, 
+  scrubQuoteFromLocalStorage 
+} from '../utils/quoteTombstones';
 
 // Helper for unique ID generation
 const generateId = () => {
@@ -614,10 +621,11 @@ export const supabaseService = {
 
       if (error) {
         console.warn('Supabase quotes warning (using cache):', error.message);
-        return getLocal<Quote[]>('quotes', []);
+        return filterOutDeletedQuotes(getLocal<Quote[]>('quotes', []));
       }
 
-      const quotes = (data || []).map((q: any) => {
+      const validRows = filterOutDeletedQuotes(data || []);
+      const quotes = validRows.map((q: any) => {
         let shipping = Number(q.costoEnvio || q.costo_envio || 0);
         if (!shipping && q.condiciones) {
           try {
@@ -640,7 +648,7 @@ export const supabaseService = {
       setLocal('quotes', quotes);
       return quotes;
     } catch {
-      return getLocal<Quote[]>('quotes', []);
+      return filterOutDeletedQuotes(getLocal<Quote[]>('quotes', []));
     }
   },
 
@@ -650,6 +658,8 @@ export const supabaseService = {
     const count = (getLocal<Quote[]>('quotes', []).length + 1).toString().padStart(4, '0');
     const numero = quoteData.numero || `COT-${count}`;
     const costoEnvio = Number(quoteData.costoEnvio) || 0;
+
+    unmarkQuoteDeleted(id, numero);
 
     const newQuote: Quote = {
       ...quoteData,
@@ -668,7 +678,7 @@ export const supabaseService = {
     };
 
     // Cache locally
-    const cached = getLocal<Quote[]>('quotes', []);
+    const cached = filterOutDeletedQuotes(getLocal<Quote[]>('quotes', []));
     setLocal('quotes', [newQuote, ...cached.filter(q => q.id !== id && q.numero !== numero)]);
 
     // Persist to Supabase
@@ -718,15 +728,21 @@ export const supabaseService = {
   },
 
   deleteQuote: async (id: string, numero?: string): Promise<void> => {
+    // 1. Mark in tombstones & scrub from local caches
+    markQuoteAsDeleted(id, numero);
+    scrubQuoteFromLocalStorage(id, numero);
+
     const cached = getLocal<Quote[]>('quotes', []);
     setLocal('quotes', cached.filter(q => q.id !== id && (!numero || q.numero !== numero)));
 
     try {
       if (id) {
-        await supabase.from('quotes').delete().eq('id', id);
+        const { error } = await supabase.from('quotes').delete().eq('id', id);
+        if (error) console.warn('Supabase deleteQuote id error:', error.message);
       }
       if (numero) {
-        await supabase.from('quotes').delete().eq('numero', numero);
+        const { error } = await supabase.from('quotes').delete().eq('numero', numero);
+        if (error) console.warn('Supabase deleteQuote numero error:', error.message);
       }
     } catch (e) {
       console.warn('Supabase deleteQuote error:', e);

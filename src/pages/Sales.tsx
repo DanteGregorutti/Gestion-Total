@@ -303,13 +303,17 @@ export default function Sales() {
   const handleDeleteQuote = async () => {
     if (!quoteToDelete) return;
     const idToDelete = quoteToDelete;
-    const targetQuote = quotes.find(q => q.id === idToDelete);
-    setQuotes(prev => prev.filter(q => q.id !== idToDelete && (!targetQuote || q.numero !== targetQuote.numero)));
+    const targetQuote = quotes.find(q => q.id === idToDelete || q.numero === idToDelete);
+    const resolvedNum = targetQuote?.numero || (idToDelete.startsWith('COT-') ? idToDelete : undefined);
+
+    // Optimistically remove immediately from local state
+    setQuotes(prev => prev.filter(q => q.id !== idToDelete && q.numero !== idToDelete && (!resolvedNum || q.numero !== resolvedNum)));
     setQuoteToDelete(null);
     setIsDeleteQuoteModalOpen(false);
+
     try {
-      await inventoryService.deleteQuote(idToDelete, targetQuote?.numero);
-      toast.success('Cotización eliminada');
+      await inventoryService.deleteQuote(idToDelete, resolvedNum);
+      toast.success('Cotización eliminada permanentemente');
       await refreshData();
     } catch (error) {
       toast.error('Error al eliminar la cotización');
