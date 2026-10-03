@@ -384,7 +384,11 @@ export const supabaseService = {
 
     // Persist to Supabase
     try {
-      const { error } = await supabase.from('sales').insert(formattedSales);
+      const dbSales = formattedSales.map(s => {
+        const { personalizacion, ...rest } = s as any;
+        return rest;
+      });
+      const { error } = await supabase.from('sales').insert(dbSales);
       if (error) {
         console.warn('Supabase sale insert warning:', error);
       }
@@ -645,8 +649,28 @@ export const supabaseService = {
         };
       }) as Quote[];
 
-      setLocal('quotes', quotes);
-      return quotes;
+      // Deduplicate so that if any duplicate is accepted, it stays accepted
+      const dedupedQuotesMap = new Map<string, Quote>();
+      for (const q of quotes) {
+        const key = (q.numero?.trim() || q.id?.trim() || '').toLowerCase();
+        if (!key) continue;
+        if (!dedupedQuotesMap.has(key)) {
+          dedupedQuotesMap.set(key, { ...q });
+        } else {
+          const existing = dedupedQuotesMap.get(key)!;
+          if (q.estado === 'aceptada' || existing.estado === 'aceptada') {
+            existing.estado = 'aceptada';
+            if (q.saleId || (q as any).sale_id) existing.saleId = q.saleId || (q as any).sale_id;
+          }
+          if (existing.id?.startsWith('local_') && !q.id?.startsWith('local_')) {
+            existing.id = q.id;
+          }
+        }
+      }
+      const dedupedList = Array.from(dedupedQuotesMap.values());
+
+      setLocal('quotes', dedupedList);
+      return dedupedList;
     } catch {
       return filterOutDeletedQuotes(getLocal<Quote[]>('quotes', []));
     }
@@ -737,24 +761,29 @@ export const supabaseService = {
 
     try {
       if (id) {
-        const { error } = await supabase.from('quotes').delete().eq('id', id);
-        if (error) console.warn('Supabase deleteQuote id error:', error.message);
+        await supabase.from('quotes').delete().eq('id', id);
+        await supabase.from('quotes').delete().eq('numero', id);
       }
       if (numero) {
-        const { error } = await supabase.from('quotes').delete().eq('numero', numero);
-        if (error) console.warn('Supabase deleteQuote numero error:', error.message);
+        await supabase.from('quotes').delete().eq('numero', numero);
+        await supabase.from('quotes').delete().eq('id', numero);
       }
     } catch (e) {
       console.warn('Supabase deleteQuote error:', e);
     }
   },
 
-  updateQuote: async (id: string, updates: Partial<Quote>): Promise<void> => {
+  updateQuote: async (id: string, updates: Partial<Quote>, numero?: string): Promise<void> => {
     const cached = getLocal<Quote[]>('quotes', []);
-    setLocal('quotes', cached.map(q => q.id === id ? { ...q, ...updates } : q));
+    setLocal('quotes', cached.map(q => (q.id === id || (numero && q.numero === numero)) ? { ...q, ...updates } : q));
 
     try {
-      await supabase.from('quotes').update(updates).eq('id', id);
+      if (id) {
+        await supabase.from('quotes').update(updates).eq('id', id);
+      }
+      if (numero) {
+        await supabase.from('quotes').update(updates).eq('numero', numero);
+      }
     } catch (e) {
       console.warn('Supabase updateQuote error:', e);
     }
@@ -859,27 +888,195 @@ export const supabaseService = {
     try {
       const { data, error } = await supabase.from('finances').select('*').order('fecha', { ascending: false });
       if (error) return getLocal<FinanceTransaction[]>('finances', []);
-      setLocal('finances', data || []);
-      return data || [];
+      const formatted = (data || []).map((row: any) => ({
+        ...row,
+        monto: Number(row.monto) || 0
+      })) as FinanceTransaction[];
+      setLocal('finances', formatted);
+      return formatted;
     } catch {
       return getLocal<FinanceTransaction[]>('finances', []);
     }
   },
 
-  addFinance: async (transaction: Omit<FinanceTransaction, 'id' | 'createdAt' | 'createdBy'>): Promise<string> => {
-    const id = generateId();
+  addFinance: async (transaction: Omit<FinanceTransaction, 'id' | 'createdAt' | 'createdBy'> & { id?: string }): Promise<string> => {
+    const id = transaction.id || generateId();
     const now = new Date().toISOString();
-    const item: FinanceTransaction = { ...transaction, id, createdAt: now, createdBy: 'admin' };
+    const item: FinanceTransaction = {
+      ...transaction,
+      id,
+      monto: Number(transaction.monto) || 0,
+      createdAt: now,
+      createdBy: 'admin'
+    };
 
     const cached = getLocal<FinanceTransaction[]>('finances', []);
-    setLocal('finances', [item, ...cached]);
+    setLocal('finances', [item, ...cached.filter(f => f.id !== id)]);
 
     try {
-      await supabase.from('finances').insert([item]);
+      const { error } = await supabase.from('finances').insert([item]);
+      if (error) console.warn('Supabase addFinance warning:', error.message);
     } catch (e) {
-      console.warn(e);
+      console.warn('Supabase addFinance network exception:', e);
     }
     return id;
+  },
+
+  updateFinance: async (id: string, updates: Partial<FinanceTransaction>): Promise<void> => {
+    const cached = getLocal<FinanceTransaction[]>('finances', []);
+    setLocal('finances', cached.map(f => f.id === id ? { ...f, ...updates } : f));
+
+    try {
+      const { error } = await supabase.from('finances').update(updates).eq('id', id);
+      if (error) console.warn('Supabase updateFinance warning:', error.message);
+    } catch (e) {
+      console.warn('Supabase updateFinance network exception:', e);
+    }
+  },
+
+  deleteFinance: async (id: string): Promise<void> => {
+    const cached = getLocal<FinanceTransaction[]>('finances', []);
+    setLocal('finances', cached.filter(f => f.id !== id));
+
+    try {
+      const { error } = await supabase.from('finances').delete().eq('id', id);
+      if (error) console.warn('Supabase deleteFinance warning:', error.message);
+    } catch (e) {
+      console.warn('Supabase deleteFinance network exception:', e);
+    }
+  },
+
+  bulkDeleteFinances: async (ids: string[]): Promise<void> => {
+    if (!ids || ids.length === 0) return;
+    const idsSet = new Set(ids);
+    const cached = getLocal<FinanceTransaction[]>('finances', []);
+    setLocal('finances', cached.filter(f => !idsSet.has(f.id)));
+
+    try {
+      const { error } = await supabase.from('finances').delete().in('id', ids);
+      if (error) console.warn('Supabase bulkDeleteFinances warning:', error.message);
+    } catch (e) {
+      console.warn('Supabase bulkDeleteFinances network exception:', e);
+    }
+  },
+
+  subscribeToFinances: (onData: (finances: FinanceTransaction[]) => void): (() => void) => {
+    supabaseService.getFinances().then(onData);
+
+    const channelName = 'sb_rt_finances_' + Math.random().toString(36).substring(2, 9);
+    const channel = supabase
+      .channel(channelName)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'finances' }, async () => {
+        const fresh = await supabaseService.getFinances();
+        onData(fresh);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  },
+
+  subscribeToPurchases: (onData: (purchases: Purchase[]) => void): (() => void) => {
+    supabaseService.getPurchases().then(onData);
+
+    const channelName = 'sb_rt_purchases_' + Math.random().toString(36).substring(2, 9);
+    const channel = supabase
+      .channel(channelName)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'purchases' }, async () => {
+        const fresh = await supabaseService.getPurchases();
+        onData(fresh);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  },
+
+  subscribeToProducts: (onData: (products: Product[]) => void): (() => void) => {
+    supabaseService.getProducts().then(onData);
+
+    const channelName = 'sb_rt_products_' + Math.random().toString(36).substring(2, 9);
+    const channel = supabase
+      .channel(channelName)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, async () => {
+        const fresh = await supabaseService.getProducts();
+        onData(fresh);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  },
+
+  subscribeToClients: (onData: (clients: Client[]) => void): (() => void) => {
+    supabaseService.getClients().then(onData);
+
+    const channelName = 'sb_rt_clients_' + Math.random().toString(36).substring(2, 9);
+    const channel = supabase
+      .channel(channelName)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, async () => {
+        const fresh = await supabaseService.getClients();
+        onData(fresh);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  },
+
+  subscribeToSuppliers: (onData: (suppliers: Supplier[]) => void): (() => void) => {
+    supabaseService.getSuppliers().then(onData);
+
+    const channelName = 'sb_rt_suppliers_' + Math.random().toString(36).substring(2, 9);
+    const channel = supabase
+      .channel(channelName)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'suppliers' }, async () => {
+        const fresh = await supabaseService.getSuppliers();
+        onData(fresh);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  },
+
+  subscribeToWarehouses: (onData: (warehouses: Warehouse[]) => void): (() => void) => {
+    supabaseService.getWarehouses().then(onData);
+
+    const channelName = 'sb_rt_warehouses_' + Math.random().toString(36).substring(2, 9);
+    const channel = supabase
+      .channel(channelName)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'warehouses' }, async () => {
+        const fresh = await supabaseService.getWarehouses();
+        onData(fresh);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  },
+
+  subscribeToMovements: (onData: (movements: Movement[]) => void): (() => void) => {
+    supabaseService.getMovements().then(onData);
+
+    const channelName = 'sb_rt_movements_' + Math.random().toString(36).substring(2, 9);
+    const channel = supabase
+      .channel(channelName)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'movements' }, async () => {
+        const fresh = await supabaseService.getMovements();
+        onData(fresh);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   },
 
   // --- MOVEMENTS ---

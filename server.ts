@@ -8,7 +8,9 @@ dotenv.config();
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const portArgIndex = process.argv.indexOf('--port');
+  const cliPort = portArgIndex !== -1 && process.argv[portArgIndex + 1] ? Number(process.argv[portArgIndex + 1]) : null;
+  const PORT = cliPort || Number(process.env.PORT) || 3000;
 
   app.use(express.json());
 

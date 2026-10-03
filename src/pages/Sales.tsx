@@ -127,7 +127,7 @@ export default function Sales() {
   const [isReceiptModalOpen, setIsReceiptModalOpen] = React.useState(false);
   const [selectedReceiptQuote, setSelectedReceiptQuote] = React.useState<Quote | null>(null);
   const [selectedReceiptSale, setSelectedReceiptSale] = React.useState<Sale | null>(null);
-  const [quoteToDelete, setQuoteToDelete] = React.useState<string | null>(null);
+  const [quoteToDelete, setQuoteToDelete] = React.useState<{ id: string; numero?: string } | null>(null);
   const [isDeleteQuoteModalOpen, setIsDeleteQuoteModalOpen] = React.useState(false);
 
   // Top frequent/usual clients for quick 1-tap selection in sales
@@ -279,18 +279,35 @@ export default function Sales() {
   const handleConvertToSale = async (quote: Quote) => {
     if (convertingQuoteId) return;
     setConvertingQuoteId(quote.id);
-    // Remove immediately from state so it vanishes from pending quotes without waiting
-    setQuotes(prev => prev.filter(q => q.id !== quote.id && q.numero !== quote.numero));
+    // Mark immediately as accepted so it transitions smoothly to Concretadas without disappearing
+    setQuotes(prev => prev.map(q => 
+      (q.id === quote.id || (quote.numero && q.numero === quote.numero))
+        ? { ...q, estado: 'aceptada' }
+        : q
+    ));
     if (selectedReceiptQuote?.id === quote.id || selectedReceiptQuote?.numero === quote.numero) {
-      setSelectedReceiptQuote(null);
+      setSelectedReceiptQuote(prev => prev ? { ...prev, estado: 'aceptada' } : null);
     }
     try {
       const createdSales = await inventoryService.convertQuoteToSale(quote);
       if (createdSales && createdSales.length > 0) {
         setSales(prev => [...createdSales, ...prev.filter(s => !createdSales.some(c => c.id === s.id))]);
       }
-      toast.success('¡Cotización aprobada! Venta registrada y stock actualizado.');
+      toast.success(`¡Cotización ${quote.numero || ''} concretada con éxito! Venta registrada.`);
       await refreshData();
+      // Guarantee local state retains accepted status
+      setQuotes(prev => prev.map(q => 
+        (q.id === quote.id || (quote.numero && q.numero === quote.numero))
+          ? { ...q, estado: 'aceptada' }
+          : q
+      ));
+      if (selectedReceiptQuote?.id === quote.id || selectedReceiptQuote?.numero === quote.numero) {
+        setSelectedReceiptQuote(prev => prev ? { ...prev, estado: 'aceptada' } : null);
+      }
+      // If user was on the "Pendientes" tab, switch to "Todas" so they see the quote marked Concretada immediately
+      if (quoteStatusFilter === 'pendiente') {
+        setQuoteStatusFilter('todas');
+      }
     } catch (error) {
       console.error('Error al convertir cotización:', error);
       toast.error('Error al convertir la cotización en venta');
@@ -302,9 +319,9 @@ export default function Sales() {
 
   const handleDeleteQuote = async () => {
     if (!quoteToDelete) return;
-    const idToDelete = quoteToDelete;
-    const targetQuote = quotes.find(q => q.id === idToDelete || q.numero === idToDelete);
-    const resolvedNum = targetQuote?.numero || (idToDelete.startsWith('COT-') ? idToDelete : undefined);
+    const { id: idToDelete, numero: numToDelete } = quoteToDelete;
+    const targetQuote = quotes.find(q => q.id === idToDelete || q.numero === idToDelete || (numToDelete && q.numero === numToDelete));
+    const resolvedNum = numToDelete || targetQuote?.numero || (idToDelete.startsWith('COT-') ? idToDelete : undefined);
 
     // Optimistically remove immediately from local state
     setQuotes(prev => prev.filter(q => q.id !== idToDelete && q.numero !== idToDelete && (!resolvedNum || q.numero !== resolvedNum)));
@@ -314,10 +331,10 @@ export default function Sales() {
     try {
       await inventoryService.deleteQuote(idToDelete, resolvedNum);
       toast.success('Cotización eliminada permanentemente');
-      await refreshData();
+      setQuotes(prev => prev.filter(q => q.id !== idToDelete && q.numero !== idToDelete && (!resolvedNum || q.numero !== resolvedNum)));
     } catch (error) {
+      console.error('Error al eliminar cotización:', error);
       toast.error('Error al eliminar la cotización');
-      await refreshData();
     }
   };
 
@@ -802,8 +819,8 @@ export default function Sales() {
             setIsReceiptModalOpen(true);
           }}
           onConvertToSale={handleConvertToSale}
-          onDeleteQuote={(quoteId) => {
-            setQuoteToDelete(quoteId);
+          onDeleteQuote={(quoteId, quoteNumero) => {
+            setQuoteToDelete({ id: quoteId, numero: quoteNumero });
             setIsDeleteQuoteModalOpen(true);
           }}
           onRefresh={refreshData}
@@ -1977,20 +1994,37 @@ export default function Sales() {
       {/* Confirmation Modal for Quotes */}
       <ConfirmationModal 
         isOpen={isDeleteQuoteModalOpen}
-        onClose={() => setIsDeleteQuoteModalOpen(false)}
+        onClose={() => {
+          setIsDeleteQuoteModalOpen(false);
+          setQuoteToDelete(null);
+        }}
         onConfirm={handleDeleteQuote}
         title="Eliminar Cotización"
         message="¿Estás seguro de que deseas eliminar este presupuesto/cotización? Esta acción no se puede deshacer."
-        confirmLabel="Eliminar"
+        confirmLabel="Eliminar Cotización"
       />
 
       {/* Receipt Modal (Presupuestos & Comprobantes No Fiscales) */}
       <ReceiptModal
         isOpen={isReceiptModalOpen}
-        onClose={() => setIsReceiptModalOpen(false)}
+        onClose={() => {
+          setIsReceiptModalOpen(false);
+          setSelectedReceiptQuote(null);
+        }}
         quote={selectedReceiptQuote}
         sale={selectedReceiptSale}
         onConvertToSale={handleConvertToSale}
+        onDeleteQuote={async (quoteId, quoteNumero) => {
+          setQuotes(prev => prev.filter(q => q.id !== quoteId && q.numero !== quoteId && (!quoteNumero || q.numero !== quoteNumero)));
+          try {
+            await inventoryService.deleteQuote(quoteId, quoteNumero);
+            toast.success('Cotización eliminada permanentemente');
+            setQuotes(prev => prev.filter(q => q.id !== quoteId && q.numero !== quoteId && (!quoteNumero || q.numero !== quoteNumero)));
+          } catch (error) {
+            console.error('Error al eliminar cotización:', error);
+            toast.error('Error al eliminar la cotización');
+          }
+        }}
       />
 
       {/* New / Edit Quote Modal */}

@@ -196,9 +196,7 @@ service cloud.firestore {
 
     // Quotes / Presupuestos (Documento no válido como factura)
     match /quotes/{quoteId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
-      allow update, delete: if isAuthenticated();
+      allow read, write: if true;
     }
 
     // Purchases
@@ -250,10 +248,7 @@ service cloud.firestore {
 
     // Repair Quotes (Cotizaciones y Presupuestos de Reparación de Taller)
     match /repair_quotes/{quoteId} {
-      allow get: if true;
-      allow list: if isAuthenticated() && (isAdmin() || isEmployee() || resource.data.get('createdBy', '') == request.auth.uid);
-      allow create: if isAuthenticated() && (isAdmin() || isEmployee() || request.resource.data.get('createdBy', '') == request.auth.uid);
-      allow update, delete: if isAuthenticated() && (isAdmin() || isDocOwner());
+      allow read, write: if true;
     }
 
     // Purchase Orders (Órdenes de Compra a Proveedores)

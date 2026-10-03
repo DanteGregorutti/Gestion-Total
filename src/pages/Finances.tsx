@@ -141,17 +141,37 @@ export default function Finances() {
     };
   }, []);
 
+  // Helper safe date parser
+  const parseDateSafe = (raw: any): Date => {
+    if (!raw) return new Date();
+    if (raw?.toDate && typeof raw.toDate === 'function') return raw.toDate();
+    if (raw instanceof Date) return isNaN(raw.getTime()) ? new Date() : raw;
+    if (typeof raw === 'string') {
+      const trimmed = raw.trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+        const [y, m, d] = trimmed.split('-').map(Number);
+        return new Date(y, m - 1, d, 12, 0, 0);
+      }
+    }
+    const d = new Date(raw);
+    return isNaN(d.getTime()) ? new Date() : d;
+  };
+
   // Helper date checker
   const isWithinDateFilter = (rawDate: any, filter: DateFilter) => {
     if (filter === 'all') return true;
-    const date = rawDate?.toDate ? rawDate.toDate() : new Date(rawDate);
+    const date = parseDateSafe(rawDate);
     const now = new Date();
     
     if (filter === 'today') {
-      return date.toDateString() === now.toDateString();
+      return (
+        date.getDate() === now.getDate() &&
+        date.getMonth() === now.getMonth() &&
+        date.getFullYear() === now.getFullYear()
+      );
     }
     if (filter === 'week') {
-      const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const weekAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7, 0, 0, 0);
       return date >= weekAgo;
     }
     if (filter === 'month') {
@@ -241,8 +261,8 @@ export default function Finances() {
 
     // Sort by date descending
     return list.sort((a, b) => {
-      const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha);
-      const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha);
+      const dateA = parseDateSafe(a.fecha);
+      const dateB = parseDateSafe(b.fecha);
       return dateB.getTime() - dateA.getTime();
     });
   }, [finances, sales, purchases, sourceFilter]);
@@ -301,6 +321,7 @@ export default function Finances() {
         toast.success('Compra eliminada del inventario');
       } else {
         await inventoryService.deleteFinanceTransaction(deleteTarget.id);
+        setFinances(prev => prev.filter(f => f.id !== deleteTarget.id));
         toast.success('Movimiento eliminado');
       }
       setDeleteTarget(null);
@@ -376,6 +397,7 @@ export default function Finances() {
       // 3. Delete finances in batch
       if (financesToDelete.length > 0) {
         await inventoryService.bulkDeleteFinanceTransactions(financesToDelete);
+        setFinances(prev => prev.filter(f => !financesToDelete.includes(f.id)));
       }
 
       toast.success(`${selectedIds.length} movimiento(s) eliminado(s) correctamente`);
@@ -838,7 +860,7 @@ export default function Finances() {
               {displayedItems.map((item) => {
                 const isIncome = item.tipo === 'ingreso';
                 const isSelected = selectedIds.includes(item.id);
-                const dateObj = item.fecha?.toDate ? item.fecha.toDate() : new Date(item.fecha);
+                const dateObj = parseDateSafe(item.fecha);
                 const dateStr = dateObj.toLocaleDateString('es-AR', {
                   day: '2-digit',
                   month: 'short'
@@ -1029,7 +1051,7 @@ export default function Finances() {
         defaultType={modalType}
         onClose={() => setModalOpen(false)}
         onSuccess={() => {
-          // Handled via real-time subscription
+          inventoryService.getFinances().then(setFinances);
         }}
       />
 

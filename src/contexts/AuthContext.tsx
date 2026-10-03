@@ -16,9 +16,8 @@ import {
   GoogleAuthProvider,
   signInWithPopup
 } from 'firebase/auth';
-import { auth, db } from '../firebase';
+import { auth } from '../firebase';
 import { supabase } from '../supabase';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 interface AuthContextType {
   user: any;
@@ -69,23 +68,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         let role = 'admin';
         try {
-          const userRef = doc(db, 'users', firebaseUser.uid);
-          const userSnap = await getDoc(userRef);
-          if (!userSnap.exists()) {
-            await setDoc(userRef, {
-              uid: firebaseUser.uid,
-              email: firebaseUser.email,
-              displayName: firebaseUser.displayName,
-              photoURL: firebaseUser.photoURL,
-              role: 'admin',
-              createdAt: serverTimestamp()
-            });
-          } else {
-            role = userSnap.data().role || 'admin';
-          }
-        } catch (e) {
-          console.warn('User profile sync notice:', e);
-        }
+          const cachedRole = localStorage.getItem(`user_role_${firebaseUser.uid}`);
+          if (cachedRole) role = cachedRole;
+        } catch (e) {}
 
         setUser({
           ...firebaseUser,
@@ -177,16 +162,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       await updateProfile(userCredential.user, { displayName: name });
       await sendEmailVerification(userCredential.user);
-      
       try {
-        const userRef = doc(db, 'users', userCredential.user.uid);
-        await setDoc(userRef, {
-          uid: userCredential.user.uid,
-          email: email,
-          displayName: name,
-          role: 'admin',
-          createdAt: serverTimestamp()
-        });
+        localStorage.setItem(`user_role_${userCredential.user.uid}`, 'admin');
       } catch (e) {}
     } catch (fbErr) {
       // If Firebase fails (e.g. quota), but Supabase created the user, auto-login with Supabase

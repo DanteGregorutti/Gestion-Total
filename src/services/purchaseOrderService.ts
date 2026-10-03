@@ -3,19 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { 
-  collection, 
-  getDocs, 
-  setDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc, 
-  orderBy, 
-  query, 
-  where,
-  onSnapshot 
-} from 'firebase/firestore';
-import { db, auth } from '../firebase';
+import { auth } from '../firebase';
 import { PurchaseOrder, PurchaseOrderStatus, PurchaseOrderItem } from '../types';
 import { inventoryService } from './inventoryService';
 
@@ -35,6 +23,9 @@ const getLocalOrders = (): PurchaseOrder[] => {
 const setLocalOrders = (orders: PurchaseOrder[]) => {
   try {
     localStorage.setItem(getStorageKey(), JSON.stringify(orders));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('purchase_orders_changed', { detail: orders }));
+    }
   } catch (e) {
     console.error('Error saving purchase orders to localStorage:', e);
   }
@@ -44,30 +35,12 @@ export const samplePurchaseOrders: PurchaseOrder[] = [];
 
 export const purchaseOrderService = {
   async getPurchaseOrders(): Promise<PurchaseOrder[]> {
-    if (!auth.currentUser) return [];
-    const uid = auth.currentUser.uid;
     const local = getLocalOrders();
-
-    try {
-      const q = query(
-        collection(db, 'purchase_orders'),
-        where('createdBy', '==', uid)
-      );
-      const snapshot = await getDocs(q);
-      const orders = snapshot.docs.map(doc => ({
-        ...(doc.data() as PurchaseOrder),
-        id: doc.id
-      })).sort((a, b) => {
-        const dateA = new Date(a.createdAt || a.fechaEmision || 0).getTime();
-        const dateB = new Date(b.createdAt || b.fechaEmision || 0).getTime();
-        return dateB - dateA;
-      });
-      setLocalOrders(orders);
-      return orders;
-    } catch (e) {
-      console.warn('Firestore purchase orders fallback to local:', e);
-      return local;
-    }
+    return local.sort((a, b) => {
+      const dateA = new Date(a.createdAt || a.fechaEmision || 0).getTime();
+      const dateB = new Date(b.createdAt || b.fechaEmision || 0).getTime();
+      return dateB - dateA;
+    });
   },
 
   async createPurchaseOrder(data: Partial<PurchaseOrder>): Promise<PurchaseOrder> {
@@ -83,8 +56,7 @@ export const purchaseOrderService = {
       return max;
     }, 1000);
     const numero = `OC-${maxNum + 1}`;
-    const newDocRef = doc(collection(db, 'purchase_orders'));
-    const id = newDocRef.id;
+    const id = 'po_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 7);
     const now = new Date().toISOString();
 
     const subtotal = (data.items || []).reduce((acc, it) => acc + (Number(it.subtotal) || 0), 0);
@@ -113,12 +85,6 @@ export const purchaseOrderService = {
 
     const updated = [newOrder, ...currentOrders];
     setLocalOrders(updated);
-
-    try {
-      await setDoc(newDocRef, newOrder);
-    } catch (e) {
-      console.warn('Firestore createPurchaseOrder fallback:', e);
-    }
 
     return newOrder;
   },
@@ -149,12 +115,6 @@ export const purchaseOrderService = {
     currentOrders[index] = merged;
     setLocalOrders(currentOrders);
 
-    try {
-      await updateDoc(doc(db, 'purchase_orders', id), merged as any);
-    } catch (e) {
-      console.warn('Firestore updatePurchaseOrder fallback:', e);
-    }
-
     return merged;
   },
 
@@ -162,22 +122,6 @@ export const purchaseOrderService = {
     const current = getLocalOrders();
     const filtered = current.filter(o => o.id !== id && o.numero !== id);
     setLocalOrders(filtered);
-
-    try {
-      await deleteDoc(doc(db, 'purchase_orders', id));
-    } catch (e) {
-      console.warn('Firestore direct deletePurchaseOrder fallback:', e);
-    }
-
-    try {
-      const q = query(collection(db, 'purchase_orders'), where('id', '==', id));
-      const snap = await getDocs(q);
-      for (const d of snap.docs) {
-        await deleteDoc(doc(db, 'purchase_orders', d.id));
-      }
-    } catch (e) {
-      console.warn('Firestore query deletePurchaseOrder fallback:', e);
-    }
   },
 
   async updateStatus(id: string, estado: PurchaseOrderStatus): Promise<PurchaseOrder> {
@@ -220,82 +164,63 @@ export const purchaseOrderService = {
   },
 
   subscribeToPurchaseOrders(callback: (orders: PurchaseOrder[]) => void) {
-    if (!auth.currentUser) {
-      callback([]);
-      return () => {};
-    }
-    const uid = auth.currentUser.uid;
-    const local = getLocalOrders();
-    callback(local);
-
-    try {
-      const q = query(
-        collection(db, 'purchase_orders'),
-        where('createdBy', '==', uid)
-      );
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const orders = snapshot.docs.map(doc => ({
-          ...(doc.data() as PurchaseOrder),
-          id: doc.id
-        })).sort((a, b) => {
-          const dateA = new Date(a.createdAt || a.fechaEmision || 0).getTime();
-          const dateB = new Date(b.createdAt || b.fechaEmision || 0).getTime();
-          return dateB - dateA;
-        });
-        setLocalOrders(orders);
-        callback(orders);
-      }, (err) => {
-        console.warn('Snapshot listener for purchase_orders:', err);
+    const emit = () => {
+      const local = getLocalOrders().sort((a, b) => {
+        const dateA = new Date(a.createdAt || a.fechaEmision || 0).getTime();
+        const dateB = new Date(b.createdAt || b.fechaEmision || 0).getTime();
+        return dateB - dateA;
       });
-      return unsubscribe;
-    } catch (e) {
-      console.warn('Could not establish real-time listener for purchase_orders:', e);
-      return () => {};
+      callback(local);
+    };
+
+    emit();
+
+    const handler = () => emit();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('purchase_orders_changed', handler);
+      window.addEventListener('storage', handler);
     }
+
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('purchase_orders_changed', handler);
+        window.removeEventListener('storage', handler);
+      }
+    };
   },
 
   /**
    * Formats order details for WhatsApp to send directly to the supplier
    */
   getWhatsAppMessage(order: PurchaseOrder): string {
-    let msg = `*ORDEN DE COMPRA OFICIAL*\n`;
-    msg += `📋 *Número:* ${order.numero}\n`;
-    msg += `🏢 *Proveedor:* ${order.proveedor}\n`;
-    msg += `📅 *Fecha:* ${new Date(order.fechaEmision).toLocaleDateString('es-AR')}\n`;
-    if (order.fechaEsperada) {
-      msg += `🚚 *Fecha requerida de entrega:* ${new Date(order.fechaEsperada).toLocaleDateString('es-AR')}\n`;
-    }
-    if (order.condicionPago) {
-      msg += `💳 *Condición de Pago:* ${order.condicionPago}\n`;
-    }
-    msg += `--------------------------------\n`;
-    msg += `*DETALLE DE ARTÍCULOS PEDIDOS:*\n`;
+    const lines = [
+      `*ORDEN DE COMPRA: ${order.numero}*`,
+      `📅 Fecha: ${new Date(order.fechaEmision).toLocaleDateString()}`,
+      `🏭 Proveedor: ${order.proveedor}`,
+      `💳 Condición: ${order.condicionPago}`,
+      '',
+      '*DETALLE DE PRODUCTOS:*'
+    ];
 
     order.items.forEach((item, idx) => {
-      const codStr = item.codigo ? `[${item.codigo}] ` : '';
-      msg += `${idx + 1}. *${codStr}${item.productNombre}*\n`;
-      msg += `   ${item.cantidad} un. x $${item.costoEstimado.toLocaleString('es-AR')} = *$${item.subtotal.toLocaleString('es-AR')}*\n`;
+      lines.push(`${idx + 1}. ${item.productNombre} x${item.cantidad} ($${item.costoEstimado.toLocaleString()} c/u) = $${item.subtotal.toLocaleString()}`);
     });
 
-    msg += `--------------------------------\n`;
     if (order.flete && order.flete > 0) {
-      msg += `Subtotal: $${order.subtotal.toLocaleString('es-AR')}\n`;
-      msg += `Flete / Envío: $${order.flete.toLocaleString('es-AR')}\n`;
+      lines.push(`🚚 Flete / Envío: $${order.flete.toLocaleString()}`);
     }
-    msg += `💰 *TOTAL ESTIMADO: $${order.total.toLocaleString('es-AR')}*\n\n`;
+
+    lines.push('');
+    lines.push(`*TOTAL ORDEN: $${order.total.toLocaleString()}*`);
+
+    if (order.fechaEsperada) {
+      lines.push(`⏱️ Entrega esperada: ${new Date(order.fechaEsperada).toLocaleDateString()}`);
+    }
 
     if (order.notas) {
-      msg += `📝 *Instrucciones / Observaciones:* ${order.notas}\n\n`;
+      lines.push(`📝 Observaciones: ${order.notas}`);
     }
 
-    msg += `_Por favor confirmar recepción del pedido, stock disponible y fecha de despacho._\n`;
-    msg += `¡Muchas gracias!`;
-
-    const encoded = encodeURIComponent(msg);
-    if (order.proveedorTelefono) {
-      const cleanPhone = order.proveedorTelefono.replace(/\D/g, '');
-      return `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encoded}`;
-    }
-    return `https://api.whatsapp.com/send?text=${encoded}`;
+    return encodeURIComponent(lines.join('\n'));
   }
 };

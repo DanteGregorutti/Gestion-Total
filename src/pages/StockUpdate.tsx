@@ -11,8 +11,6 @@ import { motion, AnimatePresence } from 'motion/react';
 import { inventoryService } from '../services/inventoryService';
 import { Product } from '../types';
 import { toast } from 'sonner';
-import { doc, getDocFromServer } from 'firebase/firestore';
-import { db } from '../firebase';
 import { useSettings } from '../contexts/SettingsContext';
 
 export default function StockUpdate() {
@@ -29,13 +27,9 @@ export default function StockUpdate() {
     const fetchProduct = async () => {
       if (!productId) return;
       try {
-        const docRef = doc(db, 'products', productId);
-        const docSnap = await getDocFromServer(docRef);
-        if (docSnap.exists()) {
-          setProduct({ id: docSnap.id, ...docSnap.data() } as Product);
-        } else {
-          setProduct(null);
-        }
+        const products = await inventoryService.getProducts();
+        const found = products.find(p => p.id === productId || p.codigo === productId);
+        setProduct(found || null);
       } catch (error) {
         console.error('Error fetching product:', error);
         setProduct(null);

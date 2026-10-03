@@ -6,8 +6,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { inventoryService } from '../services/inventoryService';
 import { useAuth } from './AuthContext';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../firebase';
 import { QuoteStyle } from '../utils/receiptPrinter';
 
 export interface CompanyProfile {
@@ -766,25 +764,6 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
         setCompanyProfile(prev => ({ ...prev, ...JSON.parse(savedLocal) }));
       }
     } catch (e) {}
-
-    const loadFromFirestore = async () => {
-      try {
-        const userDocRef = doc(db, 'users', user.uid);
-        const snap = await getDoc(userDocRef);
-        if (snap.exists() && snap.data()?.companyProfile) {
-          const remote = snap.data().companyProfile as Partial<CompanyProfile>;
-          setCompanyProfile(prev => {
-            const merged = { ...prev, ...remote };
-            safePersistProfile(userKey, merged);
-            safePersistProfile('company_profile', merged);
-            return merged;
-          });
-        }
-      } catch (err) {
-        // Silently fallback to local storage
-      }
-    };
-    loadFromFirestore();
   }, [user?.uid]);
 
   const updateCompanyProfile = async (partial: Partial<CompanyProfile>) => {
@@ -797,15 +776,6 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       safePersistProfile('company_profile', nextState);
       return nextState;
     });
-
-    if (user?.uid) {
-      try {
-        const userDocRef = doc(db, 'users', user.uid);
-        await setDoc(userDocRef, { companyProfile: nextState }, { merge: true });
-      } catch (err) {
-        console.warn('Could not sync company profile to Firestore', err);
-      }
-    }
   };
 
   // App Settings (Full configurability)
@@ -857,39 +827,6 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       }
     } catch (e) {}
 
-    const loadAppSettingsFromFirestore = async () => {
-      try {
-        const userDocRef = doc(db, 'users', user.uid);
-        const snap = await getDoc(userDocRef);
-        if (snap.exists() && snap.data()?.appSettings) {
-          const remote = snap.data().appSettings as Partial<AppSettings>;
-          setAppSettings(prev => {
-            const merged = {
-              ...prev,
-              ...remote,
-              activePaymentMethods: {
-                ...prev.activePaymentMethods,
-                ...(remote.activePaymentMethods || {})
-              },
-              paymentMethodSurcharges: {
-                ...prev.paymentMethodSurcharges,
-                ...(remote.paymentMethodSurcharges || {})
-              },
-              sidebarModules: {
-                ...prev.sidebarModules,
-                ...(remote.sidebarModules || {})
-              }
-            };
-            try {
-              localStorage.setItem(userKey, JSON.stringify(merged));
-              localStorage.setItem('app_settings', JSON.stringify(merged));
-            } catch {}
-            return merged;
-          });
-        }
-      } catch (err) {}
-    };
-    loadAppSettingsFromFirestore();
   }, [user?.uid]);
 
   const updateAppSettings = async (partial: Partial<AppSettings>) => {
@@ -937,15 +874,6 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       }
       return updated;
     });
-
-    if (user?.uid) {
-      try {
-        const userDocRef = doc(db, 'users', user.uid);
-        await setDoc(userDocRef, { appSettings: nextState }, { merge: true });
-      } catch (err) {
-        console.warn('Could not sync app settings to Firestore', err);
-      }
-    }
   };
 
   const resetAppSettingsToDefault = async () => {
@@ -956,13 +884,6 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       }
       localStorage.setItem('app_settings', JSON.stringify(defaultAppSettings));
     } catch {}
-
-    if (user?.uid) {
-      try {
-        const userDocRef = doc(db, 'users', user.uid);
-        await setDoc(userDocRef, { appSettings: defaultAppSettings }, { merge: true });
-      } catch (err) {}
-    }
   };
 
   const togglePreference = (key: string) => {

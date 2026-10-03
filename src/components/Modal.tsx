@@ -15,9 +15,10 @@ interface ModalProps {
   children: React.ReactNode;
   className?: string;
   maxWidth?: string;
+  zIndex?: string;
 }
 
-export default function Modal({ isOpen, onClose, title, children, className, maxWidth = 'max-w-2xl' }: ModalProps) {
+export default function Modal({ isOpen, onClose, title, children, className, maxWidth = 'max-w-2xl', zIndex = 'z-[150]' }: ModalProps) {
   React.useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -35,7 +36,7 @@ export default function Modal({ isOpen, onClose, title, children, className, max
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
+        <div className={cn("fixed inset-0 flex items-center justify-center p-4 sm:p-6", zIndex)}>
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}

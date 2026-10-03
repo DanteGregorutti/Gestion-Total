@@ -4,16 +4,18 @@
  */
 
 import React from 'react';
-import { Printer, X, Wrench, MessageCircle } from 'lucide-react';
+import { Printer, X, Wrench, MessageCircle, Trash2 } from 'lucide-react';
 import { Button } from '../ui';
 import { RepairQuote } from '../../types';
 
 interface RepairQuotePrintTicketProps {
   quote: RepairQuote;
   onClose: () => void;
+  onDeleteQuote?: (id: string) => void;
 }
 
-export function RepairQuotePrintTicket({ quote, onClose }: RepairQuotePrintTicketProps) {
+export function RepairQuotePrintTicket({ quote, onClose, onDeleteQuote }: RepairQuotePrintTicketProps) {
+  const [showConfirmDelete, setShowConfirmDelete] = React.useState(false);
   const handlePrint = () => {
     window.print();
   };
@@ -35,9 +37,25 @@ export function RepairQuotePrintTicket({ quote, onClose }: RepairQuotePrintTicke
             <span className="font-bold text-sm">Presupuesto Técnico - {quote.numero}</span>
           </div>
           <div className="flex items-center gap-2">
+            {onDeleteQuote && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (confirm(`¿Eliminar presupuesto de taller ${quote.numero}? Esta acción no se puede deshacer.`)) {
+                    onDeleteQuote(quote.id);
+                  }
+                }}
+                className="bg-rose-500/20 hover:bg-rose-600 text-rose-300 hover:text-white border-rose-500/40 text-xs font-bold gap-1 rounded-xl h-8 px-2.5 transition-colors"
+                title="Eliminar este presupuesto de taller"
+              >
+                <Trash2 size={14} />
+                <span className="hidden sm:inline">Eliminar</span>
+              </Button>
+            )}
             <Button
               onClick={handlePrint}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs gap-1.5 rounded-xl"
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs gap-1.5 rounded-xl h-8 px-3"
             >
               <Printer size={14} />
               <span>Imprimir / Guardar PDF</span>

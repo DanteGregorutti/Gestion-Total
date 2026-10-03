@@ -3,24 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { 
-  collection, 
-  getDocs, 
-  addDoc, 
-  setDoc,
-  updateDoc, 
-  deleteDoc, 
-  doc, 
-  orderBy, 
-  query, 
-  where,
-  onSnapshot 
-} from 'firebase/firestore';
-import { db, auth } from '../firebase';
+import { auth } from '../firebase';
 import { WorkOrder, WorkOrderStatus, WorkOrderItem, RepairQuote } from '../types';
 import { inventoryService } from './inventoryService';
 import { 
   markRepairQuoteAsDeleted, 
+  unmarkRepairQuoteDeleted, 
   isRepairQuoteDeleted, 
   filterOutDeletedRepairQuotes 
 } from '../utils/quoteTombstones';
@@ -42,6 +30,9 @@ const getLocalOrders = (): WorkOrder[] => {
 const setLocalOrders = (orders: WorkOrder[]) => {
   try {
     localStorage.setItem(getStorageKey(), JSON.stringify(orders));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('work_orders_changed', { detail: orders }));
+    }
   } catch (e) {
     console.error('Error saving work orders to localStorage:', e);
   }
@@ -61,41 +52,23 @@ const getLocalRepairQuotes = (): RepairQuote[] => {
 const setLocalRepairQuotes = (quotes: RepairQuote[]) => {
   try {
     localStorage.setItem(getQuotesStorageKey(), JSON.stringify(quotes));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('repair_quotes_changed', { detail: quotes }));
+    }
   } catch (e) {
     console.error('Error saving repair quotes to localStorage:', e);
   }
 };
 
-// Initial sample data (empty to avoid cross-user pollution)
-const sampleRepairQuotes: RepairQuote[] = [];
-const sampleWorkOrders: WorkOrder[] = [];
+export const sampleRepairQuotes: RepairQuote[] = [];
+export const sampleWorkOrders: WorkOrder[] = [];
 
 export const workOrderService = {
   async getWorkOrders(): Promise<WorkOrder[]> {
-    if (!auth.currentUser) return [];
-    const uid = auth.currentUser.uid;
     const local = getLocalOrders();
-
-    try {
-      const q = query(
-        collection(db, 'work_orders'),
-        where('createdBy', '==', uid)
-      );
-      const snapshot = await getDocs(q);
-      const remoteOrders = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as WorkOrder[];
-
-      const sorted = remoteOrders.sort(
-        (a, b) => new Date(b.fechaIngreso || b.createdAt || 0).getTime() - new Date(a.fechaIngreso || a.createdAt || 0).getTime()
-      );
-      setLocalOrders(sorted);
-      return sorted;
-    } catch (e) {
-      console.warn('Firestore getWorkOrders fallback to local:', e);
-      return local;
-    }
+    return local.sort(
+      (a, b) => new Date(b.fechaIngreso || b.createdAt || 0).getTime() - new Date(a.fechaIngreso || a.createdAt || 0).getTime()
+    );
   },
 
   async getWorkOrderById(id: string): Promise<WorkOrder | null> {
@@ -155,16 +128,8 @@ export const workOrderService = {
       updatedAt: now
     };
 
-    // Save locally
     const updated = [newOrder, ...currentOrders];
     setLocalOrders(updated);
-
-    // Save to Firestore asynchronously
-    try {
-      await setDoc(doc(db, 'work_orders', id), newOrder);
-    } catch (e) {
-      console.warn('Firestore createWorkOrder fallback:', e);
-    }
 
     return newOrder;
   },
@@ -197,14 +162,6 @@ export const workOrderService = {
     currentOrders[index] = merged;
     setLocalOrders(currentOrders);
 
-    // Sync to Firestore
-    try {
-      const docRef = doc(db, 'work_orders', id);
-      await updateDoc(docRef, updates as any);
-    } catch (e) {
-      console.warn('Firestore updateWorkOrder fallback:', e);
-    }
-
     return merged;
   },
 
@@ -220,172 +177,69 @@ export const workOrderService = {
     const current = getLocalOrders();
     const filtered = current.filter(o => o.id !== id && o.numero !== id);
     setLocalOrders(filtered);
-
-    try {
-      await deleteDoc(doc(db, 'work_orders', id));
-    } catch (e) {
-      console.warn('Firestore direct deleteWorkOrder fallback:', e);
-    }
-
-    try {
-      const q = query(collection(db, 'work_orders'), where('id', '==', id));
-      const snap = await getDocs(q);
-      for (const d of snap.docs) {
-        await deleteDoc(doc(db, 'work_orders', d.id));
-      }
-    } catch (e) {
-      console.warn('Firestore query deleteWorkOrder fallback:', e);
-    }
-
-    try {
-      const qNum = query(collection(db, 'work_orders'), where('numero', '==', id));
-      const snapNum = await getDocs(qNum);
-      for (const d of snapNum.docs) {
-        await deleteDoc(doc(db, 'work_orders', d.id));
-      }
-    } catch (e) {}
   },
 
   subscribeToWorkOrders(callback: (orders: WorkOrder[]) => void) {
-    if (!auth.currentUser) {
-      callback([]);
-      return () => {};
-    }
-    const uid = auth.currentUser.uid;
-    const local = getLocalOrders();
-    callback(local);
-
-    try {
-      const q = query(
-        collection(db, 'work_orders'),
-        where('createdBy', '==', uid)
+    const emit = () => {
+      const local = getLocalOrders().sort(
+        (a, b) => new Date(b.fechaIngreso || b.createdAt || 0).getTime() - new Date(a.fechaIngreso || a.createdAt || 0).getTime()
       );
-      return onSnapshot(q, (snapshot) => {
-        const orders = snapshot.docs.map(doc => ({
-          ...doc.data(),
-          id: doc.id
-        })) as WorkOrder[];
+      callback(local);
+    };
 
-        const sorted = orders.sort(
-          (a, b) => new Date(b.fechaIngreso || b.createdAt || 0).getTime() - new Date(a.fechaIngreso || a.createdAt || 0).getTime()
-        );
-        setLocalOrders(sorted);
-        callback(sorted);
-      }, (err) => {
-        console.warn('Snapshot listener for work_orders:', err);
-      });
-    } catch (e) {
-      console.warn('Could not establish real-time listener for work_orders:', e);
-      return () => {};
+    emit();
+
+    const handler = () => emit();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('work_orders_changed', handler);
+      window.addEventListener('storage', handler);
     }
-  },
 
-  /**
-   * Convert an Order into a registered Sale, deducting inventory stock
-   */
-  async convertOrderToSale(order: WorkOrder): Promise<{ saleId: string }> {
-    const transactionId = `trans_${Date.now()}`;
-    const saleItems: any[] = [];
-
-    // 1. If repuestos exist from inventory, register them as sales to deduct stock
-    if (order.repuestos && order.repuestos.length > 0) {
-      for (const rep of order.repuestos) {
-        saleItems.push({
-          productId: rep.productId || 'repuesto_generico',
-          productNombre: rep.descripcion,
-          cantidad: rep.cantidad,
-          precio: rep.precioUnitario,
-          total: rep.subtotal,
-          clientId: order.clientId,
-          clientNombre: order.clientNombre,
-          transactionId,
-          fecha: new Date(),
-          createdBy: auth.currentUser?.uid || 'admin'
-        });
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('work_orders_changed', handler);
+        window.removeEventListener('storage', handler);
       }
-    }
-
-    // 2. Add labor (Mano de obra) as a sale item if greater than 0
-    if (order.costoManoObra > 0) {
-      saleItems.push({
-        productId: 'mano_de_obra_servicio',
-        productNombre: `Servicio de Reparación: ${order.equipo} (${order.numero})`,
-        cantidad: 1,
-        precio: order.costoManoObra,
-        total: order.costoManoObra,
-        clientId: order.clientId,
-        clientNombre: order.clientNombre,
-        transactionId,
-        fecha: new Date(),
-        createdBy: auth.currentUser?.uid || 'admin'
-      });
-    }
-
-    // Register sale in inventory & register transaction in finances
-    if (saleItems.length > 0) {
-      await inventoryService.registerSale(saleItems);
-    }
-
-    // Mark order as delivered and associate sale
-    await this.updateWorkOrder(order.id, {
-      estado: 'entregado',
-      saleId: transactionId,
-      fechaEntrega: new Date().toISOString()
-    });
-
-    return { saleId: transactionId };
+    };
   },
 
   /**
-   * WhatsApp Message Generator for Workshop Customer updates
+   * Generates a pre-filled WhatsApp message based on the work order status or message type
    */
-  getWhatsAppMessage(order: WorkOrder, type: 'ingreso' | 'presupuesto' | 'listo' | 'entregado'): string {
-    const phone = order.clientTelefono?.replace(/\D/g, '') || '';
-    const encodedTrackingUrl = `${window.location.origin}/seguimiento/${order.id}`;
-
+  getWhatsAppMessage(order: WorkOrder, tipo?: 'ingreso' | 'presupuesto' | 'listo' | 'entregado' | string): string {
+    const phone = order.clientTelefono ? order.clientTelefono.replace(/\D/g, '') : '';
     let text = '';
 
-    switch (type) {
+    const effectiveTipo = tipo || order.estado;
+
+    switch (effectiveTipo) {
       case 'ingreso':
-        text = `🔧 *TALLER GREGORUTTI - FICHA DE INGRESO*\n\n` +
-               `¡Hola *${order.clientNombre}*! Tu equipo ha sido ingresado al taller:\n\n` +
-               `📋 *Orden N°:* ${order.numero}\n` +
-               `🛠️ *Equipo:* ${order.equipo} ${order.marcaModelo ? `(${order.marcaModelo})` : ''}\n` +
-               `⚠️ *Motivo de Ingreso:* ${order.fallaReportada}\n` +
-               (order.anticipo > 0 ? `💵 *Seña abonada:* $${order.anticipo.toLocaleString('es-AR')}\n` : '') +
-               `\n🔍 *Podes consultar el avance en vivo desde este link:*\n${encodedTrackingUrl}\n\n` +
-               `¡Te mantendremos avisado en cuanto tengamos el diagnóstico listo!`;
+      case 'ingresado':
+        text = `Hola ${order.clientNombre}! 👋 Le confirmamos el ingreso de su equipo *${order.equipo}* (Orden N° *${order.numero}*) a nuestro taller.\n\nFalla reportada: ${order.fallaReportada || 'Revisión técnica'}\n\nLe avisaremos cuando tengamos el diagnóstico listo. ¡Muchas gracias!`;
         break;
-
       case 'presupuesto':
-        text = `📋 *TALLER GREGORUTTI - PRESUPUESTO TÉCNICO*\n\n` +
-               `¡Hola *${order.clientNombre}*! Te enviamos el presupuesto para la orden *${order.numero}* (*${order.equipo}*):\n\n` +
-               `🔍 *Diagnóstico:* ${order.diagnostico || 'Revisión técnica completada.'}\n` +
-               (order.repuestos.length > 0 
-                 ? `⚙️ *Repuestos:* $${order.costoRepuestos.toLocaleString('es-AR')}\n` 
-                 : '') +
-               `👨‍🔧 *Mano de Obra:* $${order.costoManoObra.toLocaleString('es-AR')}\n` +
-               `💰 *TOTAL ESTIMADO:* $${order.total.toLocaleString('es-AR')}\n` +
-               (order.anticipo > 0 ? `💵 *Seña previa:* $${order.anticipo.toLocaleString('es-AR')}\n` : '') +
-               `💳 *Saldo a Abonar:* $${order.saldoPendiente.toLocaleString('es-AR')}\n\n` +
-               `Por favor confírmanos si damos comienzo a los trabajos. ¡Muchas gracias!`;
+        text = `Hola ${order.clientNombre}! 📋 Le enviamos el presupuesto para la reparación de su equipo *${order.equipo}* (Orden N° *${order.numero}*):\n\nDiagnóstico: ${order.diagnostico || 'Revisión técnica'}\nTotal: *$${order.total.toLocaleString('es-AR')}*\n\nPor favor confírmenos si desea autorizar la reparación. ¡Muchas gracias!`;
         break;
-
+      case 'en_reparacion':
+        text = `Hola ${order.clientNombre}! Le informamos que su equipo *${order.equipo}* (Orden N° *${order.numero}*) ya se encuentra en proceso de reparación técnica por parte de nuestro equipo. 🛠️`;
+        break;
+      case 'esperando_repuestos':
+        text = `Hola ${order.clientNombre}! Le avisamos que para su equipo *${order.equipo}* (Orden N° *${order.numero}*) estamos a la espera de los repuestos necesarios para finalizar la reparación. Le mantendremos informado. ⚙️`;
+        break;
       case 'listo':
-        text = `✅ *¡TU EQUIPO ESTÁ LISTO PARA RETIRAR!*\n\n` +
-               `¡Hola *${order.clientNombre}*! Te avisamos de *Taller Gregorutti* que tu trabajo ya fue finalizado con éxito:\n\n` +
-               `📋 *Orden N°:* ${order.numero}\n` +
-               `🛠️ *Equipo:* ${order.equipo}\n` +
-               (order.trabajoRealizado ? `🔧 *Detalle:* ${order.trabajoRealizado}\n` : '') +
-               `💰 *Saldo pendiente a abonar:* $${order.saldoPendiente.toLocaleString('es-AR')}\n\n` +
-               `📍 Ya podés pasar a retirarlo en nuestro horario habitual.\n` +
-               `¡Te esperamos!`;
+        text = `¡Buenas noticias ${order.clientNombre}! 🎉 Su equipo *${order.equipo}* (Orden N° *${order.numero}*) ya está *LISTO PARA RETIRAR*.\n\n` +
+          `Total: $${order.total.toLocaleString('es-AR')}\n` +
+          (order.saldoPendiente > 0 ? `Saldo pendiente: *$${order.saldoPendiente.toLocaleString('es-AR')}*\n\n` : `Pagado: *Completo* ✅\n\n`) +
+          `Puede pasar a retirarlo en nuestro horario habitual. ¡Lo esperamos!`;
         break;
-
       case 'entregado':
-        text = `🤝 *GRACIAS POR CONFIAR EN TALLER GREGORUTTI*\n\n` +
-               `¡Hola *${order.clientNombre}*! Esperamos que tu *${order.equipo}* esté funcionando a la perfección tras su reparación (Orden ${order.numero}).\n\n` +
-               `Cualquier consulta o duda técnica, estamos a tu entera disposición. ¡Hasta la próxima!`;
+        text = `Hola ${order.clientNombre}! Gracias por confiar en nuestro servicio técnico para la reparación de su *${order.equipo}* (Orden N° *${order.numero}*). Quedamos a su entera disposición. ¡Que tenga un excelente día! 🙌`;
+        break;
+      case 'cancelado':
+        text = `Hola ${order.clientNombre}. Le informamos que la Orden N° *${order.numero}* correspondiente a *${order.equipo}* ha sido cancelada. Por favor comuníquese con nosotros para coordinar el retiro del equipo.`;
+        break;
+      default:
+        text = `Hola ${order.clientNombre}! Le contactamos desde el taller en relación a su orden N° *${order.numero}* (*${order.equipo}*).`;
         break;
     }
 
@@ -393,72 +247,118 @@ export const workOrderService = {
   },
 
   /**
+   * Converts a completed work order into sales and registers income in finances
+   */
+  async convertOrderToSale(order: WorkOrder): Promise<void> {
+    const saleItems: any[] = [];
+    
+    // 1. Convert repuestos into sales items and deduct inventory
+    if (order.repuestos && order.repuestos.length > 0) {
+      for (const rep of order.repuestos) {
+        const cantidad = Number(rep.cantidad) || 1;
+        const precio = Number(rep.precioUnitario) || 0;
+        const total = Number(rep.subtotal !== undefined ? rep.subtotal : cantidad * precio) || 0;
+        saleItems.push({
+          productId: rep.productId || 'manual_repuesto',
+          productNombre: rep.descripcion || 'Repuesto de taller',
+          cantidad,
+          precio,
+          total,
+          clientId: order.clientId || '',
+          clientNombre: order.clientNombre || 'Cliente Taller',
+        });
+      }
+    }
+
+    // 2. Add labor / mano de obra as service sale item if > 0
+    if (order.costoManoObra > 0) {
+      saleItems.push({
+        productId: 'servicio_taller',
+        productNombre: `Mano de obra (Orden ${order.numero} - ${order.equipo})`,
+        cantidad: 1,
+        precio: Number(order.costoManoObra) || 0,
+        total: Number(order.costoManoObra) || 0,
+        clientId: order.clientId || '',
+        clientNombre: order.clientNombre || 'Cliente Taller',
+      });
+    }
+
+    // Fallback if neither repuestos nor mano de obra but order.total > 0
+    if (saleItems.length === 0 && order.total > 0) {
+      saleItems.push({
+        productId: 'reparacion_taller',
+        productNombre: `Reparación ${order.equipo} (Orden ${order.numero})`,
+        cantidad: 1,
+        precio: Number(order.total) || 0,
+        total: Number(order.total) || 0,
+        clientId: order.clientId || '',
+        clientNombre: order.clientNombre || 'Cliente Taller',
+      });
+    }
+
+    if (saleItems.length > 0) {
+      await inventoryService.registerSale(saleItems);
+    }
+
+    // 3. Register finance income for saldo pendiente or total collected upon delivery
+    const amountToRegister = order.saldoPendiente > 0 ? order.saldoPendiente : order.total;
+    if (amountToRegister > 0) {
+      await inventoryService.addFinanceTransaction({
+        tipo: 'ingreso',
+        monto: amountToRegister,
+        concepto: `Cobro Reparación Orden ${order.numero} - ${order.equipo} (${order.clientNombre})`,
+        categoria: 'Servicio Técnico / Taller',
+        fecha: new Date().toISOString(),
+        metodo: 'efectivo'
+      });
+    }
+
+    // 4. Mark order as entregado and fully paid
+    await this.updateWorkOrder(order.id, {
+      estado: 'entregado',
+      saldoPendiente: 0,
+      fechaEntrega: new Date().toISOString()
+    });
+  },
+
+  /**
    * REPAIR QUOTES (PRESUPUESTOS DE TALLER)
    */
   async getRepairQuotes(): Promise<RepairQuote[]> {
-    if (!auth.currentUser) return [];
-    const uid = auth.currentUser.uid;
     const local = getLocalRepairQuotes();
+    const sorted = local.sort((a, b) => {
+      const dateA = new Date(a.createdAt || a.fecha || 0).getTime();
+      const dateB = new Date(b.createdAt || b.fecha || 0).getTime();
+      return dateB - dateA;
+    });
+    return filterOutDeletedRepairQuotes(sorted);
+  },
 
-    try {
-      const q = query(
-        collection(db, 'repair_quotes'),
-        where('createdBy', '==', uid)
-      );
-      const snap = await getDocs(q);
-      const firestoreQuotes: RepairQuote[] = snap.docs.map(doc => ({
-        ...(doc.data() as RepairQuote),
-        id: doc.id
-      }));
-      const sorted = firestoreQuotes.sort((a, b) => {
+  subscribeToRepairQuotes(callback: (quotes: RepairQuote[]) => void) {
+    const emit = () => {
+      const local = getLocalRepairQuotes();
+      const sorted = local.sort((a, b) => {
         const dateA = new Date(a.createdAt || a.fecha || 0).getTime();
         const dateB = new Date(b.createdAt || b.fecha || 0).getTime();
         return dateB - dateA;
       });
-      const valid = filterOutDeletedRepairQuotes(sorted);
-      setLocalRepairQuotes(valid);
-      return valid;
-    } catch (e) {
-      console.warn('Firestore repair quotes fallback to local:', e);
-      return filterOutDeletedRepairQuotes(local);
-    }
-  },
+      callback(filterOutDeletedRepairQuotes(sorted));
+    };
 
-  subscribeToRepairQuotes(callback: (quotes: RepairQuote[]) => void) {
-    if (!auth.currentUser) {
-      callback([]);
-      return () => {};
-    }
-    const uid = auth.currentUser.uid;
-    const local = filterOutDeletedRepairQuotes(getLocalRepairQuotes());
-    callback(local);
+    emit();
 
-    try {
-      const q = query(
-        collection(db, 'repair_quotes'),
-        where('createdBy', '==', uid)
-      );
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const quotes: RepairQuote[] = snapshot.docs.map(doc => ({
-          ...(doc.data() as RepairQuote),
-          id: doc.id
-        }));
-        const sorted = quotes.sort((a, b) => {
-          const dateA = new Date(a.createdAt || a.fecha || 0).getTime();
-          const dateB = new Date(b.createdAt || b.fecha || 0).getTime();
-          return dateB - dateA;
-        });
-        const valid = filterOutDeletedRepairQuotes(sorted);
-        setLocalRepairQuotes(valid);
-        callback(valid);
-      }, (error) => {
-        console.warn('Repair quotes snapshot error, using local:', error);
-      });
-      return unsubscribe;
-    } catch (e) {
-      console.warn('Could not subscribe to repair quotes:', e);
-      return () => {};
+    const handler = () => emit();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('repair_quotes_changed', handler);
+      window.addEventListener('storage', handler);
     }
+
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('repair_quotes_changed', handler);
+        window.removeEventListener('storage', handler);
+      }
+    };
   },
 
   getNextRepairQuoteNumber(quotes: RepairQuote[]): string {
@@ -510,12 +410,6 @@ export const workOrderService = {
     const updated = [newQuote, ...current];
     setLocalRepairQuotes(updated);
 
-    try {
-      await setDoc(doc(db, 'repair_quotes', id), newQuote);
-    } catch (e) {
-      console.warn('Firestore createRepairQuote fallback:', e);
-    }
-
     return newQuote;
   },
 
@@ -541,13 +435,6 @@ export const workOrderService = {
     current[idx] = updatedQuote;
     setLocalRepairQuotes([...current]);
 
-    try {
-      const docRef = doc(db, 'repair_quotes', id);
-      await updateDoc(docRef, updatedQuote as any);
-    } catch (e) {
-      console.warn('Firestore updateRepairQuote fallback:', e);
-    }
-
     return updatedQuote;
   },
 
@@ -558,30 +445,6 @@ export const workOrderService = {
 
     const filtered = current.filter(q => q.id !== id && q.numero !== id);
     setLocalRepairQuotes(filtered);
-
-    try {
-      await deleteDoc(doc(db, 'repair_quotes', id));
-    } catch (e) {
-      console.warn('Firestore direct deleteRepairQuote fallback:', e);
-    }
-
-    try {
-      const q = query(collection(db, 'repair_quotes'), where('id', '==', id));
-      const snap = await getDocs(q);
-      for (const d of snap.docs) {
-        await deleteDoc(doc(db, 'repair_quotes', d.id));
-      }
-    } catch (e) {
-      console.warn('Firestore query deleteRepairQuote fallback:', e);
-    }
-
-    try {
-      const qNum = query(collection(db, 'repair_quotes'), where('numero', '==', id));
-      const snapNum = await getDocs(qNum);
-      for (const d of snapNum.docs) {
-        await deleteDoc(doc(db, 'repair_quotes', d.id));
-      }
-    } catch (e) {}
   },
 
   async convertRepairQuoteToWorkOrder(quote: RepairQuote): Promise<WorkOrder> {
@@ -607,8 +470,13 @@ export const workOrderService = {
 
     const newOrder = await this.createWorkOrder(orderData);
 
-    // Delete the pending repair quote so it does not linger as pending
-    await this.deleteRepairQuote(quote.id);
+    // Mark the repair quote as approved in database and cache (do not delete it)
+    unmarkRepairQuoteDeleted(quote.id, quote.numero);
+    try {
+      await this.updateRepairQuote(quote.id, { estado: 'aprobado' });
+    } catch (e) {
+      console.warn('Could not update repair quote status to aprobado:', e);
+    }
 
     return newOrder;
   },

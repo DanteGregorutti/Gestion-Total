@@ -32,7 +32,7 @@ export default function ConfirmationModal({
   isLoading = false
 }: ConfirmationModalProps) {
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={title} className="max-w-md">
+    <Modal isOpen={isOpen} onClose={onClose} title={title} className="max-w-md" zIndex="z-[250]">
       <div className="space-y-6">
         <div className="flex items-start space-x-4">
           <div className={`p-3 rounded-2xl shrink-0 ${

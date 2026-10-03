@@ -40,7 +40,7 @@ interface QuotesViewProps {
   onEditQuote: (quote: Quote) => void;
   onOpenReceipt: (quote: Quote) => void;
   onConvertToSale: (quote: Quote) => void;
-  onDeleteQuote: (quoteId: string) => void;
+  onDeleteQuote: (quoteId: string, quoteNumero?: string) => void;
   onRefresh: () => void;
   convertingQuoteId?: string | null;
 }
@@ -271,34 +271,77 @@ export function QuotesView({
       </div>
 
       {/* Desktop Table View */}
-      <div className="hidden md:block bg-white dark:bg-gray-900 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm overflow-hidden">
-        <table className="w-full text-left text-xs border-collapse">
+      <div className="hidden md:block bg-white dark:bg-gray-900 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm overflow-x-auto overflow-y-visible">
+        <table className="w-full text-left text-xs border-collapse min-w-[960px]">
           <thead>
-            <tr className="border-b border-gray-100 dark:border-gray-800 text-gray-400 uppercase tracking-widest font-black text-[11px] bg-gray-50/50 dark:bg-gray-800/30">
-              <th className="py-3.5 px-6">N° Comprobante</th>
-              <th className="py-3.5 px-6">Referencia / Cliente</th>
-              <th className="py-3.5 px-6">Artículos Cotizados</th>
-              <th className="py-3.5 px-6">Total Cotizado</th>
-              <th className="py-3.5 px-6">Fecha / Validez</th>
-              <th className="py-3.5 px-6">Estado</th>
-              <th className="py-3.5 px-6 text-right">Acciones</th>
+            <tr className="border-b border-gray-100 dark:border-gray-800 text-gray-400 uppercase tracking-widest font-black text-[11px] bg-gray-50/70 dark:bg-gray-800/40">
+              <th className="py-3.5 px-5">N° Comprobante</th>
+              <th className="py-3.5 px-5">Referencia / Cliente</th>
+              <th className="py-3.5 px-5">Artículos Cotizados</th>
+              <th className="py-3.5 px-5">Total Cotizado</th>
+              <th className="py-3.5 px-5">Fecha / Validez</th>
+              <th className="py-3.5 px-5">Estado</th>
+              {/* Sticky Actions Header: Always pinned to the right edge with solid background */}
+              <th className="py-3.5 px-4 text-right sticky right-0 bg-gray-50 dark:bg-gray-800 z-20 shadow-[-8px_0_12px_-4px_rgba(0,0,0,0.06)] dark:shadow-[-8px_0_12px_-4px_rgba(0,0,0,0.4)]">
+                Acciones
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
             {filteredQuotes.length === 0 ? (
               <tr>
                 <td colSpan={7} className="py-16 text-center text-gray-400">
-                  <FileText className="w-12 h-12 mx-auto text-gray-300 dark:text-gray-700 mb-3 opacity-60" />
-                  <p className="font-bold text-sm text-gray-500 dark:text-gray-400">No se encontraron cotizaciones</p>
-                  <p className="text-xs text-gray-400 mt-1">Hacé clic en "Nueva Cotización" para emitir un presupuesto a tu cliente.</p>
-                  <Button
-                    onClick={onOpenNewQuote}
-                    size="sm"
-                    className="mt-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold"
-                  >
-                    <Plus className="w-4 h-4 mr-1" />
-                    Crear Primera Cotización
-                  </Button>
+                  {statusFilter === 'pendiente' && acceptedQuotes.length > 0 ? (
+                    <div className="max-w-md mx-auto">
+                      <CheckCircle2 className="w-12 h-12 mx-auto text-emerald-500 mb-3" />
+                      <p className="font-bold text-base text-gray-800 dark:text-gray-200">¡Todas las cotizaciones pendientes fueron procesadas!</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Tenés {acceptedQuotes.length} cotización(es) concretada(s) con venta registrada.</p>
+                      <div className="flex items-center justify-center gap-2 mt-4">
+                        <Button
+                          onClick={() => onStatusFilterChange('aceptada')}
+                          size="sm"
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold"
+                        >
+                          Ver Concretadas ({acceptedQuotes.length})
+                        </Button>
+                        <Button
+                          onClick={() => onStatusFilterChange('todas')}
+                          variant="outline"
+                          size="sm"
+                          className="rounded-xl text-xs font-bold"
+                        >
+                          Ver Todas ({quotes.length})
+                        </Button>
+                      </div>
+                    </div>
+                  ) : statusFilter === 'aceptada' && acceptedQuotes.length === 0 ? (
+                    <div className="max-w-md mx-auto">
+                      <FileText className="w-12 h-12 mx-auto text-gray-300 dark:text-gray-700 mb-3 opacity-60" />
+                      <p className="font-bold text-sm text-gray-600 dark:text-gray-300">No hay cotizaciones concretadas todavía</p>
+                      <p className="text-xs text-gray-400 mt-1">Aprobá una cotización pendiente para que quede registrada como venta y concretada.</p>
+                      <Button
+                        onClick={() => onStatusFilterChange('pendiente')}
+                        size="sm"
+                        className="mt-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold"
+                      >
+                        Ver Pendientes ({pendingQuotes.length})
+                      </Button>
+                    </div>
+                  ) : (
+                    <div>
+                      <FileText className="w-12 h-12 mx-auto text-gray-300 dark:text-gray-700 mb-3 opacity-60" />
+                      <p className="font-bold text-sm text-gray-500 dark:text-gray-400">No se encontraron cotizaciones</p>
+                      <p className="text-xs text-gray-400 mt-1">Hacé clic en "Nueva Cotización" para emitir un presupuesto a tu cliente.</p>
+                      <Button
+                        onClick={onOpenNewQuote}
+                        size="sm"
+                        className="mt-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold"
+                      >
+                        <Plus className="w-4 h-4 mr-1" />
+                        Crear Primera Cotización
+                      </Button>
+                    </div>
+                  )}
                 </td>
               </tr>
             ) : (
@@ -315,16 +358,16 @@ export function QuotesView({
                 const itemsSummary = (quote.items || []).map(i => `${i.productNombre}${i.variantNombre ? ` (${i.variantNombre})` : ''}`).join(', ');
 
                 return (
-                  <tr key={quote.id} className="hover:bg-gray-50/70 dark:hover:bg-gray-800/40 transition-colors">
+                  <tr key={quote.id} className="group hover:bg-gray-50/80 dark:hover:bg-gray-800/50 transition-colors">
                     
                     {/* Number */}
-                    <td className="py-4 px-6 font-black text-indigo-600 dark:text-indigo-400">
+                    <td className="py-4 px-5 font-black text-indigo-600 dark:text-indigo-400 whitespace-nowrap">
                       {quote.numero}
                     </td>
 
                     {/* Client */}
-                    <td className="py-4 px-6">
-                      <p className="font-bold text-gray-900 dark:text-white">
+                    <td className="py-4 px-5">
+                      <p className="font-bold text-gray-900 dark:text-white truncate max-w-[160px]" title={quote.clientNombre}>
                         {quote.clientNombre}
                       </p>
                       {quote.clientTelefono && (
@@ -335,7 +378,7 @@ export function QuotesView({
                     </td>
 
                     {/* Items */}
-                    <td className="py-4 px-6 max-w-xs">
+                    <td className="py-4 px-5 max-w-xs">
                       <div className="flex items-center gap-2">
                         <span className="px-2 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded text-[11px] font-bold shrink-0">
                           {totalItemsCount} un.
@@ -347,7 +390,7 @@ export function QuotesView({
                     </td>
 
                     {/* Total */}
-                    <td className="py-4 px-6">
+                    <td className="py-4 px-5 whitespace-nowrap">
                       <div className="font-black text-sm text-gray-900 dark:text-white">
                         ${quote.total.toLocaleString('es-AR')}
                       </div>
@@ -360,7 +403,7 @@ export function QuotesView({
                     </td>
 
                     {/* Date & Validity */}
-                    <td className="py-4 px-6">
+                    <td className="py-4 px-5 whitespace-nowrap">
                       <p className="text-gray-700 dark:text-gray-300 font-medium">
                         {date.toLocaleDateString('es-AR')}
                       </p>
@@ -370,7 +413,7 @@ export function QuotesView({
                     </td>
 
                     {/* Status */}
-                    <td className="py-4 px-6">
+                    <td className="py-4 px-5 whitespace-nowrap">
                       <span className={cn(
                         "text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full inline-block",
                         quote.estado === 'pendiente' && "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
@@ -381,20 +424,43 @@ export function QuotesView({
                       </span>
                     </td>
 
-                    {/* Actions */}
-                    <td className="py-4 px-6 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
+                    {/* Sticky Actions Column: Never cut off, pinned to right with solid background */}
+                    <td className="py-3.5 px-4 text-right sticky right-0 bg-white dark:bg-gray-900 group-hover:bg-gray-50 dark:group-hover:bg-gray-800 z-10 shadow-[-8px_0_12px_-4px_rgba(0,0,0,0.06)] dark:shadow-[-8px_0_12px_-4px_rgba(0,0,0,0.4)]">
+                      <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
                         
+                        {/* Convert to Sale (Aprobar) */}
+                        {quote.estado === 'pendiente' && (
+                          <Button
+                            size="sm"
+                            disabled={convertingQuoteId === quote.id}
+                            onClick={() => onConvertToSale(quote)}
+                            className="h-8 px-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-sm shrink-0"
+                            title="Aprobar presupuesto, registrar venta y descontar stock"
+                          >
+                            {convertingQuoteId === quote.id ? (
+                              <>
+                                <Loader2 size={13} className="mr-1 animate-spin" />
+                                <span>Aprobando...</span>
+                              </>
+                            ) : (
+                              <>
+                                <CheckCircle2 size={13} className="mr-1" />
+                                <span>Aprobar</span>
+                              </>
+                            )}
+                          </Button>
+                        )}
+
                         {/* Editar */}
                         <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => onEditQuote(quote)}
-                          className="h-8 px-2 text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30 rounded-xl font-bold text-xs"
+                          className="h-8 px-2 text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30 rounded-xl font-bold text-xs shrink-0"
                           title="Modificar cotización"
                         >
-                          <Edit size={14} className="mr-1" />
-                          Editar
+                          <Edit size={14} className="xl:mr-1" />
+                          <span className="hidden xl:inline">Editar</span>
                         </Button>
 
                         {/* Ver Comprobante */}
@@ -402,11 +468,11 @@ export function QuotesView({
                           variant="ghost"
                           size="sm"
                           onClick={() => onOpenReceipt(quote)}
-                          className="h-8 px-2 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-xl font-bold text-xs"
+                          className="h-8 px-2 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-xl font-bold text-xs shrink-0"
                           title="Ver y descargar comprobante no fiscal"
                         >
-                          <FileText size={15} className="mr-1" />
-                          Comprobante
+                          <FileText size={14} className="xl:mr-1" />
+                          <span className="hidden xl:inline">Comprobante</span>
                         </Button>
 
                         {/* WhatsApp */}
@@ -414,45 +480,23 @@ export function QuotesView({
                           variant="ghost"
                           size="sm"
                           onClick={() => handleSendWhatsApp(quote)}
-                          className="h-8 px-2 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 rounded-xl font-bold text-xs"
+                          className="h-8 px-2 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 rounded-xl font-bold text-xs shrink-0"
                           title="Enviar presupuesto por WhatsApp"
                         >
-                          <MessageCircle size={15} className="mr-1" />
-                          WhatsApp
+                          <MessageCircle size={14} className="xl:mr-1" />
+                          <span className="hidden xl:inline">WhatsApp</span>
                         </Button>
 
-                        {/* Convert to Sale */}
-                        {quote.estado === 'pendiente' && (
-                          <Button
-                            size="sm"
-                            disabled={convertingQuoteId === quote.id}
-                            onClick={() => onConvertToSale(quote)}
-                            className="h-8 px-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-sm"
-                            title="Aprobar presupuesto, registrar venta y descontar stock"
-                          >
-                            {convertingQuoteId === quote.id ? (
-                              <>
-                                <Loader2 size={14} className="mr-1 animate-spin" />
-                                Aprobando...
-                              </>
-                            ) : (
-                              <>
-                                <CheckCircle2 size={14} className="mr-1" />
-                                Aprobar
-                              </>
-                            )}
-                          </Button>
-                        )}
-
-                        {/* Delete */}
+                        {/* Delete: Always visible, unmistakable, red danger button */}
                         <Button
                           variant="ghost"
-                          size="icon"
-                          onClick={() => onDeleteQuote(quote.id)}
-                          className="h-8 w-8 text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-xl"
-                          title="Eliminar cotización"
+                          size="sm"
+                          onClick={() => onDeleteQuote(quote.id, quote.numero)}
+                          className="h-8 px-2.5 text-rose-600 hover:text-rose-700 bg-rose-50/90 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 border border-rose-200/80 dark:border-rose-800/80 rounded-xl font-bold text-xs shrink-0 transition-all flex items-center gap-1 shadow-sm"
+                          title="Eliminar cotización permanentemente"
                         >
-                          <Trash2 size={15} />
+                          <Trash2 size={14} className="text-rose-600 dark:text-rose-400 shrink-0" />
+                          <span className="inline">Borrar</span>
                         </Button>
 
                       </div>
@@ -470,17 +514,57 @@ export function QuotesView({
       <div className="md:hidden space-y-4">
         {filteredQuotes.length === 0 ? (
           <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl border border-gray-100 dark:border-gray-800 text-center text-gray-500">
-            <FileText className="w-10 h-10 mx-auto text-gray-300 dark:text-gray-700 mb-2 opacity-60" />
-            <p className="font-bold text-sm">No hay cotizaciones</p>
-            <p className="text-xs text-gray-400 mt-1">Creá una cotización para enviarle a tu cliente.</p>
-            <Button
-              onClick={onOpenNewQuote}
-              size="sm"
-              className="mt-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold"
-            >
-              <Plus className="w-4 h-4 mr-1" />
-              Nueva Cotización
-            </Button>
+            {statusFilter === 'pendiente' && acceptedQuotes.length > 0 ? (
+              <div>
+                <CheckCircle2 className="w-10 h-10 mx-auto text-emerald-500 mb-2" />
+                <p className="font-bold text-sm text-gray-800 dark:text-gray-200">¡Todas las cotizaciones pendientes fueron procesadas!</p>
+                <p className="text-xs text-gray-400 mt-1">Tenés {acceptedQuotes.length} cotización(es) concretada(s) con éxito.</p>
+                <div className="flex flex-col gap-2 mt-4">
+                  <Button
+                    onClick={() => onStatusFilterChange('aceptada')}
+                    size="sm"
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold"
+                  >
+                    Ver Concretadas ({acceptedQuotes.length})
+                  </Button>
+                  <Button
+                    onClick={() => onStatusFilterChange('todas')}
+                    variant="outline"
+                    size="sm"
+                    className="rounded-xl text-xs font-bold"
+                  >
+                    Ver Todas ({quotes.length})
+                  </Button>
+                </div>
+              </div>
+            ) : statusFilter === 'aceptada' && acceptedQuotes.length === 0 ? (
+              <div>
+                <FileText className="w-10 h-10 mx-auto text-gray-300 dark:text-gray-700 mb-2 opacity-60" />
+                <p className="font-bold text-sm text-gray-600 dark:text-gray-300">No hay cotizaciones concretadas todavía</p>
+                <p className="text-xs text-gray-400 mt-1">Aprobá una cotización pendiente para que quede registrada como venta.</p>
+                <Button
+                  onClick={() => onStatusFilterChange('pendiente')}
+                  size="sm"
+                  className="mt-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold w-full"
+                >
+                  Ver Pendientes ({pendingQuotes.length})
+                </Button>
+              </div>
+            ) : (
+              <div>
+                <FileText className="w-10 h-10 mx-auto text-gray-300 dark:text-gray-700 mb-2 opacity-60" />
+                <p className="font-bold text-sm">No hay cotizaciones</p>
+                <p className="text-xs text-gray-400 mt-1">Creá una cotización para enviarle a tu cliente.</p>
+                <Button
+                  onClick={onOpenNewQuote}
+                  size="sm"
+                  className="mt-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold"
+                >
+                  <Plus className="w-4 h-4 mr-1" />
+                  Nueva Cotización
+                </Button>
+              </div>
+            )}
           </div>
         ) : (
           filteredQuotes.map((quote) => {
@@ -559,17 +643,24 @@ export function QuotesView({
                 </div>
 
                 {/* Footer and Actions */}
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-gray-100 dark:border-gray-800">
-                  <div className="text-[10px] text-gray-400">
-                    Fecha: {date.toLocaleDateString('es-AR')}
+                <div className="flex flex-col gap-2.5 pt-3 border-t border-gray-100 dark:border-gray-800">
+                  <div className="flex items-center justify-between text-[11px] text-gray-400">
+                    <span className="flex items-center gap-1.5">
+                      <Calendar size={12} />
+                      {date.toLocaleDateString('es-AR')} ({quote.validezDias || 7} días)
+                    </span>
+                    <span className="font-bold text-indigo-600 dark:text-indigo-400">
+                      N° {quote.numero}
+                    </span>
                   </div>
 
-                  <div className="flex items-center gap-1.5 ml-auto">
+                  {/* Action buttons grid: 100% accessible on any screen */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={() => onEditQuote(quote)}
-                      className="h-8 px-2 rounded-xl text-xs font-bold text-amber-600 dark:text-amber-400"
+                      className="h-8 px-2 rounded-xl text-xs font-bold text-amber-600 dark:text-amber-400 justify-center"
                     >
                       <Edit size={14} className="mr-1" />
                       Editar
@@ -579,7 +670,7 @@ export function QuotesView({
                       variant="outline"
                       size="sm"
                       onClick={() => onOpenReceipt(quote)}
-                      className="h-8 px-2.5 rounded-xl text-xs font-bold"
+                      className="h-8 px-2 rounded-xl text-xs font-bold justify-center"
                     >
                       <FileText size={14} className="mr-1 text-indigo-600" />
                       Comprobante
@@ -588,43 +679,46 @@ export function QuotesView({
                     <Button
                       size="sm"
                       onClick={() => handleSendWhatsApp(quote)}
-                      className="h-8 px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm"
+                      className="h-8 px-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm justify-center"
                     >
                       <MessageCircle size={14} className="mr-1" />
                       WhatsApp
                     </Button>
 
-                    {quote.estado === 'pendiente' && (
-                      <Button
-                        size="sm"
-                        disabled={convertingQuoteId === quote.id}
-                        onClick={() => onConvertToSale(quote)}
-                        className="h-8 px-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-xs font-black shadow-sm"
-                        title="Aprobar y descontar stock"
-                      >
-                        {convertingQuoteId === quote.id ? (
-                          <>
-                            <Loader2 size={14} className="mr-1 animate-spin" />
-                            Aprobando...
-                          </>
-                        ) : (
-                          <>
-                            <CheckCircle2 size={14} className="mr-1" />
-                            Vender
-                          </>
-                        )}
-                      </Button>
-                    )}
-
+                    {/* Delete button: distinct red button */}
                     <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => onDeleteQuote(quote.id)}
-                      className="h-8 w-8 text-rose-500 rounded-xl"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onDeleteQuote(quote.id, quote.numero)}
+                      className="h-8 px-2 text-rose-600 hover:text-rose-700 bg-rose-50/70 hover:bg-rose-100 dark:bg-rose-950/30 dark:hover:bg-rose-900/50 border-rose-200 dark:border-rose-900/50 rounded-xl text-xs font-bold justify-center"
                     >
-                      <Trash2 size={14} />
+                      <Trash2 size={14} className="mr-1 text-rose-600 dark:text-rose-400" />
+                      Eliminar
                     </Button>
                   </div>
+
+                  {/* Primary Convert / Approve CTA */}
+                  {quote.estado === 'pendiente' && (
+                    <Button
+                      size="sm"
+                      disabled={convertingQuoteId === quote.id}
+                      onClick={() => onConvertToSale(quote)}
+                      className="w-full h-9 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-black shadow-sm justify-center"
+                      title="Aprobar presupuesto, registrar venta y descontar stock"
+                    >
+                      {convertingQuoteId === quote.id ? (
+                        <>
+                          <Loader2 size={14} className="mr-1.5 animate-spin" />
+                          Aprobando...
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 size={15} className="mr-1.5" />
+                          Aprobar Cotización y Vender
+                        </>
+                      )}
+                    </Button>
+                  )}
                 </div>
 
               </div>

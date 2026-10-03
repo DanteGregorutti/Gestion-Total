@@ -3,29 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { 
-  collection, 
-  query, 
-  where, 
-  getDocs, 
-  addDoc, 
-  setDoc,
-  updateDoc, 
-  deleteDoc, 
-  doc, 
-  orderBy, 
-  serverTimestamp, 
-  onSnapshot,
-  writeBatch,
-  limit,
-  getDoc,
-  getDocFromServer,
-  startAfter,
-  getCountFromServer,
-  increment
-} from 'firebase/firestore';
-import { db, auth } from '../firebase';
-import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from '../firebase';
 import { supabase } from '../supabase';
 import { supabaseService } from './supabaseService';
 import { 
@@ -35,6 +13,24 @@ import {
   filterOutDeletedQuotes, 
   scrubQuoteFromLocalStorage 
 } from '../utils/quoteTombstones';
+import { 
+  Product, 
+  Movement, 
+  Sale, 
+  Purchase, 
+  Warehouse, 
+  Client, 
+  Supplier, 
+  Notification, 
+  Goal, 
+  UserProfile, 
+  Combo, 
+  ComboItem, 
+  FinanceTransaction, 
+  CashAudit, 
+  Quote, 
+  QuoteItem 
+} from '../types';
 
 const getLocal = <T>(key: string, fallback: T): T => {
   try {
@@ -50,127 +46,56 @@ const setLocal = <T>(key: string, value: T): void => {
     localStorage.setItem(key, JSON.stringify(value));
   } catch {}
 };
-import { 
-  Product, 
-  Movement, 
-  Sale, 
-  Purchase, 
-  Warehouse, 
-  Client, 
-  Supplier, 
-  Notification, 
-  Goal, 
-  UserProfile,
-  Combo,
-  ComboItem,
-  FinanceTransaction,
-  CashAudit,
-  Quote,
-  QuoteItem
-} from '../types';
 
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
+function generateId(prefix: string = 'id'): string {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
 }
 
-interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId: string | undefined;
-    email: string | null | undefined;
-    emailVerified: boolean | undefined;
-    isAnonymous: boolean | undefined;
-    tenantId: string | null | undefined;
-    providerInfo: {
-      providerId: string;
-      displayName: string | null;
-      email: string | null;
-      photoUrl: string | null;
-    }[];
-  }
+// Firestore is permanently disabled to prevent quota exhaustion and app lockups.
+// The app runs on Supabase (PostgreSQL) + LocalStorage with real-time sync.
+export const USE_FIRESTORE = false;
+export const isFirestoreQuotaExhausted = true;
+export function markFirestoreQuotaExhausted() {}
+export function isFirestoreAvailable(): boolean {
+  return false;
+}
+export function checkFirestoreQuotaExhausted(_error: unknown): boolean {
+  return true;
 }
 
-function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData.map(provider => ({
-        providerId: provider.providerId,
-        displayName: provider.displayName,
-        email: provider.email,
-        photoUrl: provider.photoURL
-      })) || []
-    },
-    operationType,
-    path
-  };
-  console.warn('Firestore fallback notification (handled seamlessly):', JSON.stringify(errInfo));
+export async function safeFirestoreWrite<T>(_op: () => Promise<T>, _timeoutMs = 1500): Promise<T | null> {
+  return null;
 }
 
-// Connection Test
-export async function testConnection() {
+export async function safeFirestoreRead<T>(_op: () => Promise<T>, _timeoutMs = 2000): Promise<T | null> {
+  return null;
+}
+
+export async function testConnection(): Promise<boolean> {
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if(error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration. ");
-    }
+    const { error } = await supabase.from('products').select('id').limit(1);
+    return !error;
+  } catch {
+    return true; // LocalStorage fallback is always operational
   }
 }
-
-const sanitizeData = (data: any) => {
-  const sanitized: any = {};
-  Object.entries(data).forEach(([key, value]) => {
-    if (value !== undefined) {
-      sanitized[key] = value;
-    }
-  });
-  return sanitized;
-};
 
 /**
- * Calculates the next sequential code in the sequence (e.g. ART-0001, ART-0002, ART-0003...)
+ * Calculates the next sequential product code (e.g. ART-0001 -> ART-0002)
  */
 export function getNextProductCode(products: Array<{ codigo?: string }>, prefix: string = 'ART'): string {
-  let maxNum = 0;
   const cleanPrefix = (prefix || 'ART').trim().toUpperCase();
   const regex = new RegExp(`^${cleanPrefix}[-_]?(\\d+)$`, 'i');
+  let maxNum = 0;
 
   if (Array.isArray(products)) {
     for (const p of products) {
-      if (!p.codigo) continue;
-      const trimmed = p.codigo.trim();
-      const match = trimmed.match(regex);
-      if (match) {
-        const num = parseInt(match[1], 10);
-        if (!isNaN(num) && num > maxNum) {
-          maxNum = num;
-        }
-      }
-    }
-  }
-
-  // Fallback check: if maxNum is still 0, look for any ART- prefix
-  if (cleanPrefix === 'ART' && maxNum === 0 && Array.isArray(products)) {
-    for (const p of products) {
-      if (!p.codigo) continue;
-      const genericMatch = p.codigo.trim().match(/^ART[-_]?(\d+)/i);
-      if (genericMatch) {
-        const num = parseInt(genericMatch[1], 10);
-        if (!isNaN(num) && num > maxNum) {
-          maxNum = num;
+      if (!p?.codigo) continue;
+      const match = p.codigo.trim().match(regex);
+      if (match && match[1]) {
+        const val = parseInt(match[1], 10);
+        if (!isNaN(val) && val > maxNum) {
+          maxNum = val;
         }
       }
     }
@@ -180,50 +105,18 @@ export function getNextProductCode(products: Array<{ codigo?: string }>, prefix:
   return `${cleanPrefix}-${String(nextNum).padStart(4, '0')}`;
 }
 
-/**
- * Checks if a code looks like a name mistakenly typed in the code field
- * (e.g. contains spaces, multiple words, or letters without numeric code pattern)
- */
 export function isNameInCode(code?: string): boolean {
   if (!code) return false;
   const c = code.trim();
-  // Valid standard sequential code like ART-0001 or ART-1042
   if (/^ART[-_]?\d+$/i.test(c)) return false;
-  // If it contains spaces, e.g. "short pollera", "remera oversize"
   if (/\s+/.test(c)) return true;
-  // If it has letters, no digits, and length >= 3, e.g. "pollera", "remera"
   if (!/\d/.test(c) && c.length >= 3) return true;
   return false;
 }
 
 export const inventoryService = {
-  // Products
+  // --- PRODUCTS ---
   getProducts: async (): Promise<Product[]> => {
-    // 1. Try Firestore if user is authenticated
-    if (auth.currentUser) {
-      const path = 'products';
-      try {
-        const q = query(
-          collection(db, path),
-          where('createdBy', '==', auth.currentUser.uid)
-        );
-        const snapshot = await getDocs(q);
-        if (!snapshot.empty) {
-          const list = snapshot.docs
-            .map(doc => ({ id: doc.id, ...doc.data() } as Product))
-            .sort((a, b) => {
-              const dateA = (a.createdAt as any)?.toDate ? (a.createdAt as any).toDate() : new Date(a.createdAt as any || 0);
-              const dateB = (b.createdAt as any)?.toDate ? (b.createdAt as any).toDate() : new Date(b.createdAt as any || 0);
-              return dateB.getTime() - dateA.getTime();
-            });
-          return list;
-        }
-      } catch (error) {
-        console.warn('Firestore getProducts error, falling back to Supabase:', error);
-      }
-    }
-
-    // 2. Fallback to Supabase (works 24/7 in Node.js server & browser)
     try {
       const sbProducts = await supabaseService.getProducts();
       if (sbProducts && sbProducts.length > 0) {
@@ -232,215 +125,57 @@ export const inventoryService = {
     } catch (e) {
       console.warn('Supabase getProducts fallback error:', e);
     }
-
-    // 3. Fallback to local cache
     return getLocal<Product[]>('products', []);
   },
 
-  getProductsPaginated: async (pageSize: number = 20, lastVisible: any = null) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'products';
-    try {
-      // Note: Pagination with orderBy and where on different fields is hard without indexes.
-      // We'll fallback to a simpler query and handle sorting/limit if possible, 
-      // but for proper pagination with a user-specific filter, an index IS recommended.
-      // For now, we'll strip the orderBy to avoid the crash.
-      const q = query(
-        collection(db, path),
-        where('createdBy', '==', auth.currentUser.uid),
-        limit(pageSize * 5) // Fetch more then slice to simulate a bit better if we had indexes
-      );
-
-      const snapshot = await getDocs(q);
-      const products = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Product))
-        .sort((a, b) => {
-          const dateA = (a.createdAt as any)?.toDate ? (a.createdAt as any).toDate() : new Date(a.createdAt as any || 0);
-          const dateB = (b.createdAt as any)?.toDate ? (b.createdAt as any).toDate() : new Date(b.createdAt as any || 0);
-          return dateB.getTime() - dateA.getTime();
-        })
-        .slice(0, pageSize);
-
-      return {
-        products,
-        lastVisible: snapshot.docs[snapshot.docs.length - 1]
-      };
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, path);
-      return { products: [], lastVisible: null };
-    }
+  getProductsPaginated: async (pageSize: number = 20, _lastVisible: any = null) => {
+    const all = await inventoryService.getProducts();
+    const products = all.slice(0, pageSize);
+    return {
+      products,
+      lastVisible: null
+    };
   },
 
   getProductsCount: async () => {
-    if (!auth.currentUser) return 0;
-    const path = 'products';
-    try {
-      const q = query(
-        collection(db, path),
-        where('createdBy', '==', auth.currentUser.uid)
-      );
-      const snapshot = await getCountFromServer(q);
-      return snapshot.data().count;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, path);
-      return 0;
-    }
+    const all = await inventoryService.getProducts();
+    return all.length;
   },
 
   getLowStockProducts: async (threshold: number = 5) => {
-    if (!auth.currentUser) return [];
-    const path = 'products';
-    try {
-      const q = query(
-        collection(db, path),
-        where('createdBy', '==', auth.currentUser.uid)
-      );
-      const snapshot = await getDocs(q);
-      return snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Product))
-        .filter(p => p.cantidad <= threshold)
-        .slice(0, 100);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, path);
-      return [];
-    }
+    const all = await inventoryService.getProducts();
+    return all.filter(p => p.cantidad <= threshold).slice(0, 100);
   },
 
   getRecentMovements: async (days: number = 7) => {
-    if (!auth.currentUser) return [];
-    const path = 'movements';
-    try {
-      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-      const q = query(
-        collection(db, path),
-        where('createdBy', '==', auth.currentUser.uid)
-      );
-      const snapshot = await getDocs(q);
-      const movements = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Movement))
-        .filter(m => {
-          const date = (m.fecha as any)?.toDate ? (m.fecha as any).toDate() : new Date(m.fecha as any);
-          return date >= since;
-        })
-        .sort((a, b) => {
-          const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any);
-          const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any);
-          return dateB.getTime() - dateA.getTime();
-        });
-      return movements;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, path);
-      return [];
-    }
-  },
-
-  subscribeToProducts: (callback: (products: Product[]) => void) => {
-    if (!auth.currentUser) {
-      callback([]);
-      return () => {};
-    }
-    const path = 'products';
-    const q = query(
-      collection(db, path),
-      where('createdBy', '==', auth.currentUser.uid)
-    );
-    return onSnapshot(q, (snapshot) => {
-      const products = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Product))
-        .sort((a, b) => {
-          const dateA = (a.createdAt as any)?.toDate ? (a.createdAt as any).toDate() : new Date(a.createdAt as any || 0);
-          const dateB = (b.createdAt as any)?.toDate ? (b.createdAt as any).toDate() : new Date(b.createdAt as any || 0);
-          return dateB.getTime() - dateA.getTime();
-        });
-      callback(products);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, path);
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const all = await inventoryService.getMovements();
+    return all.filter(m => {
+      const date = (m.fecha as any)?.toDate ? (m.fecha as any).toDate() : new Date(m.fecha as any);
+      return date >= since;
     });
   },
 
+  subscribeToProducts: (callback: (products: Product[]) => void) => {
+    return supabaseService.subscribeToProducts(callback);
+  },
+
   addProduct: async (product: Omit<Product, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>) => {
-    // 1. Persist to Supabase
-    let sbId = '';
-    try {
-      sbId = await supabaseService.addProduct(product);
-    } catch (e) {
-      console.warn('Supabase add product fallback:', e);
-    }
-
-    // 2. Also attempt Firestore in background without breaking if quota is reached
-    const path = 'products';
-    try {
-      if (auth.currentUser) {
-        const docData = sanitizeData({
-          ...product,
-          talle: product.talle || '',
-          genero: product.genero || '',
-          ubicacion: product.ubicacion || '',
-          createdBy: auth.currentUser.uid,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        });
-
-        const docRef = await addDoc(collection(db, path), docData);
-        return sbId || docRef.id;
-      }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, path);
-    }
-    return sbId || `prod_${Date.now()}`;
+    return await supabaseService.addProduct(product);
   },
 
   updateProduct: async (id: string, product: Partial<Product>) => {
-    try {
-      await supabaseService.updateProduct(id, product);
-    } catch (e) {
-      console.warn('Supabase updateProduct fallback:', e);
-    }
-
-    const path = `products/${id}`;
-    try {
-      if (auth.currentUser) {
-        const productRef = doc(db, 'products', id);
-        await updateDoc(productRef, sanitizeData({
-          ...product,
-          updatedAt: serverTimestamp()
-        }));
-      }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, path);
-    }
+    await supabaseService.updateProduct(id, product);
   },
 
   syncProductImageAcrossVariants: async (codigo: string, imagenUrl: string, excludeId?: string) => {
     if (!codigo?.trim() || !imagenUrl) return;
     const cleanCode = codigo.trim().toLowerCase();
     try {
-      // 1. Synchronize in Supabase / Local Storage
       const allCached = await supabaseService.getProducts().catch(() => []);
       const siblingsSb = allCached.filter(p => p.codigo?.trim().toLowerCase() === cleanCode && p.id !== excludeId && p.imagenUrl !== imagenUrl);
       for (const sib of siblingsSb) {
         await supabaseService.updateProduct(sib.id, { imagenUrl }).catch(() => {});
-      }
-
-      // 2. Synchronize in Firestore
-      if (auth.currentUser) {
-        const path = 'products';
-        const q = query(
-          collection(db, path),
-          where('createdBy', '==', auth.currentUser.uid)
-        );
-        const snapshot = await getDocs(q);
-        const matches = snapshot.docs.filter(d => {
-          const data = d.data();
-          return data.codigo?.trim().toLowerCase() === cleanCode && d.id !== excludeId && data.imagenUrl !== imagenUrl;
-        });
-
-        for (const matchDoc of matches) {
-          await updateDoc(doc(db, 'products', matchDoc.id), sanitizeData({
-            imagenUrl,
-            updatedAt: serverTimestamp()
-          })).catch(() => {});
-        }
       }
     } catch (error) {
       console.warn('Error syncing product image across variants:', error);
@@ -450,17 +185,8 @@ export const inventoryService = {
   syncProductAcrossVariants: async (productIds: string[], updates: Partial<Product>) => {
     if (!productIds || productIds.length === 0) return;
     try {
-      const sanitized = sanitizeData({
-        ...updates,
-        updatedAt: serverTimestamp()
-      });
-
       for (const id of productIds) {
         await supabaseService.updateProduct(id, updates).catch(() => {});
-        if (auth.currentUser) {
-          const productRef = doc(db, 'products', id);
-          await updateDoc(productRef, sanitized).catch(() => {});
-        }
       }
     } catch (error) {
       console.warn('Error syncing product across variants:', error);
@@ -468,77 +194,21 @@ export const inventoryService = {
   },
 
   deleteProduct: async (id: string) => {
-    try {
-      await supabaseService.deleteProduct(id);
-    } catch (e) {
-      console.warn('Supabase deleteProduct fallback:', e);
-    }
-
-    const path = `products/${id}`;
-    try {
-      if (auth.currentUser) {
-        await deleteDoc(doc(db, 'products', id));
-      }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, path);
-    }
+    await supabaseService.deleteProduct(id);
   },
 
   deleteProductsBatch: async (ids: string[]) => {
-    try {
-      await supabaseService.deleteProductsBatch(ids);
-    } catch (e) {
-      console.warn('Supabase deleteProductsBatch fallback:', e);
-    }
-
-    if (!auth.currentUser || !ids || ids.length === 0) return;
-    const path = 'products/batch_delete';
-    const CHUNK_SIZE = 450;
-    try {
-      for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
-        const chunk = ids.slice(i, i + CHUNK_SIZE);
-        const batch = writeBatch(db);
-        chunk.forEach(id => {
-          batch.delete(doc(db, 'products', id));
-        });
-        await batch.commit();
-      }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, path);
-    }
+    await supabaseService.deleteProductsBatch(ids);
   },
 
   updateProductsBatch: async (updates: Array<{ id: string; data: Partial<Product> }>) => {
     if (!updates || updates.length === 0) return;
-
-    // 1. Update in Supabase & Local Cache
     for (const item of updates) {
       try {
         await supabaseService.updateProduct(item.id, item.data);
       } catch (e) {
-        console.warn('Supabase batch update fallback:', e);
+        console.warn('Supabase batch update error:', e);
       }
-    }
-
-    // 2. Update in Firestore
-    if (!auth.currentUser) return;
-    const path = 'products/batch_update';
-    const CHUNK_SIZE = 400;
-    try {
-      for (let i = 0; i < updates.length; i += CHUNK_SIZE) {
-        const chunk = updates.slice(i, i + CHUNK_SIZE);
-        const batch = writeBatch(db);
-        chunk.forEach(({ id, data }) => {
-          const ref = doc(db, 'products', id);
-          batch.update(ref, sanitizeData({
-            ...data,
-            updatedAt: serverTimestamp()
-          }));
-        });
-        await batch.commit();
-      }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, path);
     }
   },
 
@@ -633,7 +303,6 @@ export const inventoryService = {
       match.products.push(p);
     });
 
-    // Sort stably: oldest first
     groups.sort((a, b) => {
       if (a.earliestTime && b.earliestTime && a.earliestTime !== b.earliestTime) {
         return a.earliestTime - b.earliestTime;
@@ -675,7 +344,6 @@ export const inventoryService = {
 
     await inventoryService.updateProductsBatch(updates);
 
-    // Sync images to new codes
     for (const group of groups) {
       if (group.image) {
         const newCode = details.find(d => d.groupName === group.cleanName)?.newCode;
@@ -693,564 +361,310 @@ export const inventoryService = {
   },
 
   bulkAddProducts: async (products: Omit<Product, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>[], onProgress?: (count: number) => void) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'products/bulk';
-    const CHUNK_SIZE = 500;
     let processed = 0;
+    const existingProducts = await inventoryService.getProducts();
+    const productMap = new Map<string, Product>();
+    existingProducts.forEach(p => {
+      const key = `${p.codigo}_${p.almacenId}_${p.ubicacion || ''}_${p.procedencia}_${p.talle || ''}_${p.genero || ''}`;
+      productMap.set(key, p);
+    });
 
-    try {
-      // 1. Fetch all existing products to check for duplicates efficiently
-      const existingProducts = await inventoryService.getProducts();
-      const productMap = new Map<string, Product>();
-      existingProducts.forEach(p => {
-        // Key by code, warehouse, location, origin, talle and gender
-        const key = `${p.codigo}_${p.almacenId}_${p.ubicacion || ''}_${p.procedencia}_${p.talle || ''}_${p.genero || ''}`;
-        productMap.set(key, p);
-      });
+    for (const prod of products) {
+      const talle = prod.talle || '';
+      const genero = prod.genero || '';
+      const ubicacion = prod.ubicacion || '';
+      const key = `${prod.codigo}_${prod.almacenId}_${ubicacion}_${prod.procedencia}_${talle}_${genero}`;
+      const existing = productMap.get(key);
 
-      for (let i = 0; i < products.length; i += CHUNK_SIZE) {
-        const chunk = products.slice(i, i + CHUNK_SIZE);
-        const batch = writeBatch(db);
-
-        chunk.forEach((product) => {
-          // Ensure fields exist for uniqueness check
-          const talle = product.talle || '';
-          const genero = product.genero || '';
-          const ubicacion = product.ubicacion || '';
-
-          // Key by all attributes to distinguish sizes/genders
-          const key = `${product.codigo}_${product.almacenId}_${ubicacion}_${product.procedencia}_${talle}_${genero}`;
-          const existing = productMap.get(key);
-
-          if (existing) {
-            // Update existing product quantity
-            const docRef = doc(db, 'products', existing.id);
-            
-            const updatedData = {
-              cantidad: existing.cantidad + product.cantidad,
-              updatedAt: serverTimestamp()
-            };
-            
-            batch.update(docRef, sanitizeData(updatedData));
-            
-            // Update map for subsequent items in the same bulk upload
-            productMap.set(key, { 
-              ...existing, 
-              cantidad: updatedData.cantidad
-            });
-          } else {
-            // Create new product
-            const docRef = doc(collection(db, 'products'));
-            const newProductData = sanitizeData({
-              ...product,
-              talle,
-              genero,
-              ubicacion,
-              createdBy: auth.currentUser!.uid,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp()
-            });
-            batch.set(docRef, newProductData);
-            
-            // Add to map to handle duplicates within the same bulk upload
-            const tempId = docRef.id;
-            productMap.set(key, { 
-              id: tempId, 
-              ...newProductData, 
-              createdAt: new Date().toISOString(), // Temp values for map
-              updatedAt: new Date().toISOString() 
-            } as any);
-          }
+      if (existing) {
+        const newQty = existing.cantidad + prod.cantidad;
+        await inventoryService.updateProduct(existing.id, { cantidad: newQty });
+        productMap.set(key, { ...existing, cantidad: newQty });
+      } else {
+        const newId = await inventoryService.addProduct({
+          ...prod,
+          talle,
+          genero,
+          ubicacion
         });
-
-        await batch.commit();
-        processed += chunk.length;
-        if (onProgress) onProgress(processed);
+        productMap.set(key, {
+          id: newId,
+          ...prod,
+          talle,
+          genero,
+          ubicacion,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        } as any);
       }
-      return processed;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, path);
+
+      processed++;
+      if (onProgress && processed % 5 === 0) {
+        onProgress(processed);
+      }
     }
   },
 
   getProductsByCode: async (codigo: string): Promise<Product[]> => {
-    if (!auth.currentUser) return [];
-    const path = 'products';
-    try {
-      const q = query(
-        collection(db, path),
-        where('createdBy', '==', auth.currentUser.uid),
-        where('codigo', '==', codigo)
-      );
-      const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, path);
-      return [];
-    }
+    if (!codigo) return [];
+    const all = await inventoryService.getProducts();
+    const clean = codigo.trim().toLowerCase();
+    return all.filter(p => (p.codigo || '').trim().toLowerCase() === clean);
   },
 
   checkProductCodeExists: async (codigo: string, excludeId?: string): Promise<Product | null> => {
-    if (!auth.currentUser) return null;
-    const path = 'products';
-    try {
-      const q = query(
-        collection(db, path),
-        where('createdBy', '==', auth.currentUser.uid),
-        where('codigo', '==', codigo)
-      );
-      const snapshot = await getDocs(q);
-      const products = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
-      
-      if (excludeId) {
-        const other = products.find(p => p.id !== excludeId);
-        return other || null;
-      }
-      
-      return products.length > 0 ? products[0] : null;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, path);
-      return null;
+    if (!codigo) return null;
+    const clean = codigo.trim().toLowerCase();
+    const all = await inventoryService.getProducts();
+    const matches = all.filter(p => (p.codigo || '').trim().toLowerCase() === clean);
+    if (excludeId) {
+      return matches.find(p => p.id !== excludeId) || null;
     }
+    return matches.length > 0 ? matches[0] : null;
   },
 
-  checkProductExists: async (codigo: string, almacenId: string, ubicacion: string, procedencia: string, talle?: string, genero?: string): Promise<Product | null> => {
-    if (!auth.currentUser) return null;
-    const path = 'products';
-    try {
-      const q = query(
-        collection(db, path),
-        where('createdBy', '==', auth.currentUser.uid),
-        where('codigo', '==', codigo),
-        where('almacenId', '==', almacenId),
-        where('ubicacion', '==', ubicacion || ''),
-        where('procedencia', '==', procedencia),
-        where('talle', '==', talle || ''),
-        where('genero', '==', genero || '')
-      );
-      const snapshot = await getDocs(q);
-      if (snapshot.empty) return null;
-      return { id: snapshot.docs[0].id, ...snapshot.docs[0].data() } as Product;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, path);
-      return null;
-    }
+  checkProductExists: async (
+    codigo: string, 
+    almacenId: string, 
+    ubicacion: string, 
+    procedencia: string, 
+    talle?: string, 
+    genero?: string
+  ): Promise<Product | null> => {
+    const all = await inventoryService.getProducts();
+    const match = all.find(p => 
+      (p.codigo || '').trim().toLowerCase() === (codigo || '').trim().toLowerCase() &&
+      (p.almacenId || '') === (almacenId || '') &&
+      (p.ubicacion || '') === (ubicacion || '') &&
+      (p.procedencia || '') === (procedencia || '') &&
+      (p.talle || '') === (talle || '') &&
+      (p.genero || '') === (genero || '')
+    );
+    return match || null;
   },
 
-  // Warehouses
+  // --- WAREHOUSES ---
   getWarehouses: async () => {
-    if (!auth.currentUser) return [];
-    const path = 'warehouses';
-    try {
-      const q = query(
-        collection(db, path),
-        where('createdBy', '==', auth.currentUser.uid)
-      );
-      const snapshot = await getDocs(q);
-      return snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Warehouse))
-        .sort((a, b) => {
-          const dateA = (a.createdAt as any)?.toDate ? (a.createdAt as any).toDate() : new Date(a.createdAt as any || 0);
-          const dateB = (b.createdAt as any)?.toDate ? (b.createdAt as any).toDate() : new Date(b.createdAt as any || 0);
-          return dateB.getTime() - dateA.getTime();
-        });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, path);
-      return [];
-    }
+    return await supabaseService.getWarehouses();
   },
 
   subscribeToWarehouses: (callback: (warehouses: Warehouse[]) => void) => {
-    if (!auth.currentUser) {
-      callback([]);
-      return () => {};
-    }
-    const path = 'warehouses';
-    const q = query(
-      collection(db, path),
-      where('createdBy', '==', auth.currentUser.uid)
-    );
-    return onSnapshot(q, (snapshot) => {
-      const warehouses = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Warehouse))
-        .sort((a, b) => {
-          const dateA = (a.createdAt as any)?.toDate ? (a.createdAt as any).toDate() : new Date(a.createdAt as any || 0);
-          const dateB = (b.createdAt as any)?.toDate ? (b.createdAt as any).toDate() : new Date(b.createdAt as any || 0);
-          return dateB.getTime() - dateA.getTime();
-        });
-      callback(warehouses);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, path);
-    });
+    return supabaseService.subscribeToWarehouses(callback);
   },
 
   addWarehouse: async (warehouse: Omit<Warehouse, 'id' | 'createdAt' | 'createdBy'>) => {
-    let sbId = '';
-    try {
-      sbId = await supabaseService.addWarehouse(warehouse);
-    } catch (e) {
-      console.warn('Supabase addWarehouse fallback:', e);
-    }
-
-    if (!auth.currentUser) return sbId;
-    const path = 'warehouses';
-    try {
-      const docRef = await addDoc(collection(db, path), sanitizeData({
-        ...warehouse,
-        createdBy: auth.currentUser.uid,
-        createdAt: serverTimestamp()
-      }));
-      return sbId || docRef.id;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, path);
-      return sbId || `wh_${Date.now()}`;
-    }
+    return await supabaseService.addWarehouse(warehouse);
   },
 
   updateWarehouse: async (id: string, warehouse: Partial<Warehouse>) => {
-    const path = `warehouses/${id}`;
     try {
-      await updateDoc(doc(db, 'warehouses', id), sanitizeData(warehouse));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, path);
-    }
+      await supabase.from('warehouses').update(warehouse).eq('id', id);
+    } catch (e) {}
+    const cached = getLocal<Warehouse[]>('warehouses', []);
+    setLocal('warehouses', cached.map(w => w.id === id ? { ...w, ...warehouse } : w));
+    window.dispatchEvent(new Event('warehouses_updated'));
   },
 
-  // Clients
-  getClients: async () => {
-    if (!auth.currentUser) return [];
-    const path = 'clients';
+  deleteWarehouse: async (id: string) => {
     try {
-      const q = query(
-        collection(db, path),
-        where('createdBy', '==', auth.currentUser.uid)
-      );
-      const snapshot = await getDocs(q);
-      return snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Client))
-        .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, path);
-      return [];
-    }
+      await supabase.from('warehouses').delete().eq('id', id);
+    } catch (e) {}
+    const cached = getLocal<Warehouse[]>('warehouses', []);
+    setLocal('warehouses', cached.filter(w => w.id !== id));
+    window.dispatchEvent(new Event('warehouses_updated'));
+  },
+
+  // --- CLIENTS ---
+  getClients: async () => {
+    return await supabaseService.getClients();
   },
 
   subscribeToClients: (callback: (clients: Client[]) => void) => {
-    if (!auth.currentUser) return () => {};
-    const path = 'clients';
-    const q = query(
-      collection(db, path),
-      where('createdBy', '==', auth.currentUser.uid)
-    );
-    return onSnapshot(q, (snapshot) => {
-      const clients = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Client))
-        .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
-      callback(clients);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, path));
+    return supabaseService.subscribeToClients(callback);
   },
 
   addClient: async (client: Omit<Client, 'id' | 'createdAt' | 'createdBy'>) => {
-    let sbId = '';
-    try {
-      sbId = await supabaseService.addClient(client);
-    } catch (e) {
-      console.warn(e);
-    }
-
-    if (!auth.currentUser) return sbId;
-    const path = 'clients';
-    try {
-      const docRef = await addDoc(collection(db, path), sanitizeData({
-        ...client,
-        createdBy: auth.currentUser.uid,
-        createdAt: serverTimestamp()
-      }));
-      return docRef.id || sbId;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, path);
-      return sbId;
-    }
+    return await supabaseService.addClient(client);
   },
 
   updateClient: async (id: string, client: Partial<Client>) => {
-    try {
-      await supabaseService.updateClient(id, client);
-    } catch (e) {
-      console.warn(e);
-    }
-
-    const path = `clients/${id}`;
-    try {
-      await updateDoc(doc(db, 'clients', id), sanitizeData(client));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, path);
-    }
+    await supabaseService.updateClient(id, client);
   },
 
   deleteClient: async (id: string) => {
-    try {
-      await supabaseService.deleteClient(id);
-    } catch (e) {
-      console.warn(e);
-    }
-
-    const path = `clients/${id}`;
-    try {
-      await deleteDoc(doc(db, 'clients', id));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, path);
-    }
+    await supabaseService.deleteClient(id);
   },
 
-  // Suppliers
+  // --- SUPPLIERS ---
   getSuppliers: async () => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'suppliers';
-    try {
-      const q = query(
-        collection(db, path),
-        where('createdBy', '==', auth.currentUser.uid)
-      );
-      const snapshot = await getDocs(q);
-      return snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Supplier))
-        .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, path);
-      return [];
-    }
+    return await supabaseService.getSuppliers();
   },
 
   subscribeToSuppliers: (callback: (suppliers: Supplier[]) => void) => {
-    if (!auth.currentUser) return () => {};
-    const path = 'suppliers';
-    const q = query(
-      collection(db, path),
-      where('createdBy', '==', auth.currentUser.uid)
-    );
-    return onSnapshot(q, (snapshot) => {
-      const suppliers = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Supplier))
-        .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
-      callback(suppliers);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, path));
+    return supabaseService.subscribeToSuppliers(callback);
   },
 
   addSupplier: async (supplier: Omit<Supplier, 'id' | 'createdAt' | 'createdBy'>) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'suppliers';
+    const id = generateId('sup');
+    const item: Supplier = { ...supplier, id, createdAt: new Date().toISOString(), createdBy: 'admin' };
+    const cached = getLocal<Supplier[]>('suppliers', []);
+    setLocal('suppliers', [item, ...cached]);
     try {
-      const docRef = await addDoc(collection(db, path), sanitizeData({
-        ...supplier,
-        createdBy: auth.currentUser.uid,
-        createdAt: serverTimestamp()
-      }));
-      return docRef.id;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, path);
-    }
+      await supabase.from('suppliers').insert([item]);
+    } catch (e) {}
+    window.dispatchEvent(new Event('suppliers_updated'));
+    return id;
   },
 
   updateSupplier: async (id: string, supplier: Partial<Supplier>) => {
-    const path = `suppliers/${id}`;
+    const cached = getLocal<Supplier[]>('suppliers', []);
+    setLocal('suppliers', cached.map(s => s.id === id ? { ...s, ...supplier } : s));
     try {
-      await updateDoc(doc(db, 'suppliers', id), sanitizeData(supplier));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, path);
-    }
+      await supabase.from('suppliers').update(supplier).eq('id', id);
+    } catch (e) {}
+    window.dispatchEvent(new Event('suppliers_updated'));
   },
 
   deleteSupplier: async (id: string) => {
-    const path = `suppliers/${id}`;
+    const cached = getLocal<Supplier[]>('suppliers', []);
+    setLocal('suppliers', cached.filter(s => s.id !== id));
     try {
-      await deleteDoc(doc(db, 'suppliers', id));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, path);
-    }
+      await supabase.from('suppliers').delete().eq('id', id);
+    } catch (e) {}
+    window.dispatchEvent(new Event('suppliers_updated'));
   },
 
-  // Notifications
-  getNotifications: async (maxResults: number = 50) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'notifications';
-    try {
-      const q = query(
-        collection(db, path),
-        where('userId', '==', auth.currentUser.uid)
-      );
-      const snapshot = await getDocs(q);
-      const notifications = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Notification))
-        .sort((a, b) => {
-          const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
-          const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
-          return dateB.getTime() - dateA.getTime();
-        })
-        .slice(0, maxResults);
-      return notifications;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, path);
-      return [];
-    }
+  // --- NOTIFICATIONS ---
+  getNotifications: async (_maxResults: number = 50) => {
+    return getLocal<Notification[]>('notifications', []);
+  },
+
+  getRecentNotifications: async (hours: number = 24, maxResults: number = 100) => {
+    const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+    const notifications = getLocal<Notification[]>('notifications', []);
+    return notifications
+      .filter(n => {
+        const date = (n.fecha as any)?.toDate ? (n.fecha as any).toDate() : new Date(n.fecha as any || 0);
+        return date >= since;
+      })
+      .slice(0, maxResults);
   },
 
   subscribeToNotifications: (callback: (notifications: Notification[]) => void) => {
-    if (!auth.currentUser) return () => {};
-    const path = 'notifications';
-    const q = query(
-      collection(db, path),
-      where('userId', '==', auth.currentUser.uid)
-    );
-    return onSnapshot(q, (snapshot) => {
-      const notifications = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Notification))
-        .sort((a, b) => {
-          const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
-          const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
-          return dateB.getTime() - dateA.getTime();
-        })
-        .slice(0, 50);
-      callback(notifications);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, path));
+    callback(getLocal<Notification[]>('notifications', []));
+    const handler = () => {
+      callback(getLocal<Notification[]>('notifications', []));
+    };
+    window.addEventListener('notifications_updated', handler);
+    return () => {
+      window.removeEventListener('notifications_updated', handler);
+    };
+  },
+
+  addNotification: async (notification: Omit<Notification, 'id' | 'fecha' | 'userId' | 'leido'>, skipCheck: boolean = false) => {
+    const cached = getLocal<Notification[]>('notifications', []);
+    if (!skipCheck) {
+      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const exists = cached.some(n => 
+        n.titulo === notification.titulo && 
+        n.productId === notification.productId &&
+        new Date(n.fecha || 0) >= yesterday
+      );
+      if (exists) return;
+    }
+    const newNotif: Notification = {
+      ...notification,
+      id: generateId('notif'),
+      userId: auth.currentUser?.uid || 'admin',
+      leido: false,
+      fecha: new Date().toISOString()
+    };
+    setLocal('notifications', [newNotif, ...cached]);
+    window.dispatchEvent(new Event('notifications_updated'));
   },
 
   markNotificationAsRead: async (id: string) => {
-    const path = `notifications/${id}`;
-    try {
-      await updateDoc(doc(db, 'notifications', id), { leido: true });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, path);
-    }
+    const cached = getLocal<Notification[]>('notifications', []);
+    setLocal('notifications', cached.map(n => n.id === id ? { ...n, leido: true } : n));
+    window.dispatchEvent(new Event('notifications_updated'));
   },
 
-  // Goals
+  deleteNotification: async (id: string) => {
+    const cached = getLocal<Notification[]>('notifications', []);
+    setLocal('notifications', cached.filter(n => n.id !== id));
+    window.dispatchEvent(new Event('notifications_updated'));
+  },
+
+  clearAllNotifications: async () => {
+    setLocal('notifications', []);
+    window.dispatchEvent(new Event('notifications_updated'));
+  },
+
+  // --- GOALS ---
   getGoals: async () => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'goals';
-    try {
-      const q = query(
-        collection(db, path),
-        where('createdBy', '==', auth.currentUser.uid)
-      );
-      const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Goal));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, path);
-      return [];
-    }
+    return getLocal<Goal[]>('goals', []);
   },
 
   subscribeToGoals: (callback: (goals: Goal[]) => void) => {
-    if (!auth.currentUser) return () => {};
-    const path = 'goals';
-    const q = query(
-      collection(db, path),
-      where('createdBy', '==', auth.currentUser.uid)
-    );
-    return onSnapshot(q, (snapshot) => {
-      const goals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Goal));
-      callback(goals);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, path));
+    callback(getLocal<Goal[]>('goals', []));
+    const handler = () => {
+      callback(getLocal<Goal[]>('goals', []));
+    };
+    window.addEventListener('goals_updated', handler);
+    return () => {
+      window.removeEventListener('goals_updated', handler);
+    };
   },
 
-  // Movements
-  getMovements: async (maxResults: number = 500) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'movements';
-    try {
-      const q = query(
-        collection(db, path),
-        where('createdBy', '==', auth.currentUser.uid)
-      );
-      const snapshot = await getDocs(q);
-      return snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Movement))
-        .sort((a, b) => {
-          const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
-          const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
-          return dateB.getTime() - dateA.getTime();
-        })
-        .slice(0, maxResults);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, path);
-      return [];
-    }
+  addGoal: async (goal: Omit<Goal, 'id' | 'createdBy'>) => {
+    const id = generateId('goal');
+    const newGoal: Goal = {
+      ...goal,
+      id,
+      createdBy: auth.currentUser?.uid || 'admin'
+    };
+    const cached = getLocal<Goal[]>('goals', []);
+    setLocal('goals', [newGoal, ...cached]);
+    window.dispatchEvent(new Event('goals_updated'));
+    return id;
+  },
+
+  updateGoal: async (id: string, goal: Partial<Goal>) => {
+    const cached = getLocal<Goal[]>('goals', []);
+    setLocal('goals', cached.map(g => g.id === id ? { ...g, ...goal } : g));
+    window.dispatchEvent(new Event('goals_updated'));
+  },
+
+  deleteGoal: async (id: string) => {
+    const cached = getLocal<Goal[]>('goals', []);
+    setLocal('goals', cached.filter(g => g.id !== id));
+    window.dispatchEvent(new Event('goals_updated'));
+  },
+
+  // --- MOVEMENTS ---
+  getMovements: async (_maxResults: number = 500) => {
+    return await supabaseService.getMovements();
   },
 
   getMovementsByProduct: async (productId: string) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'movements';
-    try {
-      const q = query(
-        collection(db, path),
-        where('createdBy', '==', auth.currentUser.uid),
-        where('productId', '==', productId)
-      );
-      const snapshot = await getDocs(q);
-      return snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Movement))
-        .sort((a, b) => {
-          const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
-          const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
-          return dateB.getTime() - dateA.getTime();
-        })
-        .slice(0, 50);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, path);
-      return [];
-    }
+    const all = await supabaseService.getMovements();
+    return all.filter(m => m.productId === productId).slice(0, 50);
   },
 
   subscribeToMovements: (callback: (movements: Movement[]) => void) => {
-    if (!auth.currentUser) return () => {};
-    const path = 'movements';
-    const q = query(
-      collection(db, path),
-      where('createdBy', '==', auth.currentUser.uid)
-    );
-    return onSnapshot(q, (snapshot) => {
-      const movements = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Movement))
-        .sort((a, b) => {
-          const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any);
-          const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any);
-          return dateB.getTime() - dateA.getTime();
-        });
-      callback(movements);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, path));
+    return supabaseService.subscribeToMovements(callback);
   },
 
-  subscribeToRecentMovements: (callback: (movements: Movement[]) => void, days: number = 30) => {
-    if (!auth.currentUser) return () => {};
-    const path = 'movements';
-    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-    const q = query(
-      collection(db, path),
-      where('createdBy', '==', auth.currentUser.uid)
-    );
-    return onSnapshot(q, (snapshot) => {
-      const movements = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Movement))
-        .filter(m => {
-          const date = (m.fecha as any)?.toDate ? (m.fecha as any).toDate() : new Date(m.fecha as any);
-          return date >= since;
-        })
-        .sort((a, b) => {
-          const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any);
-          const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any);
-          return dateB.getTime() - dateA.getTime();
-        });
-      callback(movements);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, path));
+  subscribeToRecentMovements: (callback: (movements: Movement[]) => void, _days: number = 30) => {
+    return supabaseService.subscribeToMovements(callback);
   },
 
-  // Sales
+  // --- SALES ---
   getSales: async (days: number = 30): Promise<Sale[]> => {
     const allSalesMap = new Map<string, Sale>();
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
-    // 1. Get cached local sales
+    // 1. Local storage
     try {
       const local = getLocal<Sale[]>('sales', []);
       if (Array.isArray(local)) {
@@ -1263,7 +677,7 @@ export const inventoryService = {
       }
     } catch (e) {}
 
-    // 2. Fetch from Supabase (shared real-time across all devices)
+    // 2. Supabase
     try {
       const sbSales = await supabaseService.getSales(days);
       if (Array.isArray(sbSales) && sbSales.length > 0) {
@@ -1273,38 +687,6 @@ export const inventoryService = {
       }
     } catch (e) {
       console.warn('Supabase getSales fallback:', e);
-    }
-
-    // 3. Fetch from Firestore if authenticated
-    if (auth.currentUser) {
-      const path = 'sales';
-      try {
-        const snapshot = await getDocs(collection(db, path));
-        snapshot.docs.forEach(doc => {
-          const data = { id: doc.id, ...doc.data() } as Sale;
-          const d = (data.fecha as any)?.toDate ? (data.fecha as any).toDate() : new Date(data.fecha as any || 0);
-          if (d >= since) {
-            allSalesMap.set(doc.id, data);
-          }
-        });
-      } catch (error) {
-        try {
-          const q = query(
-            collection(db, path),
-            where('createdBy', '==', auth.currentUser.uid)
-          );
-          const snapshot = await getDocs(q);
-          snapshot.docs.forEach(doc => {
-            const data = { id: doc.id, ...doc.data() } as Sale;
-            const d = (data.fecha as any)?.toDate ? (data.fecha as any).toDate() : new Date(data.fecha as any || 0);
-            if (d >= since) {
-              allSalesMap.set(doc.id, data);
-            }
-          });
-        } catch (e2) {
-          console.warn('Firestore getSales query fallback:', e2);
-        }
-      }
     }
 
     const mergedSales = Array.from(allSalesMap.values()).sort((a, b) => {
@@ -1321,122 +703,33 @@ export const inventoryService = {
   },
 
   getSalesByClient: async (clientId: string) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'sales';
-    try {
-      const q = query(
-        collection(db, path),
-        where('createdBy', '==', auth.currentUser.uid),
-        where('clientId', '==', clientId)
-      );
-      const snapshot = await getDocs(q);
-      return snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Sale))
-        .sort((a, b) => {
-          const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
-          const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
-          return dateB.getTime() - dateA.getTime();
-        })
-        .slice(0, 50);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, path);
-      return [];
-    }
+    const all = await inventoryService.getSales(90);
+    return all.filter(s => s.clientId === clientId).slice(0, 50);
   },
 
   subscribeToSales: (callback: (sales: Sale[]) => void, days: number = 30) => {
-    let isUnsubscribed = false;
-    let unsubFirestore: (() => void) | null = null;
-    let unsubSupabase: (() => void) | null = null;
-
-    const emitCurrent = async () => {
-      if (isUnsubscribed) return;
-      try {
-        const sales = await inventoryService.getSales(days);
-        if (!isUnsubscribed) callback(sales);
-      } catch (e) {}
-    };
-
-    // 1. Deliver immediately
-    emitCurrent();
-
-    // 2. Real-time from Supabase (all devices instantly synced)
-    try {
-      unsubSupabase = supabaseService.subscribeToSales(() => {
-        if (!isUnsubscribed) emitCurrent();
-      });
-    } catch (e) {
-      console.warn('Supabase subscribeToSales error:', e);
-    }
-
-    // 3. Real-time from Firestore
-    const setupFirestore = () => {
-      if (unsubFirestore) {
-        unsubFirestore();
-        unsubFirestore = null;
-      }
-      if (!auth.currentUser) return;
-
-      const path = 'sales';
-      try {
-        unsubFirestore = onSnapshot(collection(db, path), () => {
-          if (!isUnsubscribed) emitCurrent();
-        }, () => {
-          if (auth.currentUser && !isUnsubscribed) {
-            try {
-              const q = query(collection(db, path), where('createdBy', '==', auth.currentUser.uid));
-              unsubFirestore = onSnapshot(q, () => {
-                if (!isUnsubscribed) emitCurrent();
-              }, () => {});
-            } catch (e) {}
-          }
-        });
-      } catch (err) {
-        console.warn('Firestore subscribeToSales warning:', err);
-      }
-    };
-
-    setupFirestore();
-
-    const unsubAuth = onAuthStateChanged(auth, () => {
-      if (!isUnsubscribed) {
-        setupFirestore();
-        emitCurrent();
-      }
+    return supabaseService.subscribeToSales(async () => {
+      const fresh = await inventoryService.getSales(days);
+      callback(fresh);
     });
-
-    return () => {
-      isUnsubscribed = true;
-      if (unsubFirestore) unsubFirestore();
-      if (unsubSupabase) unsubSupabase();
-      unsubAuth();
-    };
   },
 
-  subscribeToRecentSales: (callback: (sales: Sale[]) => void, days: number = 30) => {
-    return inventoryService.subscribeToSales(callback, days);
-  },
-
-  registerSale: async (saleOrSales: (Omit<Sale, 'id' | 'fecha' | 'createdBy' | 'total'> & { id?: string; transactionId?: string; total?: number }) | (Omit<Sale, 'id' | 'fecha' | 'createdBy' | 'total'> & { id?: string; transactionId?: string; total?: number })[]) => {
-    const rawSales = Array.isArray(saleOrSales) ? saleOrSales : [saleOrSales];
-    if (rawSales.length === 0) return [];
-
-    // Generate or maintain consistent transactionId across Supabase and Firestore
-    const baseTransactionId = (rawSales[0] as any)?.transactionId || doc(collection(db, 'transactions')).id;
+  registerSale: async (
+    sales: (Omit<Sale, 'id' | 'fecha' | 'createdBy'> & Partial<Pick<Sale, 'id' | 'fecha' | 'createdBy'>>) | 
+           (Omit<Sale, 'id' | 'fecha' | 'createdBy'> & Partial<Pick<Sale, 'id' | 'fecha' | 'createdBy'>>)[]
+  ) => {
+    const salesArray = Array.isArray(sales) ? sales : [sales];
     const nowIso = new Date().toISOString();
 
-    // Create synchronized sales with matching deterministic IDs
-    const preparedSales: Sale[] = rawSales.map((s, idx) => {
-      const transactionId = (s as any).transactionId || baseTransactionId;
-      const saleId = (s as any).id || (rawSales.length === 1 ? transactionId : `${transactionId}_${idx}`);
+    const preparedSales = salesArray.map((s, idx) => {
+      const id = s.id || generateId(`sale_${idx}`);
       const cantidad = Number(s.cantidad) || 1;
-      const total = Math.round(Number(s.total !== undefined ? s.total : (cantidad * s.precio)) || 0);
-      const precio = Math.round(Number(s.total !== undefined ? (s.total / cantidad) : s.precio) || 0);
+      const precio = Number(s.precio) || 0;
+      const total = Number(s.total !== undefined ? s.total : cantidad * precio) || 0;
 
       return {
         ...s,
-        id: saleId,
-        transactionId,
+        id,
         cantidad,
         precio,
         total,
@@ -1452,257 +745,32 @@ export const inventoryService = {
       setLocal('sales', [...preparedSales, ...existing.filter(e => !preparedSales.some(p => p.id === e.id))]);
     } catch (e) {}
 
-    // 2. Persist to Supabase with matching IDs (instant cross-device synchronization)
+    // 2. Persist to Supabase with inventory stock deduction and movement logging
     try {
       await supabaseService.registerSale(preparedSales);
     } catch (e) {
-      console.warn('Supabase registerSale fallback:', e);
-    }
-
-    // 3. Persist to Firestore if authenticated
-    if (auth.currentUser) {
-      const path = 'sales/batch';
-      try {
-        const batch = writeBatch(db);
-
-        // Pre-fetch product data and consolidate deductions to avoid duplicate batch.update on same document
-        const deductionsByProduct = new Map<string, {
-          totalQuantity: number;
-          variantDeductions: Record<string, number>;
-          productRef: any;
-          productData: Product | null;
-        }>();
-
-        for (const sale of preparedSales) {
-          if (sale.productId && !sale.productId.startsWith('manual_') && !sale.productId.startsWith('custom_') && sale.productId !== 'quote_item') {
-            let existing = deductionsByProduct.get(sale.productId);
-            if (!existing) {
-              let pData: Product | null = null;
-              let pRef: any = null;
-              try {
-                pRef = doc(db, 'products', sale.productId);
-                const snap = await getDoc(pRef);
-                if (snap.exists()) {
-                  pData = snap.data() as Product;
-                }
-              } catch (e) {
-                console.warn('Could not read product for stock deduction:', e);
-              }
-              existing = {
-                totalQuantity: 0,
-                variantDeductions: {},
-                productRef: pRef,
-                productData: pData
-              };
-              deductionsByProduct.set(sale.productId, existing);
-            }
-
-            existing.totalQuantity += sale.cantidad;
-            if (sale.variantId) {
-              existing.variantDeductions[sale.variantId] = (existing.variantDeductions[sale.variantId] || 0) + sale.cantidad;
-            }
-          }
-
-          // Use the EXACT same ID in Firestore as in Supabase:
-          const saleRef = doc(db, 'sales', sale.id);
-          const pInfo = sale.productId ? deductionsByProduct.get(sale.productId) : null;
-          const currentCost = pInfo?.productData?.costo || (sale as any).costo || 0;
-
-          batch.set(saleRef, sanitizeData({
-            ...sale,
-            costo: currentCost,
-            fecha: serverTimestamp(),
-            createdBy: auth.currentUser.uid
-          }));
-
-          const movementRef = doc(collection(db, 'movements'));
-          batch.set(movementRef, {
-            productId: sale.productId,
-            productNombre: sale.productNombre,
-            tipo: 'venta',
-            cantidad: sale.cantidad,
-            fecha: serverTimestamp(),
-            createdBy: auth.currentUser.uid,
-            transactionId: sale.transactionId
-          });
-        }
-
-        // Apply product stock deductions - exactly once per product
-        for (const [productId, info] of deductionsByProduct.entries()) {
-          if (info.productRef && info.productData) {
-            const updatePayload: any = {
-              cantidad: increment(-info.totalQuantity),
-              updatedAt: serverTimestamp()
-            };
-            if (info.productData.variants?.length) {
-              updatePayload.variants = info.productData.variants.map(v => {
-                const varDeduct = info.variantDeductions[v.id] || 0;
-                if (varDeduct > 0) {
-                  return { ...v, cantidad: Math.max(0, (v.cantidad || 0) - varDeduct) };
-                }
-                return v;
-              });
-            }
-            batch.update(info.productRef, updatePayload);
-          }
-        }
-
-        await batch.commit();
-      } catch (error) {
-        console.warn('Firestore registerSale batch warning:', error);
-      }
+      console.warn('Supabase registerSale error:', e);
     }
 
     return preparedSales;
   },
 
   updateSale: async (id: string, data: Partial<Sale>) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = `sales/${id}`;
-    try {
-      const batch = writeBatch(db);
-      const saleRef = doc(db, 'sales', id);
-      const saleSnap = await getDoc(saleRef);
-      
-      if (!saleSnap.exists()) throw new Error('Sale not found');
-      const oldSale = saleSnap.data() as Sale;
-
-      let totalComboCost = oldSale.costo || 0;
-
-      // If it's a combo, handle its items
-      if (oldSale.isCombo && oldSale.comboItems) {
-        const newComboItems = data.comboItems || oldSale.comboItems;
-        totalComboCost = 0;
-        
-        // Map of old items for easy lookup
-        const oldItemsMap = new Map(oldSale.comboItems.map(i => [i.productId, i]));
-        const newItemsMap = new Map(newComboItems.map(i => [i.productId, i]));
-
-        // Handle stock adjustments for new and updated items
-        for (const newItem of newComboItems) {
-          const oldItem = oldItemsMap.get(newItem.productId);
-          const oldQty = oldItem ? oldItem.cantidad : 0;
-          const diff = newItem.cantidad - oldQty;
-          
-          // Get product data to update cost
-          const productRef = doc(db, 'products', newItem.productId);
-          const productSnap = await getDoc(productRef);
-          const productData = productSnap.data() as Product;
-          totalComboCost += (productData?.costo || 0) * newItem.cantidad;
-
-          if (diff !== 0) {
-            batch.update(productRef, {
-              cantidad: increment(-diff),
-              updatedAt: serverTimestamp()
-            });
-
-            const movementRef = doc(collection(db, 'movements'));
-            batch.set(movementRef, {
-              productId: newItem.productId,
-              productNombre: newItem.productNombre,
-              tipo: 'ajuste',
-              cantidad: Math.abs(diff),
-              fecha: serverTimestamp(),
-              createdBy: auth.currentUser.uid,
-              notas: `Ajuste por modificación de combo en venta ${id}. Diferencia: ${-diff}`
-            });
-          }
-        }
-        
-        // Handle removed items
-        for (const oldItem of oldSale.comboItems) {
-          if (!newItemsMap.has(oldItem.productId)) {
-            const productRef = doc(db, 'products', oldItem.productId);
-            batch.update(productRef, {
-              cantidad: increment(oldItem.cantidad),
-              updatedAt: serverTimestamp()
-            });
-            
-            const movementRef = doc(collection(db, 'movements'));
-            batch.set(movementRef, {
-              productId: oldItem.productId,
-              productNombre: oldItem.productNombre,
-              tipo: 'ajuste',
-              cantidad: oldItem.cantidad,
-              fecha: serverTimestamp(),
-              createdBy: auth.currentUser.uid,
-              notas: `Ajuste por eliminación de producto en combo de venta ${id}. Retorno: ${oldItem.cantidad}`
-            });
-          }
-        }
-      } else if (data.cantidad !== undefined && data.cantidad !== oldSale.cantidad && oldSale.productId !== 'combo') {
-        // Standard product stock adjustment
-        const diff = data.cantidad - oldSale.cantidad;
-        const productRef = doc(db, 'products', oldSale.productId);
-        batch.update(productRef, {
-          cantidad: increment(-diff),
-          updatedAt: serverTimestamp()
-        });
-
-        const movementRef = doc(collection(db, 'movements'));
-        batch.set(movementRef, {
-          productId: oldSale.productId,
-          productNombre: oldSale.productNombre,
-          tipo: 'ajuste',
-          cantidad: Math.abs(diff),
-          fecha: serverTimestamp(),
-          createdBy: auth.currentUser.uid,
-          notas: `Ajuste por modificación de venta ${id}. Diferencia: ${-diff}`
-        });
-      }
-
-      // Recalculate total if price or quantity changed
-      const newCantidad = data.cantidad !== undefined ? data.cantidad : oldSale.cantidad;
-      const newPrecio = data.precio !== undefined ? data.precio : oldSale.precio;
-      const newTotal = Math.round(newCantidad * newPrecio);
-
-      batch.update(saleRef, sanitizeData({
-        ...data,
-        total: newTotal,
-        precio: Math.round(newPrecio),
-        costo: totalComboCost,
-        updatedAt: serverTimestamp()
-      }));
-
-      await batch.commit();
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, path);
-    }
-
     try {
       await supabaseService.updateSale(id, data);
     } catch (e) {
-      console.warn('supabase updateSale fallback:', e);
+      console.warn('Supabase updateSale error:', e);
     }
+    const cached = getLocal<Sale[]>('sales', []);
+    setLocal('sales', cached.map(s => s.id === id ? { ...s, ...data } : s));
   },
 
   assignSalesToClient: async (saleIds: string[], client: { id: string; nombre: string }) => {
     if (!saleIds || saleIds.length === 0) return;
-
-    // 1. Update in Firestore if authenticated
-    if (auth.currentUser) {
-      const path = 'sales';
-      try {
-        const batch = writeBatch(db);
-        for (const id of saleIds) {
-          const saleRef = doc(db, 'sales', id);
-          batch.update(saleRef, sanitizeData({
-            clientId: client.id,
-            clientNombre: client.nombre,
-            updatedAt: serverTimestamp()
-          }));
-        }
-        await batch.commit();
-      } catch (error) {
-        handleFirestoreError(error, OperationType.WRITE, path);
-      }
-    }
-
-    // 2. Update in Supabase / Local storage cache
     try {
       await supabaseService.assignSalesToClient(saleIds, client);
     } catch (e) {
-      console.warn('supabase assignSalesToClient fallback:', e);
+      console.warn('Supabase assignSalesToClient error:', e);
     }
   },
 
@@ -1713,374 +781,41 @@ export const inventoryService = {
     clientId?: string, 
     clientNombre?: string 
   }) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'sales/combo_batch';
-    try {
-      const batch = writeBatch(db);
-      const transactionId = doc(collection(db, 'transactions')).id;
-      const saleRef = doc(collection(db, 'sales'));
+    const transactionId = generateId('tx');
+    const finalTotal = Math.round(Number(data.total) || 0);
 
-      const finalTotal = Math.round(Number(data.total) || 0);
-      let totalComboCost = 0;
+    const preparedSale: Sale = {
+      id: transactionId,
+      productId: 'combo',
+      productNombre: data.nombre,
+      variantId: '',
+      variantNombre: '',
+      cantidad: 1,
+      precio: finalTotal,
+      total: finalTotal,
+      clientId: data.clientId || '',
+      clientNombre: data.clientNombre || '',
+      transactionId,
+      isCombo: true,
+      comboItems: data.items,
+      fecha: new Date().toISOString(),
+      costo: 0,
+      createdBy: auth.currentUser?.uid || 'admin'
+    };
 
-      // Calculate total cost and deduct stock for each item in the combo
-      for (const item of data.items) {
-        const productRef = doc(db, 'products', item.productId);
-        const productSnap = await getDoc(productRef);
-        const productData = productSnap.data() as Product;
-        totalComboCost += (productData?.costo || 0) * item.cantidad;
-
-        batch.update(productRef, {
-          cantidad: increment(-item.cantidad),
-          updatedAt: serverTimestamp()
-        });
-
-        const movementRef = doc(collection(db, 'movements'));
-        batch.set(movementRef, {
-          productId: item.productId,
-          productNombre: item.productNombre,
-          tipo: 'venta',
-          cantidad: item.cantidad,
-          fecha: serverTimestamp(),
-          createdBy: auth.currentUser.uid,
-          transactionId,
-          notas: `Venta de combo: ${data.nombre}`
-        });
-      }
-
-      // Create a single sale record for the combo
-      batch.set(saleRef, sanitizeData({
-        productId: 'combo',
-        productNombre: data.nombre,
-        cantidad: 1,
-        precio: finalTotal,
-        total: finalTotal,
-        costo: totalComboCost,
-        clientId: data.clientId,
-        clientNombre: data.clientNombre,
-        transactionId,
-        isCombo: true,
-        comboItems: data.items,
-        fecha: serverTimestamp(),
-        createdBy: auth.currentUser.uid
-      }));
-
-      await batch.commit();
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, path);
-    }
-  },
-
-  // Purchases
-  getPurchases: async (days: number = 30) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'purchases';
-    try {
-      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-      const q = query(
-        collection(db, path),
-        where('createdBy', '==', auth.currentUser.uid)
-      );
-      const snapshot = await getDocs(q);
-      const purchases = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Purchase))
-        .filter(p => {
-          const date = (p.fecha as any)?.toDate ? (p.fecha as any).toDate() : new Date(p.fecha as any);
-          return date >= since;
-        })
-        .sort((a, b) => {
-          const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any);
-          const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any);
-          return dateB.getTime() - dateA.getTime();
-        });
-      return purchases;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, path);
-      return [];
-    }
-  },
-
-  getPurchasesBySupplier: async (proveedor: string) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'purchases';
-    try {
-      const q = query(
-        collection(db, path),
-        where('createdBy', '==', auth.currentUser.uid),
-        where('proveedor', '==', proveedor)
-      );
-      const snapshot = await getDocs(q);
-      return snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Purchase))
-        .sort((a, b) => {
-          const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
-          const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
-          return dateB.getTime() - dateA.getTime();
-        })
-        .slice(0, 50);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, path);
-      return [];
-    }
-  },
-
-  subscribeToPurchases: (callback: (purchases: Purchase[]) => void) => {
-    if (!auth.currentUser) {
-      callback([]);
-      return () => {};
-    }
-    const path = 'purchases';
-    const q = query(
-      collection(db, path),
-      where('createdBy', '==', auth.currentUser.uid)
-    );
-    return onSnapshot(q, (snapshot) => {
-      const purchases = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Purchase))
-        .sort((a, b) => {
-          const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
-          const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
-          return dateB.getTime() - dateA.getTime();
-        });
-      callback(purchases);
-    }, (error) => {
-      console.warn('Purchases snapshot error:', error);
-    });
-  },
-
-  subscribeToRecentPurchases: (callback: (purchases: Purchase[]) => void, days: number = 30) => {
-    if (!auth.currentUser) {
-      callback([]);
-      return () => {};
-    }
-    const path = 'purchases';
-    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-    const q = query(
-      collection(db, path),
-      where('createdBy', '==', auth.currentUser.uid)
-    );
-    return onSnapshot(q, (snapshot) => {
-      const purchases = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Purchase))
-        .filter(p => {
-          const date = (p.fecha as any)?.toDate ? (p.fecha as any).toDate() : new Date(p.fecha as any);
-          return date >= since;
-        })
-        .sort((a, b) => {
-          const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
-          const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
-          return dateB.getTime() - dateA.getTime();
-        });
-      callback(purchases);
-    }, (error) => {
-      console.warn('Recent purchases snapshot error:', error);
-    });
-  },
-
-  registerPurchase: async (purchase: Omit<Purchase, 'id' | 'fecha' | 'createdBy' | 'total'> & { total?: number }) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'purchases/batch';
-    try {
-      const batch = writeBatch(db);
-      const total = purchase.total !== undefined ? purchase.total : (purchase.cantidad * purchase.costo);
-      const transactionId = doc(collection(db, 'transactions')).id;
-      
-      const purchaseRef = doc(collection(db, 'purchases'));
-      batch.set(purchaseRef, sanitizeData({
-        ...purchase,
-        total,
-        transactionId,
-        fecha: serverTimestamp(),
-        createdBy: auth.currentUser.uid
-      }));
-
-      const productRef = doc(db, 'products', purchase.productId);
-      const productSnap = await getDoc(productRef);
-      const productData = productSnap.exists() ? (productSnap.data() as Product) : null;
-
-      const updatePayload: any = {
-        cantidad: increment(purchase.cantidad),
-        updatedAt: serverTimestamp()
-      };
-      if (purchase.costo && purchase.costo > 0) {
-        updatePayload.costo = purchase.costo;
-      }
-      if (purchase.variantId && productData?.variants?.length) {
-        updatePayload.variants = productData.variants.map(v => {
-          if (v.id === purchase.variantId) {
-            return { ...v, cantidad: (v.cantidad || 0) + purchase.cantidad };
-          }
-          return v;
-        });
-      }
-      batch.update(productRef, updatePayload);
-
-      const movementRef = doc(collection(db, 'movements'));
-      batch.set(movementRef, {
-        productId: purchase.productId,
-        productNombre: purchase.productNombre,
-        tipo: 'compra',
-        cantidad: purchase.cantidad,
-        fecha: serverTimestamp(),
-        createdBy: auth.currentUser.uid,
-        transactionId
-      });
-
-      await batch.commit();
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, path);
-    }
-  },
-
-  registerBulkPurchase: async (purchases: (Omit<Purchase, 'id' | 'fecha' | 'createdBy' | 'total'> & { total?: number })[]) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'purchases/bulk';
-    try {
-      const batch = writeBatch(db);
-      const transactionId = doc(collection(db, 'transactions')).id;
-
-      for (const purchase of purchases) {
-        const total = purchase.total !== undefined ? purchase.total : (purchase.cantidad * purchase.costo);
-        const purchaseRef = doc(collection(db, 'purchases'));
-        
-        batch.set(purchaseRef, sanitizeData({
-          ...purchase,
-          total,
-          transactionId,
-          fecha: serverTimestamp(),
-          createdBy: auth.currentUser.uid
-        }));
-
-        const productRef = doc(db, 'products', purchase.productId);
-        const updatePayload: any = {
-          cantidad: increment(purchase.cantidad),
-          updatedAt: serverTimestamp()
-        };
-        if (purchase.costo && purchase.costo > 0) {
-          updatePayload.costo = purchase.costo;
-        }
-        batch.update(productRef, updatePayload);
-
-        const movementRef = doc(collection(db, 'movements'));
-        batch.set(movementRef, {
-          productId: purchase.productId,
-          productNombre: purchase.productNombre,
-          tipo: 'compra',
-          cantidad: purchase.cantidad,
-          fecha: serverTimestamp(),
-          createdBy: auth.currentUser.uid,
-          transactionId
-        });
-      }
-
-      await batch.commit();
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, path);
-    }
+    await inventoryService.registerSale(preparedSale);
   },
 
   deleteSale: async (id: string) => {
-    // 1. Immediately remove from local cache for instant UI feedback
     try {
       const local = getLocal<Sale[]>('sales', []);
       setLocal('sales', local.filter(s => s.id !== id && (s as any).transactionId !== id));
     } catch (e) {}
 
-    // 2. Delete from Supabase (syncs across all devices in real-time)
     try {
       await supabaseService.deleteSale(id);
     } catch (e) {
       console.warn('Supabase deleteSale error:', e);
-    }
-
-    // 3. Delete from Firestore if authenticated
-    if (!auth.currentUser) return;
-    const path = `sales/${id}`;
-    try {
-      const saleRef = doc(db, 'sales', id);
-      const saleSnap = await getDoc(saleRef);
-      let sale: Sale | null = null;
-      
-      if (saleSnap.exists()) {
-        sale = saleSnap.data() as Sale;
-        // Unconditionally delete the document
-        await deleteDoc(saleRef);
-      } else {
-        // Check if ID is a transactionId or has multiple docs
-        try {
-          const q = query(collection(db, 'sales'), where('transactionId', '==', id));
-          const snap = await getDocs(q);
-          for (const d of snap.docs) {
-            if (!sale) sale = d.data() as Sale;
-            await deleteDoc(d.ref);
-          }
-        } catch (e) {}
-      }
-
-      // If document was found, restore stock and log movement safely
-      if (sale) {
-        try {
-          if (sale.isCombo && sale.comboItems) {
-            for (const item of sale.comboItems) {
-              const productRef = doc(db, 'products', item.productId);
-              const productSnap = await getDoc(productRef);
-              if (productSnap.exists()) {
-                await updateDoc(productRef, {
-                  cantidad: increment(item.cantidad),
-                  updatedAt: serverTimestamp()
-                });
-                try {
-                  const movementRef = doc(collection(db, 'movements'));
-                  await setDoc(movementRef, {
-                    productId: item.productId,
-                    productNombre: item.productNombre,
-                    tipo: 'entrada',
-                    cantidad: item.cantidad,
-                    fecha: serverTimestamp(),
-                    createdBy: auth.currentUser.uid,
-                    nota: `Venta eliminada (Retorno de combo: ${sale.productNombre})`
-                  });
-                } catch (e) {}
-              }
-            }
-          } else if (sale.productId && sale.productId !== 'combo') {
-            const productRef = doc(db, 'products', sale.productId);
-            const productSnap = await getDoc(productRef);
-            if (productSnap.exists()) {
-              const productData = productSnap.data() as Product;
-              const updatePayload: any = {
-                cantidad: increment(sale.cantidad),
-                updatedAt: serverTimestamp()
-              };
-              if (sale.variantId && productData?.variants?.length) {
-                updatePayload.variants = productData.variants.map(v => {
-                  if (v.id === sale.variantId) {
-                    return { ...v, cantidad: (v.cantidad || 0) + sale.cantidad };
-                  }
-                  return v;
-                });
-              }
-              await updateDoc(productRef, updatePayload);
-              try {
-                const movementRef = doc(collection(db, 'movements'));
-                await setDoc(movementRef, {
-                  productId: sale.productId,
-                  productNombre: sale.productNombre,
-                  tipo: 'entrada',
-                  cantidad: sale.cantidad,
-                  fecha: serverTimestamp(),
-                  createdBy: auth.currentUser.uid,
-                  nota: 'Venta eliminada'
-                });
-              } catch (e) {}
-            }
-          }
-        } catch (e) {
-          console.warn('Stock restore on deleteSale warning:', e);
-        }
-      }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, path);
     }
   },
 
@@ -2094,634 +829,241 @@ export const inventoryService = {
 
     try {
       await supabaseService.bulkDeleteSales(ids);
-    } catch (e) {}
+    } catch (e) {
+      console.warn('Supabase bulkDeleteSales error:', e);
+    }
+  },
 
-    for (const id of ids) {
-      if (auth.currentUser) {
-        try {
-          const saleRef = doc(db, 'sales', id);
-          await deleteDoc(saleRef);
-        } catch (e) {}
+  // --- PURCHASES ---
+  getPurchases: async (days: number = 30): Promise<Purchase[]> => {
+    const allMap = new Map<string, Purchase>();
+
+    const cached = getLocal<Purchase[]>('purchases', []);
+    if (Array.isArray(cached)) {
+      cached.forEach(p => {
+        if (p && p.id) allMap.set(p.id, p);
+      });
+    }
+
+    try {
+      const sbPurchases = await supabaseService.getPurchases();
+      if (Array.isArray(sbPurchases)) {
+        sbPurchases.forEach(p => {
+          if (p && p.id) allMap.set(p.id, p);
+        });
+      }
+    } catch (e) {
+      console.warn('Supabase getPurchases fallback:', e);
+    }
+
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const purchases = Array.from(allMap.values())
+      .filter(p => {
+        const date = (p.fecha as any)?.toDate ? (p.fecha as any).toDate() : new Date(p.fecha as any || 0);
+        return date >= since;
+      })
+      .sort((a, b) => {
+        const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
+        const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
+        return dateB.getTime() - dateA.getTime();
+      });
+
+    setLocal('purchases', purchases);
+    return purchases;
+  },
+
+  getPurchasesBySupplier: async (proveedor: string) => {
+    const all = await inventoryService.getPurchases(90);
+    return all.filter(p => p.proveedor === proveedor).slice(0, 50);
+  },
+
+  subscribeToPurchases: (callback: (purchases: Purchase[]) => void) => {
+    const initialCache = getLocal<Purchase[]>('purchases', []);
+    if (initialCache && initialCache.length > 0) {
+      callback(initialCache);
+    }
+    return supabaseService.subscribeToPurchases(async (fresh) => {
+      if (Array.isArray(fresh)) {
+        callback(fresh);
+      }
+    });
+  },
+
+  subscribeToRecentPurchases: (callback: (purchases: Purchase[]) => void, _days: number = 30) => {
+    return inventoryService.subscribeToPurchases(callback);
+  },
+
+  registerPurchase: async (purchase: Omit<Purchase, 'id' | 'fecha' | 'createdBy' | 'total'> & { total?: number }) => {
+    try {
+      await supabaseService.registerPurchase({
+        productId: purchase.productId,
+        productNombre: purchase.productNombre,
+        variantId: purchase.variantId,
+        variantNombre: purchase.variantNombre,
+        cantidad: purchase.cantidad,
+        costo: purchase.costo,
+        proveedor: purchase.proveedor
+      });
+    } catch (e) {
+      console.warn('Supabase registerPurchase fallback:', e);
+    }
+  },
+
+  registerBulkPurchase: async (purchases: (Omit<Purchase, 'id' | 'fecha' | 'createdBy' | 'total'> & { total?: number })[]) => {
+    for (const purchase of purchases) {
+      try {
+        await inventoryService.registerPurchase(purchase);
+      } catch (e) {
+        console.warn('Error registering item in bulk purchase:', e);
       }
     }
   },
 
   deletePurchase: async (id: string) => {
-    // 1. Delete from Supabase / local cache
     try {
       await supabaseService.deletePurchase(id);
     } catch (e) {
       console.warn('Supabase deletePurchase error:', e);
     }
+  },
 
-    // 2. Delete from Firestore if authenticated
-    if (!auth.currentUser) return;
-    const path = `purchases/${id}`;
+  // --- FINANCES & AUDITS ---
+  getFinances: async (): Promise<FinanceTransaction[]> => {
+    const allMap = new Map<string, FinanceTransaction>();
+
+    const cached = getLocal<FinanceTransaction[]>('finances', []);
+    if (Array.isArray(cached)) {
+      cached.forEach(f => {
+        if (f && f.id) allMap.set(f.id, f);
+      });
+    }
+
     try {
-      const purchaseRef = doc(db, 'purchases', id);
-      const purchaseSnap = await getDoc(purchaseRef);
-      
-      if (!purchaseSnap.exists()) return;
-      
-      const purchase = purchaseSnap.data() as Purchase;
-      const batch = writeBatch(db);
-      
-      // Delete purchase
-      batch.delete(purchaseRef);
-      
-      // Reduce stock (and variant if specified)
-      const productRef = doc(db, 'products', purchase.productId);
-      const productSnap = await getDoc(productRef);
-      const productData = productSnap.exists() ? (productSnap.data() as Product) : null;
-      const updatePayload: any = {
-        cantidad: increment(-purchase.cantidad),
-        updatedAt: serverTimestamp()
-      };
-      if (purchase.variantId && productData?.variants?.length) {
-        updatePayload.variants = productData.variants.map(v => {
-          if (v.id === purchase.variantId) {
-            return { ...v, cantidad: Math.max(0, (v.cantidad || 0) - purchase.cantidad) };
-          }
-          return v;
+      const sbFinances = await supabaseService.getFinances();
+      if (Array.isArray(sbFinances) && sbFinances.length > 0) {
+        sbFinances.forEach(f => {
+          if (f && f.id) allMap.set(f.id, f);
         });
       }
-      batch.update(productRef, updatePayload);
-      
-      // Add movement for cancellation
-      const movementRef = doc(collection(db, 'movements'));
-      batch.set(movementRef, {
-        productId: purchase.productId,
-        productNombre: purchase.productNombre,
-        tipo: 'salida', // Reducing stock is an exit
-        cantidad: purchase.cantidad,
-        fecha: serverTimestamp(),
-        createdBy: auth.currentUser.uid,
-        nota: 'Compra eliminada'
-      });
-      
-      await batch.commit();
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, path);
-    }
-  },
-
-  deleteWarehouse: async (id: string) => {
-    const path = `warehouses/${id}`;
-    try {
-      await deleteDoc(doc(db, 'warehouses', id));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, path);
-    }
-  },
-
-  // Goals
-  addGoal: async (goal: Omit<Goal, 'id' | 'createdBy'>) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'goals';
-    try {
-      const docRef = await addDoc(collection(db, path), {
-        ...goal,
-        createdBy: auth.currentUser.uid
-      });
-      return docRef.id;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, path);
-    }
-  },
-
-  updateGoal: async (id: string, goal: Partial<Goal>) => {
-    const path = `goals/${id}`;
-    try {
-      await updateDoc(doc(db, 'goals', id), goal);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, path);
-    }
-  },
-
-  deleteGoal: async (id: string) => {
-    const path = `goals/${id}`;
-    try {
-      await deleteDoc(doc(db, 'goals', id));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, path);
-    }
-  },
-
-  // Notifications
-  getRecentNotifications: async (hours: number = 24, maxResults: number = 100) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'notifications';
-    try {
-      const since = new Date(Date.now() - hours * 60 * 60 * 1000);
-      const q = query(
-        collection(db, path),
-        where('userId', '==', auth.currentUser.uid)
-      );
-      const snapshot = await getDocs(q);
-      const notifications = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Notification))
-        .filter(n => {
-          const date = (n.fecha as any)?.toDate ? (n.fecha as any).toDate() : new Date(n.fecha as any || 0);
-          return date >= since;
-        })
-        .sort((a, b) => {
-          const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
-          const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
-          return dateB.getTime() - dateA.getTime();
-        })
-        .slice(0, maxResults);
-      return notifications;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, path);
-      return null;
-    }
-  },
-
-  addNotification: async (notification: Omit<Notification, 'id' | 'fecha' | 'userId' | 'leido'>, skipCheck: boolean = false) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'notifications';
-    try {
-      if (!skipCheck) {
-        // Check for existing similar notification in the last 24 hours
-        const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
-        const q = query(
-          collection(db, path),
-          where('userId', '==', auth.currentUser.uid),
-          where('titulo', '==', notification.titulo),
-          where('productId', '==', notification.productId || ''),
-          where('fecha', '>=', yesterday),
-          limit(1)
-        );
-        const snapshot = await getDocs(q);
-        if (!snapshot.empty) return; // Skip if already notified recently
-      }
-
-      await addDoc(collection(db, path), {
-        ...notification,
-        userId: auth.currentUser.uid,
-        leido: false,
-        fecha: serverTimestamp()
-      });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, path);
-    }
-  },
-
-  deleteNotification: async (id: string) => {
-    const path = `notifications/${id}`;
-    try {
-      await deleteDoc(doc(db, 'notifications', id));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, path);
-    }
-  },
-
-  clearAllNotifications: async () => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'notifications';
-    try {
-      const q = query(
-        collection(db, path), 
-        where('userId', '==', auth.currentUser.uid)
-      );
-      const snapshot = await getDocs(q);
-      const batch = writeBatch(db);
-      snapshot.docs.forEach(doc => batch.delete(doc.ref));
-      await batch.commit();
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, path);
-    }
-  },
-
-  // User Profile
-  getUserProfile: async () => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = `users/${auth.currentUser.uid}`;
-    try {
-      const snapshot = await getDoc(doc(db, 'users', auth.currentUser.uid));
-      if (snapshot.exists()) {
-        return { uid: snapshot.id, ...snapshot.data() } as UserProfile;
-      }
-      return null;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.GET, path);
-      return null;
-    }
-  },
-
-  subscribeToUserProfile: (callback: (profile: UserProfile | null) => void) => {
-    if (!auth.currentUser) return () => {};
-    const path = `users/${auth.currentUser.uid}`;
-    return onSnapshot(doc(db, 'users', auth.currentUser.uid), (snapshot) => {
-      if (snapshot.exists()) {
-        callback({ uid: snapshot.id, ...snapshot.data() } as UserProfile);
-      } else {
-        callback(null);
-      }
-    }, (error) => handleFirestoreError(error, OperationType.GET, path));
-  },
-
-  updateUserProfile: async (profile: Partial<UserProfile>) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = `users/${auth.currentUser.uid}`;
-    try {
-      await updateDoc(doc(db, 'users', auth.currentUser.uid), profile);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, path);
-    }
-  },
-
-  // Backup & Restore
-  createBackup: async () => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    try {
-      const collections = ['products', 'sales', 'purchases', 'movements', 'warehouses', 'clients', 'suppliers', 'goals', 'notifications'];
-      const backupData: Record<string, any[]> = {};
-
-      for (const coll of collections) {
-        const ownerField = coll === 'notifications' ? 'userId' : 'createdBy';
-        const q = query(collection(db, coll), where(ownerField, '==', auth.currentUser.uid));
-        const snap = await getDocs(q);
-        backupData[coll] = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      }
-
-      const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `backup_${new Date().toISOString().split('T')[0]}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.GET, 'backup');
-    }
-  },
-
-  saveBackupToCloud: async () => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'backups';
-    try {
-      const collections = ['products', 'sales', 'purchases', 'movements', 'warehouses', 'clients', 'suppliers', 'goals', 'notifications', 'combos'];
-      const backupData: Record<string, any[]> = {};
-
-      for (const coll of collections) {
-        const ownerField = coll === 'notifications' ? 'userId' : 'createdBy';
-        const q = query(collection(db, coll), where(ownerField, '==', auth.currentUser.uid));
-        const snap = await getDocs(q);
-        backupData[coll] = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      }
-
-      await addDoc(collection(db, path), {
-        data: JSON.stringify(backupData),
-        fecha: serverTimestamp(),
-        createdBy: auth.currentUser.uid,
-        nombre: `Backup ${new Date().toLocaleString()}`
-      });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, path);
-    }
-  },
-
-  getCloudBackups: async (maxResults: number = 10) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'backups';
-    try {
-      const q = query(
-        collection(db, path),
-        where('createdBy', '==', auth.currentUser.uid)
-      );
-      const snapshot = await getDocs(q);
-      return snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as any))
-        .sort((a, b) => new Date(b.fecha || 0).getTime() - new Date(a.fecha || 0).getTime())
-        .slice(0, maxResults);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, path);
-      return [];
-    }
-  },
-
-  subscribeToCloudBackups: (callback: (backups: any[]) => void) => {
-    if (!auth.currentUser) return () => {};
-    const path = 'backups';
-    const q = query(
-      collection(db, path),
-      where('createdBy', '==', auth.currentUser.uid)
-    );
-    return onSnapshot(q, (snapshot) => {
-      const backups = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as any))
-        .sort((a, b) => new Date(b.fecha || 0).getTime() - new Date(a.fecha || 0).getTime())
-        .slice(0, 10);
-      callback(backups);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, path));
-  },
-
-  restoreFromCloud: async (backupId: string) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    try {
-      const docSnap = await getDoc(doc(db, 'backups', backupId));
-      if (!docSnap.exists()) throw new Error('Backup not found');
-      
-      const backup = docSnap.data();
-      const data = JSON.parse(backup.data);
-      
-      for (const [coll, docs] of Object.entries(data)) {
-        if (Array.isArray(docs)) {
-          for (let i = 0; i < docs.length; i += 500) {
-            const batch = writeBatch(db);
-            const chunk = docs.slice(i, i + 500);
-            chunk.forEach((docData: any) => {
-              const { id, ...rest } = docData;
-              const docRef = doc(db, coll, id);
-              batch.set(docRef, { ...rest, createdBy: auth.currentUser!.uid });
-            });
-            await batch.commit();
-          }
-        }
-      }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'restore_cloud');
-    }
-  },
-
-  restoreBackup: async (file: File) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    try {
-      const text = await file.text();
-      const data = JSON.parse(text);
-      
-      // We'll restore in chunks to avoid batch limits
-      for (const [coll, docs] of Object.entries(data)) {
-        if (Array.isArray(docs)) {
-          for (let i = 0; i < docs.length; i += 500) {
-            const batch = writeBatch(db);
-            const chunk = docs.slice(i, i + 500);
-            chunk.forEach((docData: any) => {
-              const { id, ...rest } = docData;
-              const docRef = doc(db, coll, id);
-              batch.set(docRef, { ...rest, createdBy: auth.currentUser!.uid });
-            });
-            await batch.commit();
-          }
-        }
-      }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'restore');
-    }
-  },
-
-  resetUserData: async () => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const uid = auth.currentUser.uid;
-    const collections = ['products', 'sales', 'purchases', 'movements', 'warehouses', 'clients', 'suppliers', 'notifications', 'goals', 'combos'];
-    
-    let errors = [];
-    for (const collName of collections) {
-      try {
-        const q = query(collection(db, collName), where('createdBy', '==', uid));
-        const snapshot = await getDocs(q);
-        
-        if (snapshot.empty) continue;
-
-        const docs = snapshot.docs;
-        for (let i = 0; i < docs.length; i += 500) {
-          const batch = writeBatch(db);
-          const chunk = docs.slice(i, i + 500);
-          chunk.forEach((doc) => {
-            batch.delete(doc.ref);
-          });
-          await batch.commit();
-        }
-      } catch (error) {
-        console.error(`Error resetting collection ${collName}:`, error);
-        errors.push(collName);
-      }
-    }
-    
-    if (errors.length > 0) {
-      throw new Error(`Error al reiniciar las siguientes colecciones: ${errors.join(', ')}`);
-    }
-  },
-
-  // Combos
-  // Combos
-  getCombos: async () => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'combos';
-    try {
-      const q = query(
-        collection(db, path),
-        where('createdBy', '==', auth.currentUser.uid)
-      );
-      const snapshot = await getDocs(q);
-      return snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Combo))
-        .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, path);
-      return [];
-    }
-  },
-
-  subscribeToCombos: (callback: (combos: Combo[]) => void) => {
-    if (!auth.currentUser) return () => {};
-    const path = 'combos';
-    const q = query(
-      collection(db, path),
-      where('createdBy', '==', auth.currentUser.uid)
-    );
-    return onSnapshot(q, (snapshot) => {
-      const combos = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Combo))
-        .sort((a, b) => {
-          const dateA = (a.createdAt as any)?.toDate ? (a.createdAt as any).toDate() : new Date(a.createdAt as any || 0);
-          const dateB = (b.createdAt as any)?.toDate ? (b.createdAt as any).toDate() : new Date(b.createdAt as any || 0);
-          return dateB.getTime() - dateA.getTime();
-        });
-      callback(combos);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, path));
-  },
-
-  addCombo: async (combo: Omit<Combo, 'id' | 'createdAt' | 'createdBy'>) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'combos';
-    try {
-      const docRef = await addDoc(collection(db, path), sanitizeData({
-        ...combo,
-        createdBy: auth.currentUser.uid,
-        createdAt: serverTimestamp()
-      }));
-      return docRef.id;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, path);
-    }
-  },
-
-  updateCombo: async (id: string, combo: Partial<Combo>) => {
-    const path = `combos/${id}`;
-    try {
-      await updateDoc(doc(db, 'combos', id), sanitizeData(combo));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, path);
-    }
-  },
-
-  deleteCombo: async (id: string) => {
-    const path = `combos/${id}`;
-    try {
-      await deleteDoc(doc(db, 'combos', id));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, path);
-    }
-  },
-
-  // Finances & Business Money
-  getFinances: async () => {
-    if (!auth.currentUser) return [];
-    const path = 'finances';
-    try {
-      const q = query(
-        collection(db, path),
-        where('createdBy', '==', auth.currentUser.uid)
-      );
-      const snapshot = await getDocs(q);
-      return snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as FinanceTransaction))
-        .sort((a, b) => {
-          const dateA = new Date(a.fecha || a.createdAt || 0).getTime();
-          const dateB = new Date(b.fecha || b.createdAt || 0).getTime();
-          return dateB - dateA;
-        });
     } catch (e) {
-      console.warn('Firestore getFinances warning:', e);
-      return [];
+      console.warn('Supabase getFinances fallback:', e);
     }
+
+    const merged = Array.from(allMap.values()).sort((a, b) => {
+      const dateA = new Date(a.fecha || a.createdAt || 0).getTime();
+      const dateB = new Date(b.fecha || b.createdAt || 0).getTime();
+      return dateB - dateA;
+    });
+
+    setLocal('finances', merged);
+    return merged;
   },
 
   subscribeToFinances: (callback: (transactions: FinanceTransaction[]) => void) => {
-    if (!auth.currentUser) {
-      callback([]);
-      return () => {};
+    const initialCache = getLocal<FinanceTransaction[]>('finances', []);
+    if (initialCache && initialCache.length > 0) {
+      callback(initialCache);
     }
-    const path = 'finances';
-    const q = query(
-      collection(db, path),
-      where('createdBy', '==', auth.currentUser.uid)
-    );
-    return onSnapshot(q, (snapshot) => {
-      const finances = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as FinanceTransaction))
-        .sort((a, b) => {
-          const dateA = new Date(a.fecha || a.createdAt || 0).getTime();
-          const dateB = new Date(b.fecha || b.createdAt || 0).getTime();
-          return dateB - dateA;
-        });
-      callback(finances);
-    }, (error) => {
-      console.warn('Finances snapshot error:', error);
+    return supabaseService.subscribeToFinances((sbData) => {
+      if (Array.isArray(sbData)) {
+        callback(sbData);
+      }
     });
   },
 
   addFinanceTransaction: async (transaction: Omit<FinanceTransaction, 'id' | 'createdAt' | 'createdBy'>) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'finances';
+    const id = generateId('fin');
+    const nowIso = new Date().toISOString();
+    const userId = auth.currentUser?.uid || 'admin';
+    const item: FinanceTransaction = {
+      ...transaction,
+      id,
+      monto: Number(transaction.monto) || 0,
+      createdAt: nowIso,
+      createdBy: userId
+    };
+
+    const cached = getLocal<FinanceTransaction[]>('finances', []);
+    setLocal('finances', [item, ...cached.filter(f => f.id !== id)]);
+
     try {
-      const docRef = await addDoc(collection(db, path), sanitizeData({
-        ...transaction,
-        createdBy: auth.currentUser.uid,
-        createdAt: new Date().toISOString()
-      }));
-      return docRef.id;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, path);
+      await supabaseService.addFinance(item);
+    } catch (e) {
+      console.warn('Supabase addFinance error:', e);
     }
+
+    return id;
   },
 
   updateFinanceTransaction: async (id: string, transaction: Partial<FinanceTransaction>) => {
-    const path = `finances/${id}`;
+    const cached = getLocal<FinanceTransaction[]>('finances', []);
+    setLocal('finances', cached.map(f => f.id === id ? { ...f, ...transaction } : f));
+
     try {
-      await updateDoc(doc(db, 'finances', id), sanitizeData(transaction));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, path);
-    }
+      await supabaseService.updateFinance(id, transaction);
+    } catch (e) {}
   },
 
   deleteFinanceTransaction: async (id: string) => {
-    const path = `finances/${id}`;
+    const cached = getLocal<FinanceTransaction[]>('finances', []);
+    setLocal('finances', cached.filter(f => f.id !== id));
+
     try {
-      await deleteDoc(doc(db, 'finances', id));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, path);
-    }
+      await supabaseService.deleteFinance(id);
+    } catch (e) {}
   },
 
   bulkDeleteFinanceTransactions: async (ids: string[]) => {
-    if (!auth.currentUser || ids.length === 0) return;
+    if (!ids || ids.length === 0) return;
+    const idsSet = new Set(ids);
+    const cached = getLocal<FinanceTransaction[]>('finances', []);
+    setLocal('finances', cached.filter(f => !idsSet.has(f.id)));
+
     try {
-      // Process in chunks of 450 (Firestore limit is 500 operations per batch)
-      const chunkSize = 450;
-      for (let i = 0; i < ids.length; i += chunkSize) {
-        const chunk = ids.slice(i, i + chunkSize);
-        const batch = writeBatch(db);
-        chunk.forEach(id => {
-          batch.delete(doc(db, 'finances', id));
-        });
-        await batch.commit();
-      }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, 'finances');
-      throw error;
-    }
+      await supabaseService.bulkDeleteFinances(ids);
+    } catch (e) {}
   },
 
-  // Cash Audits (Recuentos de dinero)
   subscribeToCashAudits: (callback: (audits: CashAudit[]) => void) => {
-    if (!auth.currentUser) return () => {};
-    const path = 'cash_audits';
-    const q = query(
-      collection(db, path),
-      where('createdBy', '==', auth.currentUser.uid)
-    );
-    return onSnapshot(q, (snapshot) => {
-      const audits = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as CashAudit))
-        .sort((a, b) => new Date(b.fecha || 0).getTime() - new Date(a.fecha || 0).getTime());
-      callback(audits);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, path));
+    const cached = getLocal<CashAudit[]>('cash_audits', []);
+    callback(cached);
+    const handler = () => {
+      callback(getLocal<CashAudit[]>('cash_audits', []));
+    };
+    window.addEventListener('cash_audits_updated', handler);
+    return () => {
+      window.removeEventListener('cash_audits_updated', handler);
+    };
   },
 
   addCashAudit: async (audit: Omit<CashAudit, 'id' | 'createdAt' | 'createdBy'>) => {
-    if (!auth.currentUser) throw new Error('User not authenticated');
-    const path = 'cash_audits';
-    try {
-      const docRef = await addDoc(collection(db, path), sanitizeData({
-        ...audit,
-        createdBy: auth.currentUser.uid,
-        createdAt: new Date().toISOString()
-      }));
-      return docRef.id;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, path);
-    }
+    const id = generateId('audit');
+    const nowIso = new Date().toISOString();
+    const item: CashAudit = {
+      ...audit,
+      id,
+      createdAt: nowIso,
+      createdBy: auth.currentUser?.uid || 'admin'
+    };
+
+    const cached = getLocal<CashAudit[]>('cash_audits', []);
+    setLocal('cash_audits', [item, ...cached]);
+    window.dispatchEvent(new Event('cash_audits_updated'));
+    return id;
   },
 
   deleteCashAudit: async (id: string) => {
-    const path = `cash_audits/${id}`;
-    try {
-      await deleteDoc(doc(db, 'cash_audits', id));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, path);
-    }
+    const cached = getLocal<CashAudit[]>('cash_audits', []);
+    setLocal('cash_audits', cached.filter(a => a.id !== id));
+    window.dispatchEvent(new Event('cash_audits_updated'));
   },
 
-  // Quotes / Presupuestos (Documento no válido como factura)
+  // --- QUOTES / PRESUPUESTOS ---
   getQuotes: async (): Promise<Quote[]> => {
     const userId = auth.currentUser?.uid || 'user_offline';
     const cacheKey = `cached_quotes_${userId}`;
     const allQuotesMap = new Map<string, Quote>();
     
-    // 1. Gather all local cached quotes
     const candidateKeys = [cacheKey, 'cached_quotes_user_offline', 'cached_quotes_default', 'quotes'];
     for (const key of candidateKeys) {
       try {
@@ -2739,16 +1081,18 @@ export const inventoryService = {
       } catch (e) {}
     }
 
-    // 2. Fetch from Supabase service (instantly shared across all devices)
     try {
       const sbQuotes = await supabaseService.getQuotes();
       if (Array.isArray(sbQuotes) && sbQuotes.length > 0) {
         sbQuotes.forEach(q => {
           if (q && q.id) {
-            if (!isQuoteDeleted(q.id, q.numero)) {
+            const isAccepted = q.estado === 'aceptada';
+            if (isAccepted) {
+              unmarkQuoteDeleted(q.id, q.numero);
+            }
+            if (isAccepted || !isQuoteDeleted(q.id, q.numero)) {
               allQuotesMap.set(q.id, q);
             } else {
-              // Asynchronously clean zombie from Supabase
               supabaseService.deleteQuote(q.id, q.numero).catch(() => {});
             }
           }
@@ -2758,50 +1102,36 @@ export const inventoryService = {
       console.warn('Supabase getQuotes fallback:', e);
     }
 
-    // 3. Fetch from Firestore if authenticated (query all quotes of the business)
-    if (auth.currentUser) {
-      const path = 'quotes';
-      try {
-        const snapshot = await getDocs(collection(db, path));
-        snapshot.docs.forEach(docSnap => {
-          const data = docSnap.data() as Quote;
-          const qId = docSnap.id;
-          const qNum = data?.numero;
-          if (!isQuoteDeleted(qId, qNum)) {
-            allQuotesMap.set(qId, { id: qId, ...data });
-          } else {
-            // Asynchronously clean zombie doc from Firestore
-            deleteDoc(docSnap.ref).catch(() => {});
-          }
-        });
-      } catch (error) {
-        try {
-          const q = query(
-            collection(db, path),
-            where('createdBy', '==', auth.currentUser.uid)
-          );
-          const snapshot = await getDocs(q);
-          snapshot.docs.forEach(docSnap => {
-            const data = docSnap.data() as Quote;
-            const qId = docSnap.id;
-            const qNum = data?.numero;
-            if (!isQuoteDeleted(qId, qNum)) {
-              allQuotesMap.set(qId, { id: qId, ...data });
-            } else {
-              deleteDoc(docSnap.ref).catch(() => {});
-            }
-          });
-        } catch (e2) {
-          console.warn('Firestore quote fetch fallback to local storage:', e2);
-        }
-      }
-    }
-
-    // Final safety filter ensuring no deleted quote can slip through
     const rawList = Array.from(allQuotesMap.values());
     const validQuotes = filterOutDeletedQuotes(rawList);
 
-    const merged = validQuotes.sort((a, b) => {
+    const dedupedMap = new Map<string, Quote>();
+    for (const q of validQuotes) {
+      if (!q) continue;
+      const numKey = (q.numero?.trim() || '').toLowerCase();
+      const idKey = (q.id?.trim() || '').toLowerCase();
+      const primaryKey = numKey || idKey;
+      if (!primaryKey) continue;
+
+      if (!dedupedMap.has(primaryKey)) {
+        dedupedMap.set(primaryKey, { ...q });
+      } else {
+        const existing = dedupedMap.get(primaryKey)!;
+        if (q.estado === 'aceptada' || existing.estado === 'aceptada') {
+          existing.estado = 'aceptada';
+          if (q.saleId || (q as any).sale_id) {
+            existing.saleId = q.saleId || (q as any).sale_id;
+          }
+        }
+        if (existing.id?.startsWith('local_') && !q.id?.startsWith('local_')) {
+          existing.id = q.id;
+        }
+        if (!existing.clientNombre && q.clientNombre) existing.clientNombre = q.clientNombre;
+        if ((!existing.items || existing.items.length === 0) && q.items?.length) existing.items = q.items;
+      }
+    }
+
+    const merged = Array.from(dedupedMap.values()).sort((a, b) => {
       const dateA = (a.fecha as any)?.toDate ? (a.fecha as any).toDate() : new Date(a.fecha as any || 0);
       const dateB = (b.fecha as any)?.toDate ? (b.fecha as any).toDate() : new Date(b.fecha as any || 0);
       return dateB.getTime() - dateA.getTime();
@@ -2813,61 +1143,11 @@ export const inventoryService = {
       setLocal('quotes', merged);
     } catch (e) {}
 
-    // Auto-sync quotes to cloud (Supabase & Firestore) - ONLY ACTIVE, NON-DELETED QUOTES
-    if (merged.length > 0) {
-      setTimeout(async () => {
-        try {
-          const quotesToSync = merged
-            .filter(q => !isQuoteDeleted(q.id, q.numero))
-            .map(q => ({
-              id: String(q.id),
-              numero: q.numero || '',
-              clientId: q.clientId || '',
-              clientNombre: q.clientNombre || 'Consumidor Final',
-              clientTelefono: q.clientTelefono || '',
-              clientEmail: q.clientEmail || '',
-              items: q.items || [],
-              subtotal: Number(q.subtotal) || 0,
-              descuento: Number(q.descuento) || 0,
-              total: Number(q.total) || 0,
-              fecha: (q.fecha as any)?.toDate ? (q.fecha as any).toDate().toISOString() : (q.fecha || new Date().toISOString()),
-              validezDias: Number(q.validezDias) || 7,
-              validezFecha: q.validezFecha || '',
-              estado: q.estado || 'pendiente',
-              notas: q.notas || '',
-              condiciones: q.condiciones || '',
-              createdBy: auth.currentUser?.uid || q.createdBy || 'admin'
-            }));
-
-          if (quotesToSync.length > 0) {
-            await supabase.from('quotes').upsert(quotesToSync, { onConflict: 'id' });
-          }
-
-          if (auth.currentUser) {
-            for (const q of merged) {
-              if (isQuoteDeleted(q.id, q.numero)) continue;
-              try {
-                const docRef = doc(db, 'quotes', q.id);
-                await setDoc(docRef, sanitizeData({
-                  ...q,
-                  createdBy: auth.currentUser.uid
-                }), { merge: true });
-              } catch (e) {}
-            }
-          }
-        } catch (e) {
-          console.warn('Auto-sync quotes to cloud warning:', e);
-        }
-      }, 300);
-    }
-
     return merged;
   },
 
   subscribeToQuotes: (callback: (quotes: Quote[]) => void) => {
     let isUnsubscribed = false;
-    let unsubFirestore: (() => void) | null = null;
-    let unsubSupabase: (() => void) | null = null;
 
     const emitCurrent = async () => {
       if (isUnsubscribed) return;
@@ -2877,75 +1157,31 @@ export const inventoryService = {
       } catch (e) {}
     };
 
-    // 1. Deliver immediately from cache & fast fetches
     emitCurrent();
 
-    // 2. Real-time from Supabase (all devices instantly synced)
-    try {
-      unsubSupabase = supabaseService.subscribeToQuotes(() => {
-        if (!isUnsubscribed) emitCurrent();
-      });
-    } catch (e) {
-      console.warn('Supabase subscribeToQuotes error:', e);
-    }
-
-    // 3. Real-time from Firestore
-    const setupFirestore = () => {
-      if (unsubFirestore) {
-        unsubFirestore();
-        unsubFirestore = null;
-      }
-      if (!auth.currentUser) return;
-
-      const path = 'quotes';
-      try {
-        unsubFirestore = onSnapshot(collection(db, path), () => {
-          if (!isUnsubscribed) emitCurrent();
-        }, () => {
-          if (auth.currentUser && !isUnsubscribed) {
-            try {
-              const q = query(collection(db, path), where('createdBy', '==', auth.currentUser.uid));
-              unsubFirestore = onSnapshot(q, () => {
-                if (!isUnsubscribed) emitCurrent();
-              }, () => {});
-            } catch (e) {}
-          }
-        });
-      } catch (err) {
-        console.warn('Firestore subscribeToQuotes warning:', err);
-      }
-    };
-
-    setupFirestore();
-
-    const unsubAuth = onAuthStateChanged(auth, () => {
-      if (!isUnsubscribed) {
-        setupFirestore();
-        emitCurrent();
-      }
+    const unsubSupabase = supabaseService.subscribeToQuotes(() => {
+      if (!isUnsubscribed) emitCurrent();
     });
 
     return () => {
       isUnsubscribed = true;
-      if (unsubFirestore) unsubFirestore();
       if (unsubSupabase) unsubSupabase();
-      unsubAuth();
     };
   },
 
   createQuote: async (quoteData: Omit<Quote, 'id' | 'fecha' | 'createdBy' | 'numero'> & { numero?: string }) => {
     const userId = auth.currentUser?.uid || 'user_offline';
-    const path = 'quotes';
     const cacheKey = `cached_quotes_${userId}`;
     
-    // Generate clean quote number e.g. COT-1042
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
     const numero = quoteData.numero || `COT-${randomSuffix}`;
     const now = new Date();
     const validezFecha = new Date(now.getTime() + (quoteData.validezDias || 7) * 24 * 60 * 60 * 1000).toISOString();
+    const quoteId = generateId('cot');
 
-    const newQuote: Omit<Quote, 'id'> = {
+    const newQuote: Quote = {
       ...quoteData,
+      id: quoteId,
       numero,
       validezFecha,
       estado: quoteData.estado || 'pendiente',
@@ -2953,11 +1189,6 @@ export const inventoryService = {
       createdBy: userId
     };
 
-    // Generate document ID upfront
-    const docRef = doc(collection(db, path));
-    const quoteId = docRef.id;
-
-    // Helper to persist into all local caches
     const saveToCaches = (quote: Quote) => {
       const keys = [cacheKey, 'cached_quotes_user_offline', 'cached_quotes_default', 'quotes', 'sb_cache_quotes'];
       for (const k of keys) {
@@ -2970,67 +1201,18 @@ export const inventoryService = {
       }
     };
 
-    // First, persist to Supabase if available with consistent ID
     try {
-      await supabaseService.createQuote({ ...newQuote, id: quoteId });
+      await supabaseService.createQuote(newQuote);
     } catch (e) {
       console.warn('Supabase createQuote fallback:', e);
     }
 
-    // If authenticated in Firebase, attempt Firestore persistence
-    if (auth.currentUser) {
-      try {
-        await setDoc(docRef, sanitizeData({ ...newQuote, id: quoteId }));
-        const created: Quote = { id: quoteId, ...newQuote };
-        saveToCaches(created);
-        return created;
-      } catch (error) {
-        console.warn('Fallback: saving quote locally due to firestore error:', error);
-      }
-    }
-
-    // Local / Offline fallback (always succeeds)
-    const created: Quote = { id: quoteId, ...newQuote };
     unmarkQuoteDeleted(quoteId, numero);
-    saveToCaches(created);
-    return created;
+    saveToCaches(newQuote);
+    return newQuote;
   },
 
-  updateQuote: async (id: string, updates: Partial<Quote>) => {
-    try {
-      if ('updateQuote' in supabaseService) {
-        await (supabaseService as any).updateQuote(id, updates);
-      }
-    } catch (e) {}
-
-    const path = `quotes/${id}`;
-    const userId = auth.currentUser?.uid || 'user_offline';
-    const cacheKey = `cached_quotes_${userId}`;
-
-    // Update all local caches
-    const keys = [cacheKey, 'cached_quotes_user_offline', 'cached_quotes_default', 'quotes', 'sb_cache_quotes'];
-    for (const k of keys) {
-      try {
-        const cached = localStorage.getItem(k);
-        if (cached) {
-          const list: Quote[] = JSON.parse(cached);
-          const updatedList = list.map(q => q.id === id ? { ...q, ...updates } : q);
-          localStorage.setItem(k, JSON.stringify(updatedList));
-        }
-      } catch (e) {}
-    }
-
-    if (auth.currentUser && !id.startsWith('local_')) {
-      try {
-        await updateDoc(doc(db, 'quotes', id), sanitizeData(updates));
-      } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, path);
-      }
-    }
-  },
-
-  deleteQuote: async (id: string, numero?: string) => {
-    // 0. Resolve quote number if not provided
+  updateQuote: async (id: string, updates: Partial<Quote>, numero?: string) => {
     let resolvedNumero = numero;
     if (!resolvedNumero) {
       try {
@@ -3045,10 +1227,60 @@ export const inventoryService = {
       } catch (e) {}
     }
 
-    // 1. Mark permanently in tombstones FIRST so no concurrent read or sync resurrects it
-    markQuoteAsDeleted(id, resolvedNumero);
+    try {
+      if ('updateQuote' in supabaseService) {
+        await (supabaseService as any).updateQuote(id, updates, resolvedNumero);
+      }
+    } catch (e) {}
 
-    // 2. Aggressively scrub from ALL localStorage keys and cached arrays
+    const userId = auth.currentUser?.uid || 'user_offline';
+    const cacheKey = `cached_quotes_${userId}`;
+
+    const keys = [cacheKey, 'cached_quotes_user_offline', 'cached_quotes_default', 'quotes', 'sb_cache_quotes'];
+    for (const k of keys) {
+      try {
+        const cached = localStorage.getItem(k);
+        if (cached) {
+          const list: Quote[] = JSON.parse(cached);
+          const updatedList = list.map(q => {
+            const matches = q.id === id || 
+                            (resolvedNumero && q.numero === resolvedNumero) ||
+                            (id && q.numero === id);
+            return matches ? { ...q, ...updates } : q;
+          });
+          localStorage.setItem(k, JSON.stringify(updatedList));
+        }
+      } catch (e) {}
+    }
+
+    try {
+      if (id) {
+        await supabase.from('quotes').update(updates).eq('id', id);
+      }
+      if (resolvedNumero) {
+        await supabase.from('quotes').update(updates).eq('numero', resolvedNumero);
+      }
+    } catch (e) {
+      console.warn('Direct Supabase quote update warning:', e);
+    }
+  },
+
+  deleteQuote: async (id: string, numero?: string) => {
+    let resolvedNumero = numero;
+    if (!resolvedNumero) {
+      try {
+        const cached = localStorage.getItem('quotes');
+        if (cached) {
+          const list = JSON.parse(cached);
+          if (Array.isArray(list)) {
+            const found = list.find((q: any) => q && (q.id === id || q.numero === id));
+            if (found?.numero) resolvedNumero = found.numero;
+          }
+        }
+      } catch (e) {}
+    }
+
+    markQuoteAsDeleted(id, resolvedNumero);
     scrubQuoteFromLocalStorage(id, resolvedNumero);
 
     const userId = auth.currentUser?.uid || 'user_offline';
@@ -3067,7 +1299,6 @@ export const inventoryService = {
       } catch (e) {}
     }
 
-    // 3. Clean from Supabase service and direct Supabase client
     try {
       await supabaseService.deleteQuote(id, resolvedNumero);
     } catch (e) {
@@ -3077,33 +1308,14 @@ export const inventoryService = {
     try {
       if (id) {
         await supabase.from('quotes').delete().eq('id', id);
+        await supabase.from('quotes').delete().eq('numero', id);
       }
       if (resolvedNumero) {
         await supabase.from('quotes').delete().eq('numero', resolvedNumero);
+        await supabase.from('quotes').delete().eq('id', resolvedNumero);
       }
     } catch (e) {
       console.warn('Direct Supabase delete warning:', e);
-    }
-
-    // 4. Clean from Firestore (try direct doc delete and queries)
-    try {
-      if (id && !id.startsWith('local_')) {
-        await deleteDoc(doc(db, 'quotes', id)).catch(() => {});
-      }
-      if (resolvedNumero) {
-        const qNum = query(collection(db, 'quotes'), where('numero', '==', resolvedNumero));
-        const snapNum = await getDocs(qNum);
-        for (const d of snapNum.docs) {
-          await deleteDoc(doc(db, 'quotes', d.id)).catch(() => {});
-        }
-      }
-      const qId = query(collection(db, 'quotes'), where('id', '==', id));
-      const snapId = await getDocs(qId);
-      for (const d of snapId.docs) {
-        await deleteDoc(doc(db, 'quotes', d.id)).catch(() => {});
-      }
-    } catch (error) {
-      console.warn('Firestore deleteQuote warning:', error);
     }
   },
 
@@ -3121,10 +1333,8 @@ export const inventoryService = {
       }];
     }
 
-    const baseTxId = doc(collection(db, 'transactions')).id;
+    const baseTxId = generateId('tx');
     const nowIso = new Date().toISOString();
-
-    // Cache lookup in case items were saved with manual descriptions that match existing products
     const cachedProducts = getLocal<Product[]>('products', []);
 
     const salesToRegister = items.map((item, idx) => {
@@ -3165,120 +1375,239 @@ export const inventoryService = {
       };
     });
 
-    // 1. Register items as real sales (persists to Supabase, local cache, and Firestore)
     const registered = await inventoryService.registerSale(salesToRegister);
 
-    // 2. Mark the quote as accepted/approved in database
+    unmarkQuoteDeleted(quote.id, quote.numero);
     try {
-      await inventoryService.updateQuote(quote.id, { estado: 'aceptada' });
+      await inventoryService.updateQuote(quote.id, { 
+        estado: 'aceptada',
+        saleId: baseTxId 
+      }, quote.numero);
     } catch (e) {
       console.warn('Could not update quote state to aceptada:', e);
     }
 
-    // 3. Delete the pending quotation so it is completely removed from the pending list
-    await inventoryService.deleteQuote(quote.id, quote.numero);
+    try {
+      if (quote.id) {
+        await supabase.from('quotes').update({ estado: 'aceptada', saleId: baseTxId }).eq('id', quote.id);
+      }
+      if (quote.numero) {
+        await supabase.from('quotes').update({ estado: 'aceptada', saleId: baseTxId }).eq('numero', quote.numero);
+      }
+    } catch (e) {
+      console.warn('Supabase quote state update warning:', e);
+    }
 
     return (registered && registered.length > 0 ? registered : salesToRegister) as Sale[];
   },
 
+  // --- USER PROFILE ---
+  getUserProfile: async (): Promise<UserProfile | null> => {
+    const user = auth.currentUser;
+    if (!user) return null;
+    const key = `user_profile_${user.uid}`;
+    const cached = getLocal<UserProfile | null>(key, null);
+    if (cached) return cached;
+
+    const defaultProfile: UserProfile = {
+      uid: user.uid,
+      displayName: user.displayName || user.email?.split('@')[0] || 'Usuario',
+      email: user.email || '',
+      role: 'admin',
+      createdAt: new Date().toISOString()
+    };
+    setLocal(key, defaultProfile);
+    return defaultProfile;
+  },
+
+  subscribeToUserProfile: (callback: (profile: UserProfile | null) => void) => {
+    const user = auth.currentUser;
+    if (!user) {
+      callback(null);
+      return () => {};
+    }
+    const key = `user_profile_${user.uid}`;
+    callback(getLocal<UserProfile | null>(key, {
+      uid: user.uid,
+      displayName: user.displayName || user.email?.split('@')[0] || 'Usuario',
+      email: user.email || '',
+      role: 'admin',
+      createdAt: new Date().toISOString()
+    }));
+
+    const handler = () => {
+      callback(getLocal<UserProfile | null>(key, null));
+    };
+    window.addEventListener('profile_updated', handler);
+    return () => {
+      window.removeEventListener('profile_updated', handler);
+    };
+  },
+
+  updateUserProfile: async (profile: Partial<UserProfile>) => {
+    const user = auth.currentUser;
+    if (!user) throw new Error('User not authenticated');
+    const key = `user_profile_${user.uid}`;
+    const existing = await inventoryService.getUserProfile();
+    const updated = { ...existing, ...profile, uid: user.uid } as UserProfile;
+    setLocal(key, updated);
+    window.dispatchEvent(new Event('profile_updated'));
+  },
+
+  // --- COMBOS ---
+  getCombos: async (): Promise<Combo[]> => {
+    const user = auth.currentUser;
+    const key = user ? `combos_${user.uid}` : 'combos_default';
+    return getLocal<Combo[]>(key, []);
+  },
+
+  subscribeToCombos: (callback: (combos: Combo[]) => void) => {
+    const user = auth.currentUser;
+    const key = user ? `combos_${user.uid}` : 'combos_default';
+    callback(getLocal<Combo[]>(key, []));
+
+    const handler = () => {
+      callback(getLocal<Combo[]>(key, []));
+    };
+    window.addEventListener('combos_updated', handler);
+    return () => {
+      window.removeEventListener('combos_updated', handler);
+    };
+  },
+
+  addCombo: async (combo: Omit<Combo, 'id' | 'createdAt' | 'createdBy'>) => {
+    const user = auth.currentUser;
+    const key = user ? `combos_${user.uid}` : 'combos_default';
+    const id = generateId('combo');
+    const newCombo: Combo = {
+      ...combo,
+      id,
+      createdBy: user?.uid || 'admin',
+      createdAt: new Date().toISOString()
+    };
+    const cached = getLocal<Combo[]>(key, []);
+    setLocal(key, [newCombo, ...cached]);
+    window.dispatchEvent(new Event('combos_updated'));
+    return id;
+  },
+
+  updateCombo: async (id: string, combo: Partial<Combo>) => {
+    const user = auth.currentUser;
+    const key = user ? `combos_${user.uid}` : 'combos_default';
+    const cached = getLocal<Combo[]>(key, []);
+    setLocal(key, cached.map(c => c.id === id ? { ...c, ...combo } : c));
+    window.dispatchEvent(new Event('combos_updated'));
+  },
+
+  deleteCombo: async (id: string) => {
+    const user = auth.currentUser;
+    const key = user ? `combos_${user.uid}` : 'combos_default';
+    const cached = getLocal<Combo[]>(key, []);
+    setLocal(key, cached.filter(c => c.id !== id));
+    window.dispatchEvent(new Event('combos_updated'));
+  },
+
+  // --- BACKUP & RESTORE ---
+  createBackup: async () => {
+    const collections = ['products', 'sales', 'purchases', 'movements', 'warehouses', 'clients', 'suppliers', 'goals', 'notifications', 'quotes', 'finances'];
+    const backupData: Record<string, any[]> = {};
+
+    for (const coll of collections) {
+      backupData[coll] = getLocal<any[]>(coll, []);
+    }
+
+    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `backup_sistema_${new Date().toISOString().split('T')[0]}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+
+  saveBackupToCloud: async () => {
+    const user = auth.currentUser;
+    const key = user ? `local_backups_${user.uid}` : 'local_backups_default';
+    const collections = ['products', 'sales', 'purchases', 'movements', 'warehouses', 'clients', 'suppliers', 'goals', 'notifications', 'quotes', 'finances'];
+    const backupData: Record<string, any[]> = {};
+
+    for (const coll of collections) {
+      backupData[coll] = getLocal<any[]>(coll, []);
+    }
+
+    const newBackup = {
+      id: generateId('bck'),
+      data: JSON.stringify(backupData),
+      fecha: new Date().toISOString(),
+      createdBy: user?.uid || 'admin',
+      nombre: `Respaldo ${new Date().toLocaleString()}`
+    };
+
+    const cached = getLocal<any[]>(key, []);
+    setLocal(key, [newBackup, ...cached].slice(0, 10));
+    window.dispatchEvent(new Event('backups_updated'));
+  },
+
+  getCloudBackups: async (maxResults: number = 10) => {
+    const user = auth.currentUser;
+    const key = user ? `local_backups_${user.uid}` : 'local_backups_default';
+    return getLocal<any[]>(key, []).slice(0, maxResults);
+  },
+
+  subscribeToCloudBackups: (callback: (backups: any[]) => void) => {
+    const user = auth.currentUser;
+    const key = user ? `local_backups_${user.uid}` : 'local_backups_default';
+    callback(getLocal<any[]>(key, []).slice(0, 10));
+
+    const handler = () => {
+      callback(getLocal<any[]>(key, []).slice(0, 10));
+    };
+    window.addEventListener('backups_updated', handler);
+    return () => {
+      window.removeEventListener('backups_updated', handler);
+    };
+  },
+
+  restoreFromCloud: async (backupId: string) => {
+    const user = auth.currentUser;
+    const key = user ? `local_backups_${user.uid}` : 'local_backups_default';
+    const backups = getLocal<any[]>(key, []);
+    const backup = backups.find(b => b.id === backupId);
+    if (!backup) throw new Error('Respaldo no encontrado');
+
+    const data = JSON.parse(backup.data);
+    for (const [coll, docs] of Object.entries(data)) {
+      if (Array.isArray(docs)) {
+        setLocal(coll, docs);
+      }
+    }
+    window.location.reload();
+  },
+
+  restoreBackup: async (file: File) => {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    for (const [coll, docs] of Object.entries(data)) {
+      if (Array.isArray(docs)) {
+        setLocal(coll, docs);
+      }
+    }
+    window.location.reload();
+  },
+
+  resetUserData: async () => {
+    const collections = ['products', 'sales', 'purchases', 'movements', 'warehouses', 'clients', 'suppliers', 'notifications', 'goals', 'combos', 'quotes', 'finances', 'cash_audits'];
+    for (const coll of collections) {
+      setLocal(coll, []);
+    }
+  },
+
+  // --- SYNC TO SUPABASE ---
   syncAllToSupabase: async () => {
-    // 1. Collect products from Firestore and local storage
-    let products: Product[] = [];
-    try {
-      if (auth.currentUser) {
-        try {
-          const q = query(collection(db, 'products'), where('createdBy', '==', auth.currentUser.uid));
-          const snap = await getDocs(q);
-          products = snap.docs.map(d => ({ id: d.id, ...d.data() } as Product));
-        } catch (e) {}
-      }
-      if (products.length === 0) {
-        try {
-          const snapAll = await getDocs(collection(db, 'products'));
-          products = snapAll.docs.map(d => ({ id: d.id, ...d.data() } as Product));
-        } catch (e) {}
-      }
-    } catch (e) {
-      console.warn('Firestore products read error during sync:', e);
-    }
-
-    if (products.length === 0) {
-      // Scan all localStorage keys for any stored products
-      try {
-        const cached = localStorage.getItem('products') || localStorage.getItem('sb_cache_products') || localStorage.getItem('cached_products');
-        if (cached) products = JSON.parse(cached);
-      } catch (e) {}
-
-      if (products.length === 0) {
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (key && (key.includes('product') || key.includes('backup') || key.includes('inventory'))) {
-            try {
-              const val = JSON.parse(localStorage.getItem(key) || '');
-              if (Array.isArray(val) && val.length > 0 && (val[0].precio !== undefined || val[0].codigo !== undefined)) {
-                products = val;
-                break;
-              } else if (val && val.products && Array.isArray(val.products)) {
-                products = val.products;
-                break;
-              }
-            } catch (e) {}
-          }
-        }
-      }
-    }
-
-    // 2. Collect warehouses
-    let warehouses: Warehouse[] = [];
-    try {
-      if (auth.currentUser) {
-        try {
-          const q = query(collection(db, 'warehouses'), where('createdBy', '==', auth.currentUser.uid));
-          const snap = await getDocs(q);
-          warehouses = snap.docs.map(d => ({ id: d.id, ...d.data() } as Warehouse));
-        } catch (e) {}
-      }
-      if (warehouses.length === 0) {
-        try {
-          const snapAll = await getDocs(collection(db, 'warehouses'));
-          warehouses = snapAll.docs.map(d => ({ id: d.id, ...d.data() } as Warehouse));
-        } catch (e) {}
-      }
-    } catch (e) {}
-
-    // 3. Collect quotes
-    let quotes: Quote[] = [];
-    try {
-      const cacheKey = auth.currentUser ? `cached_quotes_${auth.currentUser.uid}` : 'cached_quotes_default';
-      const cached = localStorage.getItem(cacheKey);
-      if (cached) quotes = JSON.parse(cached);
-    } catch (e) {}
-    if (quotes.length === 0 && auth.currentUser) {
-      try {
-        const q = query(collection(db, 'quotes'), where('createdBy', '==', auth.currentUser.uid));
-        const snap = await getDocs(q);
-        quotes = snap.docs.map(d => ({ id: d.id, ...d.data() } as Quote));
-      } catch (e) {}
-    }
-    quotes = filterOutDeletedQuotes(quotes);
-
-    // 4. Collect sales
-    let sales: Sale[] = [];
-    try {
-      if (auth.currentUser) {
-        try {
-          const q = query(collection(db, 'sales'), where('createdBy', '==', auth.currentUser.uid));
-          const snap = await getDocs(q);
-          sales = snap.docs.map(d => ({ id: d.id, ...d.data() } as Sale));
-        } catch (e) {}
-      }
-      if (sales.length === 0) {
-        try {
-          const snapAll = await getDocs(collection(db, 'sales'));
-          sales = snapAll.docs.map(d => ({ id: d.id, ...d.data() } as Sale));
-        } catch (e) {}
-      }
-    } catch (e) {}
+    const products: Product[] = getLocal<Product[]>('products', []);
+    const warehouses: Warehouse[] = getLocal<Warehouse[]>('warehouses', []);
+    const quotes: Quote[] = filterOutDeletedQuotes(getLocal<Quote[]>('quotes', []));
+    const sales: Sale[] = getLocal<Sale[]>('sales', []);
 
     return await supabaseService.migrateDataToSupabase({
       products,

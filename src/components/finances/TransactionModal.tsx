@@ -16,6 +16,7 @@ import {
   Building2,
   Banknote
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '../ui';
 import { FinanceTransaction, FinanceType, FinanceCategory, PaymentMethod } from '../../types';
 import { inventoryService } from '../../services/inventoryService';
@@ -47,6 +48,14 @@ const CATEGORIES_INGRESO = [
   { id: 'otro', label: 'Otro Ingreso' }
 ];
 
+const getLocalTodayDate = () => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 export const TransactionModal: React.FC<TransactionModalProps> = ({
   isOpen,
   onClose,
@@ -58,7 +67,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   const [concepto, setConcepto] = useState<string>('');
   const [monto, setMonto] = useState<string>('');
   const [metodo, setMetodo] = useState<PaymentMethod>('efectivo');
-  const [fecha, setFecha] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [fecha, setFecha] = useState<string>(getLocalTodayDate());
   const [notas, setNotas] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +79,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       setCategoria(defaultType === 'ingreso' ? 'fondo_inicial' : 'comida_super');
       setConcepto('');
       setMonto('');
+      setFecha(getLocalTodayDate());
       setError(null);
     }
   }, [isOpen, defaultType]);
@@ -92,21 +102,34 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       setIsSubmitting(true);
       setError(null);
 
+      let transactionDate = new Date().toISOString();
+      if (fecha) {
+        const localToday = getLocalTodayDate();
+        if (fecha === localToday) {
+          transactionDate = new Date().toISOString();
+        } else {
+          const [y, m, d] = fecha.split('-').map(Number);
+          transactionDate = new Date(y, m - 1, d, 12, 0, 0).toISOString();
+        }
+      }
+
       await inventoryService.addFinanceTransaction({
         tipo,
         categoria,
         concepto: concepto.trim(),
         monto: Math.round(parsedMonto),
         metodo,
-        fecha: new Date(fecha).toISOString(),
+        fecha: transactionDate,
         notas: notas.trim() || undefined
       });
 
+      toast.success(tipo === 'ingreso' ? '¡Dinero agregado al saldo con éxito!' : '¡Gasto registrado con éxito!');
       onSuccess();
       onClose();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error adding transaction:', err);
-      setError('Error al registrar el movimiento.');
+      setError(err?.message || 'Error al registrar el movimiento.');
+      toast.error('Error al registrar el movimiento.');
     } finally {
       setIsSubmitting(false);
     }

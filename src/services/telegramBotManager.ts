@@ -2241,30 +2241,7 @@ _Registra entradas de dinero ajenas a ventas de productos._
         metodo = 'tarjeta';
       }
 
-      // Save to Firebase finances
-      await inventoryService.addFinanceTransaction({
-        tipo,
-        categoria: tipo === 'ingreso' ? 'sueldo_cobro' : 'otro',
-        concepto: cleanConcept,
-        monto: Math.round(amount),
-        metodo,
-        fecha: new Date().toISOString().split('T')[0],
-        notas: `Anotado vía Telegram: "${text}"`
-      });
-
-      const icon = tipo === 'ingreso' ? '🟢' : '🔴';
-      const label = tipo === 'ingreso' ? 'Ingreso de Dinero' : 'Gasto Anotado';
-
-      // Send response immediately to Telegram while persisting in background
-      const replyPromise = this.sendMessage(
-        chatId,
-        `✅ *${icon} ${label} Exitoso*\n\n` +
-        `• *Detalle:* ${cleanConcept}\n` +
-        `• *Monto:* $${Math.round(amount).toLocaleString('es-AR')}\n` +
-        `• *Método:* ${metodo}\n\n` +
-        `_Ya está reflejado en tu saldo de la aplicación web._`
-      );
-
+      // Save to finances (LocalStorage + Supabase)
       const savePromise = inventoryService.addFinanceTransaction({
         tipo,
         categoria: tipo === 'ingreso' ? 'sueldo_cobro' : 'otro',
@@ -2273,7 +2250,20 @@ _Registra entradas de dinero ajenas a ventas de productos._
         metodo,
         fecha: new Date().toISOString().split('T')[0],
         notas: `Anotado vía Telegram: "${text}"`
-      }).catch(err => console.error('Background finance transaction error:', err));
+      }).catch(err => console.error('Finance transaction error:', err));
+
+      const icon = tipo === 'ingreso' ? '🟢' : '🔴';
+      const label = tipo === 'ingreso' ? 'Ingreso de Dinero' : 'Gasto Anotado';
+
+      // Send response to Telegram
+      const replyPromise = this.sendMessage(
+        chatId,
+        `✅ *${icon} ${label} Exitoso*\n\n` +
+        `• *Detalle:* ${cleanConcept}\n` +
+        `• *Monto:* $${Math.round(amount).toLocaleString('es-AR')}\n` +
+        `• *Método:* ${metodo}\n\n` +
+        `_Ya está reflejado en tu saldo de la aplicación web._`
+      );
 
       await Promise.all([replyPromise, savePromise]);
     } catch (err: any) {

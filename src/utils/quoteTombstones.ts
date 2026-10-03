@@ -43,11 +43,17 @@ export function markQuoteAsDeleted(id?: string, numero?: string): void {
     const current = getDeletedQuoteTombstones();
     const cleanId = id?.trim();
     const cleanNum = numero?.trim();
+    const normId = cleanId?.toLowerCase();
+    const normNum = cleanNum?.toLowerCase();
 
-    const exists = current.some(t => 
-      (cleanId && t.id === cleanId) || 
-      (cleanNum && t.numero === cleanNum)
-    );
+    const exists = current.some(t => {
+      const tId = t.id?.trim().toLowerCase();
+      const tNum = t.numero?.trim().toLowerCase();
+      return (
+        (normId && (tId === normId || tNum === normId)) ||
+        (normNum && (tNum === normNum || tId === normNum))
+      );
+    });
 
     if (!exists) {
       current.push({
@@ -69,12 +75,15 @@ export function unmarkQuoteDeleted(id?: string, numero?: string): void {
   try {
     if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
     const current = getDeletedQuoteTombstones();
-    const cleanId = id?.trim();
-    const cleanNum = numero?.trim();
-    const filtered = current.filter(t => 
-      (!cleanId || t.id !== cleanId) && 
-      (!cleanNum || t.numero !== cleanNum)
-    );
+    const cleanId = id?.trim().toLowerCase();
+    const cleanNum = numero?.trim().toLowerCase();
+    const filtered = current.filter(t => {
+      const tId = t.id?.trim().toLowerCase();
+      const tNum = t.numero?.trim().toLowerCase();
+      if (cleanId && (tId === cleanId || tNum === cleanId)) return false;
+      if (cleanNum && (tNum === cleanNum || tId === cleanNum)) return false;
+      return true;
+    });
     localStorage.setItem(SALES_QUOTES_TOMBSTONES_KEY, JSON.stringify(filtered));
   } catch (e) {}
 }
@@ -85,15 +94,16 @@ export function unmarkQuoteDeleted(id?: string, numero?: string): void {
 export function isQuoteDeleted(id?: string, numero?: string): boolean {
   if (!id && !numero) return false;
   const tombstones = getDeletedQuoteTombstones();
-  const cleanId = id?.trim();
-  const cleanNum = numero?.trim();
+  if (tombstones.length === 0) return false;
+
+  const normId = id?.trim().toLowerCase();
+  const normNum = numero?.trim().toLowerCase();
 
   return tombstones.some(t => {
-    if (cleanId && t.id && t.id === cleanId) return true;
-    if (cleanNum && t.numero && t.numero === cleanNum) return true;
-    // Cross match in case id was stored as numero
-    if (cleanId && t.numero && t.numero === cleanId) return true;
-    if (cleanNum && t.id && t.id === cleanNum) return true;
+    const tId = t.id?.trim().toLowerCase();
+    const tNum = t.numero?.trim().toLowerCase();
+    if (normId && (tId === normId || tNum === normId)) return true;
+    if (normNum && (tNum === normNum || tId === normNum)) return true;
     return false;
   });
 }
@@ -101,37 +111,33 @@ export function isQuoteDeleted(id?: string, numero?: string): boolean {
 /**
  * Filter an array of quotes, removing any deleted items.
  */
-export function filterOutDeletedQuotes<T extends { id?: string; numero?: string }>(quotes: T[]): T[] {
+export function filterOutDeletedQuotes<T extends { id?: string; numero?: string; estado?: string }>(quotes: T[]): T[] {
   if (!Array.isArray(quotes) || quotes.length === 0) return [];
   const tombstones = getDeletedQuoteTombstones();
   if (tombstones.length === 0) return quotes;
 
-  const deletedIds = new Set<string>();
-  const deletedNumeros = new Set<string>();
-
+  const deletedKeys = new Set<string>();
   tombstones.forEach(t => {
-    if (t.id) {
-      deletedIds.add(t.id);
-      deletedNumeros.add(t.id);
-    }
-    if (t.numero) {
-      deletedNumeros.add(t.numero);
-      deletedIds.add(t.numero);
-    }
+    if (t.id) deletedKeys.add(t.id.trim().toLowerCase());
+    if (t.numero) deletedKeys.add(t.numero.trim().toLowerCase());
   });
 
   return quotes.filter(q => {
     if (!q) return false;
-    const qId = q.id?.trim();
-    const qNum = q.numero?.trim();
-    if (qId && (deletedIds.has(qId) || deletedNumeros.has(qId))) return false;
-    if (qNum && (deletedNumeros.has(qNum) || deletedIds.has(qNum))) return false;
+    // Concreted / accepted quotes must never be suppressed by stale conversion tombstones
+    if (q.estado === 'aceptada' || q.estado === 'aprobado') return true;
+
+    const qId = q.id?.trim().toLowerCase();
+    const qNum = q.numero?.trim().toLowerCase();
+    if (qId && deletedKeys.has(qId)) return false;
+    if (qNum && deletedKeys.has(qNum)) return false;
     return true;
   });
 }
 
 /**
  * Thoroughly scrub a quote from all localStorage keys and caches.
+ * CRITICAL: NEVER TOUCH THE TOMBSTONES STORAGE ITSELF!
  */
 export function scrubQuoteFromLocalStorage(id?: string, numero?: string): void {
   if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
@@ -139,12 +145,15 @@ export function scrubQuoteFromLocalStorage(id?: string, numero?: string): void {
   const cleanNum = numero?.trim();
   if (!cleanId && !cleanNum) return;
 
+  const normCleanId = cleanId?.toLowerCase();
+  const normCleanNum = cleanNum?.toLowerCase();
+
   const isMatch = (item: any): boolean => {
     if (!item || typeof item !== 'object') return false;
-    const itemId = item.id?.trim?.();
-    const itemNum = item.numero?.trim?.();
-    if (cleanId && (itemId === cleanId || itemNum === cleanId)) return true;
-    if (cleanNum && (itemNum === cleanNum || itemId === cleanNum)) return true;
+    const itemId = item.id?.trim?.().toLowerCase();
+    const itemNum = item.numero?.trim?.().toLowerCase();
+    if (normCleanId && (itemId === normCleanId || itemNum === normCleanId)) return true;
+    if (normCleanNum && (itemNum === normCleanNum || itemId === normCleanNum)) return true;
     return false;
   };
 
@@ -152,6 +161,16 @@ export function scrubQuoteFromLocalStorage(id?: string, numero?: string): void {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (!key) continue;
+
+      // PROTECT TOMBSTONES FROM BEING ERASED
+      if (
+        key === SALES_QUOTES_TOMBSTONES_KEY || 
+        key === REPAIR_QUOTES_TOMBSTONES_KEY ||
+        key.includes('tombstone')
+      ) {
+        continue;
+      }
+
       // Inspect any key that might hold quote data
       if (
         key.includes('quote') || 
@@ -204,11 +223,17 @@ export function markRepairQuoteAsDeleted(id?: string, numero?: string): void {
     const current = getDeletedRepairQuoteTombstones();
     const cleanId = id?.trim();
     const cleanNum = numero?.trim();
+    const normId = cleanId?.toLowerCase();
+    const normNum = cleanNum?.toLowerCase();
 
-    const exists = current.some(t => 
-      (cleanId && t.id === cleanId) || 
-      (cleanNum && t.numero === cleanNum)
-    );
+    const exists = current.some(t => {
+      const tId = t.id?.trim().toLowerCase();
+      const tNum = t.numero?.trim().toLowerCase();
+      return (
+        (normId && (tId === normId || tNum === normId)) ||
+        (normNum && (tNum === normNum || tId === normNum))
+      );
+    });
 
     if (!exists) {
       current.push({
@@ -221,28 +246,58 @@ export function markRepairQuoteAsDeleted(id?: string, numero?: string): void {
   } catch (e) {}
 }
 
+export function unmarkRepairQuoteDeleted(id?: string, numero?: string): void {
+  try {
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
+    const current = getDeletedRepairQuoteTombstones();
+    const cleanId = id?.trim().toLowerCase();
+    const cleanNum = numero?.trim().toLowerCase();
+    const filtered = current.filter(t => {
+      const tId = t.id?.trim().toLowerCase();
+      const tNum = t.numero?.trim().toLowerCase();
+      if (cleanId && (tId === cleanId || tNum === cleanId)) return false;
+      if (cleanNum && (tNum === cleanNum || tId === cleanNum)) return false;
+      return true;
+    });
+    localStorage.setItem(REPAIR_QUOTES_TOMBSTONES_KEY, JSON.stringify(filtered));
+  } catch (e) {}
+}
+
 export function isRepairQuoteDeleted(id?: string, numero?: string): boolean {
   if (!id && !numero) return false;
   const tombstones = getDeletedRepairQuoteTombstones();
-  const cleanId = id?.trim();
-  const cleanNum = numero?.trim();
+  if (tombstones.length === 0) return false;
+
+  const normId = id?.trim().toLowerCase();
+  const normNum = numero?.trim().toLowerCase();
 
   return tombstones.some(t => {
-    if (cleanId && t.id && t.id === cleanId) return true;
-    if (cleanNum && t.numero && t.numero === cleanNum) return true;
-    if (cleanId && t.numero && t.numero === cleanId) return true;
-    if (cleanNum && t.id && t.id === cleanNum) return true;
+    const tId = t.id?.trim().toLowerCase();
+    const tNum = t.numero?.trim().toLowerCase();
+    if (normId && (tId === normId || tNum === normId)) return true;
+    if (normNum && (tNum === normNum || tId === normNum)) return true;
     return false;
   });
 }
 
-export function filterOutDeletedRepairQuotes<T extends { id?: string; numero?: string }>(quotes: T[]): T[] {
+export function filterOutDeletedRepairQuotes<T extends { id?: string; numero?: string; estado?: string }>(quotes: T[]): T[] {
   if (!Array.isArray(quotes) || quotes.length === 0) return [];
   const tombstones = getDeletedRepairQuoteTombstones();
   if (tombstones.length === 0) return quotes;
 
+  const deletedKeys = new Set<string>();
+  tombstones.forEach(t => {
+    if (t.id) deletedKeys.add(t.id.trim().toLowerCase());
+    if (t.numero) deletedKeys.add(t.numero.trim().toLowerCase());
+  });
+
   return quotes.filter(q => {
     if (!q) return false;
-    return !isRepairQuoteDeleted(q.id, q.numero);
+    if (q.estado === 'aprobado' || q.estado === 'aceptada') return true;
+    const qId = q.id?.trim().toLowerCase();
+    const qNum = q.numero?.trim().toLowerCase();
+    if (qId && deletedKeys.has(qId)) return false;
+    if (qNum && deletedKeys.has(qNum)) return false;
+    return true;
   });
 }

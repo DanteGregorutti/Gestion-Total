@@ -28,7 +28,8 @@ import {
   Wrench,
   Building2,
   SlidersHorizontal,
-  Store
+  Store,
+  Trash2
 } from 'lucide-react';
 import { Quote, Sale } from '../types';
 import { Button } from './ui';
@@ -36,6 +37,7 @@ import { toast } from 'sonner';
 import { cn } from '../utils/cn';
 import { useSettings } from '../contexts/SettingsContext';
 import { CompanyBrandingModal } from './CompanyBrandingModal';
+import { inventoryService } from '../services/inventoryService';
 import { 
   printReceipt, 
   downloadReceiptPdf, 
@@ -52,6 +54,7 @@ interface ReceiptModalProps {
   sale?: Sale | null;
   salesGroup?: Sale[] | null;
   onConvertToSale?: (quote: Quote) => Promise<void>;
+  onDeleteQuote?: (quoteId: string, quoteNumero?: string) => Promise<void> | void;
 }
 
 export function ReceiptModal({ 
@@ -60,7 +63,8 @@ export function ReceiptModal({
   quote, 
   sale, 
   salesGroup,
-  onConvertToSale 
+  onConvertToSale,
+  onDeleteQuote
 }: ReceiptModalProps) {
   const { companyProfile, appSettings } = useSettings();
   const [copied, setCopied] = useState(false);
@@ -69,20 +73,53 @@ export function ReceiptModal({
   const [isPrinting, setIsPrinting] = useState(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [showBrandingModal, setShowBrandingModal] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   React.useEffect(() => {
     if (isOpen && appSettings?.defaultReceiptStyle) {
       setSelectedStyle(appSettings.defaultReceiptStyle);
     }
+    if (!isOpen) {
+      setShowDeleteConfirm(false);
+      setIsDeleting(false);
+    }
   }, [isOpen, appSettings?.defaultReceiptStyle]);
+
+  const handleDeleteConfirmed = async () => {
+    if (!quote) return;
+    setIsDeleting(true);
+    const targetId = quote.id;
+    const targetNum = quote.numero;
+    try {
+      if (onDeleteQuote) {
+        await onDeleteQuote(targetId, targetNum);
+      } else {
+        await inventoryService.deleteQuote(targetId, targetNum);
+        toast.success('Cotización eliminada permanentemente');
+      }
+      onClose();
+    } catch (err) {
+      console.error('Error al eliminar cotización:', err);
+      toast.error('Error al eliminar la cotización');
+    } finally {
+      setIsDeleting(false);
+      setShowDeleteConfirm(false);
+    }
+  };
 
   if (!isOpen || (!quote && !sale && (!salesGroup || salesGroup.length === 0))) {
     return null;
   }
 
   const isQuote = !!quote;
-  const title = isQuote ? 'Presupuesto / Cotización' : 'Comprobante de Venta';
-  const subtitle = isQuote ? 'Propuesta comercial para cliente' : 'Constancia de entrega y venta';
+  const isAcceptedQuote = isQuote && quote.estado === 'aceptada';
+  const title = isQuote 
+    ? (isAcceptedQuote ? 'Cotización Concretada' : 'Presupuesto / Cotización') 
+    : 'Comprobante de Venta';
+  const subtitle = isQuote 
+    ? (isAcceptedQuote ? 'Propuesta comercial aprobada y facturada' : 'Propuesta comercial para cliente') 
+    : 'Constancia de entrega y venta';
   
   const rawDate = isQuote ? quote.fecha : (sale?.fecha || salesGroup?.[0]?.fecha);
   let emissionDate: Date;
@@ -296,12 +333,29 @@ export function ReceiptModal({
             </div>
           </div>
 
-          <button
-            onClick={onClose}
-            className="p-2 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200/50 dark:hover:bg-gray-700/50 rounded-full transition-colors"
-          >
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-1.5">
+            {isQuote && quote && (
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(prev => !prev)}
+                className={cn(
+                  "p-2 rounded-full transition-colors flex items-center gap-1 text-xs font-bold",
+                  showDeleteConfirm 
+                    ? "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
+                    : "text-gray-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                )}
+                title="Eliminar esta cotización"
+              >
+                <Trash2 size={18} />
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="p-2 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200/50 dark:hover:bg-gray-700/50 rounded-full transition-colors"
+            >
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         {/* Style Selector Toolbar & Company Branding (Screen Only) */}
@@ -1291,48 +1345,117 @@ export function ReceiptModal({
         </div>
 
         {/* Modal Bottom Actions (Screen Only) */}
-        <div className="p-4 sm:px-6 bg-gray-50 dark:bg-gray-800/80 border-t border-gray-100 dark:border-gray-800 flex flex-wrap items-center justify-between gap-3 no-print shrink-0">
-          <div>
-            {isQuote && quote.estado === 'pendiente' && onConvertToSale && (
-              <Button
-                onClick={handleConvert}
-                disabled={isConverting}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-sm"
-              >
-                <CheckCircle2 size={16} className="mr-2" />
-                {isConverting ? 'Procesando venta...' : 'Aprobar y Registrar Venta'}
-              </Button>
-            )}
-          </div>
+        <div className="p-3 sm:p-4 sm:px-6 bg-gray-50 dark:bg-gray-800/80 border-t border-gray-100 dark:border-gray-800 no-print shrink-0">
+          {showDeleteConfirm && isQuote && quote ? (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-3 bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-900/60 rounded-2xl animate-in fade-in duration-150">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-rose-100 dark:bg-rose-900/50 text-rose-600 dark:text-rose-400 rounded-xl shrink-0">
+                  <AlertCircle size={20} />
+                </div>
+                <div>
+                  <p className="text-xs font-black text-rose-900 dark:text-rose-200">
+                    ¿Eliminar cotización {docNumber}?
+                  </p>
+                  <p className="text-[11px] text-rose-600 dark:text-rose-400">
+                    Esta acción la borrará permanentemente de todos los dispositivos.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end shrink-0">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={isDeleting}
+                  onClick={() => setShowDeleteConfirm(false)}
+                  className="rounded-xl text-xs font-bold"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={isDeleting}
+                  onClick={handleDeleteConfirmed}
+                  className="bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black shadow-sm"
+                >
+                  {isDeleting ? (
+                    <>
+                      <Loader2 size={13} className="mr-1.5 animate-spin" />
+                      Eliminando...
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 size={13} className="mr-1.5" />
+                      Sí, eliminar definitivamente
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+              <div className="flex flex-wrap items-center gap-2">
+                {isQuote && quote.estado === 'pendiente' && onConvertToSale && (
+                  <Button
+                    onClick={handleConvert}
+                    disabled={isConverting}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-sm h-9 px-3 flex-1 sm:flex-none justify-center"
+                  >
+                    <CheckCircle2 size={16} className="mr-1.5" />
+                    {isConverting ? 'Procesando venta...' : 'Concretar / Aprobar Venta'}
+                  </Button>
+                )}
 
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleDownloadPdf}
-              disabled={isDownloadingPdf}
-              className="rounded-xl text-xs font-bold text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800"
-            >
-              <Download size={14} className="mr-1.5" />
-              Descargar PDF
-            </Button>
-            <Button
-              size="sm"
-              onClick={handlePrint}
-              disabled={isPrinting}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-sm"
-            >
-              <Printer size={14} className="mr-1.5" />
-              Imprimir
-            </Button>
-            <Button
-              variant="outline"
-              onClick={onClose}
-              className="rounded-xl text-xs font-bold"
-            >
-              Cerrar
-            </Button>
-          </div>
+                {isAcceptedQuote && (
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-100 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 rounded-xl text-xs font-black">
+                    <CheckCircle2 size={15} className="text-emerald-600 dark:text-emerald-400" />
+                    <span>Cotización Concretada (Venta Registrada)</span>
+                  </div>
+                )}
+
+                {isQuote && quote && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowDeleteConfirm(true)}
+                    className="rounded-xl text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50/70 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 border-rose-200 dark:border-rose-900/50 h-9 px-3 flex-1 sm:flex-none justify-center"
+                    title="Eliminar este presupuesto permanentemente"
+                  >
+                    <Trash2 size={14} className="mr-1.5 text-rose-600 dark:text-rose-400" />
+                    Eliminar Cotización
+                  </Button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 justify-end">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleDownloadPdf}
+                  disabled={isDownloadingPdf}
+                  className="rounded-xl text-xs font-bold text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800 h-9 px-3 flex-1 sm:flex-none justify-center"
+                >
+                  <Download size={14} className="mr-1.5" />
+                  PDF
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handlePrint}
+                  disabled={isPrinting}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-sm h-9 px-3 flex-1 sm:flex-none justify-center"
+                >
+                  <Printer size={14} className="mr-1.5" />
+                  Imprimir
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={onClose}
+                  className="rounded-xl text-xs font-bold h-9 px-3 shrink-0"
+                >
+                  Cerrar
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
 
       </div>
