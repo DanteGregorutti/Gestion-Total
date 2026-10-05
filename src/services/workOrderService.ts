@@ -6,6 +6,7 @@
 import { auth } from '../firebase';
 import { WorkOrder, WorkOrderStatus, WorkOrderItem, RepairQuote } from '../types';
 import { inventoryService } from './inventoryService';
+import { supabase } from '../supabase';
 import { 
   markRepairQuoteAsDeleted, 
   unmarkRepairQuoteDeleted, 
@@ -147,9 +148,68 @@ export const sampleRepairQuotes: RepairQuote[] = [];
 export const sampleWorkOrders: WorkOrder[] = [];
 
 export const workOrderService = {
+  syncWorkOrdersToCloud: async (orders: WorkOrder[]): Promise<void> => {
+    if (!Array.isArray(orders)) return;
+    try {
+      await supabase.from('quotes').upsert([{
+        id: '_app_work_orders_registry',
+        numero: 'SYS-WORK-ORDERS',
+        clientNombre: 'SYS_WORK_ORDERS',
+        items: orders,
+        total: orders.length,
+        estado: 'sistema',
+        fecha: new Date().toISOString()
+      }]);
+    } catch (e) {
+      console.warn('Sync work orders to cloud warning:', e);
+    }
+  },
+
+  syncRepairQuotesToCloud: async (quotes: RepairQuote[]): Promise<void> => {
+    if (!Array.isArray(quotes)) return;
+    try {
+      await supabase.from('quotes').upsert([{
+        id: '_app_repair_quotes_registry',
+        numero: 'SYS-REPAIR-QUOTES',
+        clientNombre: 'SYS_REPAIR_QUOTES',
+        items: quotes,
+        total: quotes.length,
+        estado: 'sistema',
+        fecha: new Date().toISOString()
+      }]);
+    } catch (e) {
+      console.warn('Sync repair quotes to cloud warning:', e);
+    }
+  },
+
   async getWorkOrders(): Promise<WorkOrder[]> {
     const local = getLocalOrders();
-    return local.sort(
+    const map = new Map<string, WorkOrder>();
+    local.forEach(o => { if (o && (o.id || o.numero)) map.set(o.id || o.numero, o); });
+
+    try {
+      const { data } = await supabase
+        .from('quotes')
+        .select('items')
+        .eq('id', '_app_work_orders_registry')
+        .maybeSingle();
+
+      if (data && Array.isArray(data.items)) {
+        data.items.forEach((o: WorkOrder) => {
+          if (o && (o.id || o.numero)) {
+            const key = o.id || o.numero;
+            if (!map.has(key)) {
+              map.set(key, o);
+            }
+          }
+        });
+        const merged = Array.from(map.values());
+        setLocalOrders(merged);
+      }
+    } catch (e) {}
+
+    const result = Array.from(map.values());
+    return result.sort(
       (a, b) => new Date(b.fechaIngreso || b.createdAt || 0).getTime() - new Date(a.fechaIngreso || a.createdAt || 0).getTime()
     );
   },
@@ -213,6 +273,7 @@ export const workOrderService = {
 
     const updated = [newOrder, ...currentOrders];
     setLocalOrders(updated);
+    workOrderService.syncWorkOrdersToCloud(updated);
 
     return newOrder;
   },
@@ -244,6 +305,7 @@ export const workOrderService = {
 
     currentOrders[index] = merged;
     setLocalOrders(currentOrders);
+    workOrderService.syncWorkOrdersToCloud(currentOrders);
 
     return merged;
   },
@@ -260,6 +322,7 @@ export const workOrderService = {
     const current = getLocalOrders();
     const filtered = current.filter(o => o.id !== id && o.numero !== id);
     setLocalOrders(filtered);
+    workOrderService.syncWorkOrdersToCloud(filtered);
   },
 
   subscribeToWorkOrders(callback: (orders: WorkOrder[]) => void) {
@@ -409,7 +472,31 @@ export const workOrderService = {
    */
   async getRepairQuotes(): Promise<RepairQuote[]> {
     const local = getLocalRepairQuotes();
-    const sorted = local.sort((a, b) => {
+    const map = new Map<string, RepairQuote>();
+    local.forEach(q => { if (q && (q.id || q.numero)) map.set(q.id || q.numero, q); });
+
+    try {
+      const { data } = await supabase
+        .from('quotes')
+        .select('items')
+        .eq('id', '_app_repair_quotes_registry')
+        .maybeSingle();
+
+      if (data && Array.isArray(data.items)) {
+        data.items.forEach((q: RepairQuote) => {
+          if (q && (q.id || q.numero)) {
+            const key = q.id || q.numero;
+            if (!map.has(key)) {
+              map.set(key, q);
+            }
+          }
+        });
+        const merged = Array.from(map.values());
+        setLocalRepairQuotes(merged);
+      }
+    } catch (e) {}
+
+    const sorted = Array.from(map.values()).sort((a, b) => {
       const dateA = new Date(a.createdAt || a.fecha || 0).getTime();
       const dateB = new Date(b.createdAt || b.fecha || 0).getTime();
       return dateB - dateA;
@@ -492,6 +579,7 @@ export const workOrderService = {
 
     const updated = [newQuote, ...current];
     setLocalRepairQuotes(updated);
+    workOrderService.syncRepairQuotesToCloud(updated);
 
     return newQuote;
   },
@@ -517,6 +605,7 @@ export const workOrderService = {
 
     current[idx] = updatedQuote;
     setLocalRepairQuotes([...current]);
+    workOrderService.syncRepairQuotesToCloud(current);
 
     return updatedQuote;
   },
@@ -528,6 +617,7 @@ export const workOrderService = {
 
     const filtered = current.filter(q => q.id !== id && q.numero !== id);
     setLocalRepairQuotes(filtered);
+    workOrderService.syncRepairQuotesToCloud(filtered);
   },
 
   async convertRepairQuoteToWorkOrder(quote: RepairQuote): Promise<WorkOrder> {

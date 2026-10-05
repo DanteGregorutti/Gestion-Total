@@ -101,6 +101,7 @@ export default function Inventory() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [inventoryTab, setInventoryTab] = useState<'stock' | 'inteligencia'>('stock');
   const [showFilters, setShowFilters] = useState(false);
+  const [sortBy, setSortBy] = useState<'codigo_asc' | 'stock_desc' | 'stock_asc' | 'nombre' | 'recientes'>('codigo_asc');
   const [imageToCrop, setImageToCrop] = useState<string | null>(null);
   const [filters, setFilters] = useState({
     almacenId: 'all',
@@ -396,8 +397,21 @@ export default function Inventory() {
       }
     });
 
-    return groupList;
-  }, [filteredProducts, allProducts]);
+    const cleanList = groupList;
+
+    // Apply sorting
+    if (sortBy === 'codigo_asc') {
+      cleanList.sort((a, b) => (a.codigo || '').localeCompare(b.codigo || '', undefined, { numeric: true }));
+    } else if (sortBy === 'stock_desc') {
+      cleanList.sort((a, b) => b.totalCantidad - a.totalCantidad);
+    } else if (sortBy === 'stock_asc') {
+      cleanList.sort((a, b) => a.totalCantidad - b.totalCantidad);
+    } else if (sortBy === 'nombre') {
+      cleanList.sort((a, b) => (a.descripcion || '').localeCompare(b.descripcion || ''));
+    }
+
+    return cleanList;
+  }, [filteredProducts, allProducts, sortBy]);
 
   const activeGroup = useMemo(() => {
     if (!selectedProduct && !selectedGroup) return null;

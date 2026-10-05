@@ -70,15 +70,19 @@ export const supabaseService = {
         return getLocal<Product[]>('products', []);
       }
 
-      const products = (data || []).map((row: any) => ({
-        ...row,
-        id: String(row.id),
-        cantidad: Number(row.cantidad) || 0,
-        precio: Number(row.precio) || 0,
-        costo: Number(row.costo) || 0,
-        minStock: Number(row.minStock) || 0,
-        variants: row.variants || []
-      })) as Product[];
+      const products = (data || [])
+        .map((row: any) => ({
+          ...row,
+          id: String(row.id),
+          cantidad: Number(row.cantidad) || 0,
+          precio: Number(row.precio) || 0,
+          costo: Number(row.costo) || 0,
+          minStock: Number(row.minStock) || 0,
+          variants: row.variants || []
+        })) as Product[];
+
+      // Sort logically by product code (ART-0001, ART-0002, ...)
+      products.sort((a, b) => (a.codigo || '').localeCompare(b.codigo || '', undefined, { numeric: true }));
 
       setLocal('products', products);
       return products;
@@ -1088,15 +1092,47 @@ export const supabaseService = {
   },
 
   // --- SUPPLIERS ---
+  syncSuppliersToCloud: async (suppliers: Supplier[]): Promise<void> => {
+    if (!Array.isArray(suppliers)) return;
+    try {
+      await supabase.from('quotes').upsert([{
+        id: '_app_suppliers_registry',
+        numero: 'SYS-SUPPLIERS',
+        clientNombre: 'SYS_SUPPLIERS',
+        items: suppliers,
+        total: suppliers.length,
+        estado: 'sistema',
+        fecha: new Date().toISOString()
+      }]);
+    } catch (e) {
+      console.warn('Sync suppliers to cloud warning:', e);
+    }
+  },
+
   getSuppliers: async (): Promise<Supplier[]> => {
     try {
       const { data, error } = await supabase.from('suppliers').select('*');
-      if (error) return getLocal<Supplier[]>('suppliers', []);
-      setLocal('suppliers', data || []);
-      return data || [];
-    } catch {
-      return getLocal<Supplier[]>('suppliers', []);
-    }
+      if (!error && Array.isArray(data) && data.length > 0) {
+        setLocal('suppliers', data);
+        return data;
+      }
+    } catch {}
+
+    // Check cloud registry fallback
+    try {
+      const { data: reg } = await supabase
+        .from('quotes')
+        .select('items')
+        .eq('id', '_app_suppliers_registry')
+        .maybeSingle();
+
+      if (reg && Array.isArray(reg.items) && reg.items.length > 0) {
+        setLocal('suppliers', reg.items);
+        return reg.items;
+      }
+    } catch {}
+
+    return getLocal<Supplier[]>('suppliers', []);
   },
 
   // --- FINANCES ---

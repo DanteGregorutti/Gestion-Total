@@ -419,14 +419,27 @@ export const vercelSyncService = {
    * 1-click cloud sync: refresh everything directly from Supabase
    */
   resyncEverythingFromSupabase: async () => {
-    const [clients, quotes, products, sales, warehouses, purchases] = await Promise.all([
+    const [clients, quotes, products, sales, warehouses, purchases, workOrders, repairQuotes] = await Promise.all([
       supabaseService.getClients(),
       supabaseService.getQuotes(),
       supabaseService.getProducts(),
       supabaseService.getSales(1000),
       supabaseService.getWarehouses(),
-      supabaseService.getPurchases(365)
+      supabaseService.getPurchases(365),
+      workOrderService.getWorkOrders(),
+      workOrderService.getRepairQuotes()
     ]);
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('products_updated'));
+      window.dispatchEvent(new Event('clients_updated'));
+      window.dispatchEvent(new Event('quotes_updated'));
+      window.dispatchEvent(new Event('sales_updated'));
+      window.dispatchEvent(new Event('warehouses_updated'));
+      window.dispatchEvent(new Event('purchases_updated'));
+      window.dispatchEvent(new CustomEvent('work_orders_changed', { detail: workOrders }));
+      window.dispatchEvent(new CustomEvent('repair_quotes_changed', { detail: repairQuotes }));
+    }
 
     return {
       clients: clients.length,
@@ -434,7 +447,9 @@ export const vercelSyncService = {
       products: products.length,
       sales: sales.length,
       warehouses: warehouses.length,
-      purchases: purchases.length
+      purchases: purchases.length,
+      workOrders: workOrders.length,
+      repairQuotes: repairQuotes.length
     };
   }
 };

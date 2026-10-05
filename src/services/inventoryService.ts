@@ -740,10 +740,12 @@ export const inventoryService = {
     const now = new Date().toISOString();
     const item: Supplier = { ...supplier, id, createdAt: now, createdBy: auth.currentUser?.uid || 'admin' };
     const cached = getLocal<Supplier[]>('suppliers', []);
-    setLocal('suppliers', [item, ...cached.filter(s => s.id !== id)]);
+    const updated = [item, ...cached.filter(s => s.id !== id)];
+    setLocal('suppliers', updated);
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new Event('suppliers_updated'));
     }
+    supabaseService.syncSuppliersToCloud(updated).catch(() => {});
 
     if (db) {
       try {
@@ -767,10 +769,12 @@ export const inventoryService = {
 
   updateSupplier: async (id: string, supplier: Partial<Supplier>): Promise<void> => {
     const cached = getLocal<Supplier[]>('suppliers', []);
-    setLocal('suppliers', cached.map(s => s.id === id ? { ...s, ...supplier } : s));
+    const updated = cached.map(s => s.id === id ? { ...s, ...supplier } : s);
+    setLocal('suppliers', updated);
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new Event('suppliers_updated'));
     }
+    supabaseService.syncSuppliersToCloud(updated).catch(() => {});
 
     if (db) {
       try {
@@ -785,10 +789,12 @@ export const inventoryService = {
 
   deleteSupplier: async (id: string): Promise<void> => {
     const cached = getLocal<Supplier[]>('suppliers', []);
-    setLocal('suppliers', cached.filter(s => s.id !== id));
+    const updated = cached.filter(s => s.id !== id);
+    setLocal('suppliers', updated);
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new Event('suppliers_updated'));
     }
+    supabaseService.syncSuppliersToCloud(updated).catch(() => {});
 
     if (db) {
       try {
