@@ -13,23 +13,83 @@ import {
   filterOutDeletedRepairQuotes 
 } from '../utils/quoteTombstones';
 
-const getStorageKey = () => `taller_work_orders_${auth.currentUser?.uid || 'anon'}`;
-const getQuotesStorageKey = () => `taller_repair_quotes_${auth.currentUser?.uid || 'anon'}`;
+const getRepairQuotesCandidateKeys = (): string[] => {
+  const currentUid = auth.currentUser?.uid;
+  const keys = new Set<string>([
+    'taller_repair_quotes_all',
+    'taller_repair_quotes_anon',
+    'repair_quotes'
+  ]);
+  if (currentUid) {
+    keys.add(`taller_repair_quotes_${currentUid}`);
+  }
+  try {
+    if (typeof localStorage !== 'undefined') {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && (k.startsWith('taller_repair_quotes_') || k === 'repair_quotes')) {
+          keys.add(k);
+        }
+      }
+    }
+  } catch (e) {}
+  return Array.from(keys);
+};
+
+const getWorkOrdersCandidateKeys = (): string[] => {
+  const currentUid = auth.currentUser?.uid;
+  const keys = new Set<string>([
+    'taller_work_orders_all',
+    'taller_work_orders_anon',
+    'work_orders'
+  ]);
+  if (currentUid) {
+    keys.add(`taller_work_orders_${currentUid}`);
+  }
+  try {
+    if (typeof localStorage !== 'undefined') {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && (k.startsWith('taller_work_orders_') || k === 'work_orders')) {
+          keys.add(k);
+        }
+      }
+    }
+  } catch (e) {}
+  return Array.from(keys);
+};
 
 const getLocalOrders = (): WorkOrder[] => {
-  try {
-    const raw = localStorage.getItem(getStorageKey());
-    if (!raw) return [];
-    return JSON.parse(raw);
-  } catch (e) {
-    console.error('Error reading work orders from localStorage:', e);
-    return [];
+  const map = new Map<string, WorkOrder>();
+  const keys = getWorkOrdersCandidateKeys();
+  for (const k of keys) {
+    try {
+      const raw = localStorage.getItem(k);
+      if (raw) {
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          list.forEach(o => {
+            if (o && (o.id || o.numero)) {
+              const id = o.id || o.numero;
+              if (!map.has(id)) {
+                map.set(id, o);
+              }
+            }
+          });
+        }
+      }
+    } catch (e) {}
   }
+  const result = Array.from(map.values());
+  return result;
 };
 
 const setLocalOrders = (orders: WorkOrder[]) => {
   try {
-    localStorage.setItem(getStorageKey(), JSON.stringify(orders));
+    const keys = getWorkOrdersCandidateKeys();
+    for (const k of keys) {
+      localStorage.setItem(k, JSON.stringify(orders));
+    }
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('work_orders_changed', { detail: orders }));
     }
@@ -39,19 +99,42 @@ const setLocalOrders = (orders: WorkOrder[]) => {
 };
 
 const getLocalRepairQuotes = (): RepairQuote[] => {
-  try {
-    const raw = localStorage.getItem(getQuotesStorageKey());
-    if (!raw) return [];
-    return JSON.parse(raw);
-  } catch (e) {
-    console.error('Error reading repair quotes from localStorage:', e);
-    return [];
+  const map = new Map<string, RepairQuote>();
+  const keys = getRepairQuotesCandidateKeys();
+  for (const k of keys) {
+    try {
+      const raw = localStorage.getItem(k);
+      if (raw) {
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          list.forEach(q => {
+            if (q && (q.id || q.numero)) {
+              const isApproved = q.estado === 'aprobado' || q.estado === 'aceptada';
+              if (isApproved || !isRepairQuoteDeleted(q.id, q.numero, q.estado)) {
+                const id = q.id || q.numero;
+                if (!map.has(id)) {
+                  map.set(id, q);
+                } else {
+                  const existing = map.get(id)!;
+                  if (isApproved) existing.estado = 'aprobado';
+                }
+              }
+            }
+          });
+        }
+      }
+    } catch (e) {}
   }
+  const result = Array.from(map.values());
+  return filterOutDeletedRepairQuotes(result);
 };
 
 const setLocalRepairQuotes = (quotes: RepairQuote[]) => {
   try {
-    localStorage.setItem(getQuotesStorageKey(), JSON.stringify(quotes));
+    const keys = getRepairQuotesCandidateKeys();
+    for (const k of keys) {
+      localStorage.setItem(k, JSON.stringify(quotes));
+    }
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('repair_quotes_changed', { detail: quotes }));
     }

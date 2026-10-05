@@ -5,9 +5,10 @@
 
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
-// Initialize Firebase SDK for Authentication only (Firestore permanently disabled)
+// Initialize Firebase SDK
 let app: any;
 try {
   app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
@@ -18,6 +19,14 @@ try {
 
 export const auth = getAuth(app);
 
-// Firestore is completely decommissioned per user request to avoid quota exhaustion.
-// All database operations are 100% handled via Supabase (PostgreSQL) and LocalStorage.
-export const db = null as any;
+// Initialize Firestore targeting the configured database
+let firestoreDb: any = null;
+try {
+  const dbId = (firebaseConfig as any).firestoreDatabaseId;
+  firestoreDb = dbId ? getFirestore(app, dbId) : getFirestore(app);
+} catch (e) {
+  console.warn('Firestore initialization warning:', e);
+}
+
+export const db = firestoreDb;
+

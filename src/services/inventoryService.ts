@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { auth } from '../firebase';
+import { auth, db } from '../firebase';
+import { collection, getDocs, doc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { supabase } from '../supabase';
 import { supabaseService } from './supabaseService';
 import { 
@@ -475,63 +476,329 @@ export const inventoryService = {
   },
 
   // --- CLIENTS ---
-  getClients: async () => {
-    return await supabaseService.getClients();
+  getClients: async (): Promise<Client[]> => {
+    // 1. Initial local cache for instant UI
+    const cached = getLocal<Client[]>('clients', []);
+    const clientsMap = new Map<string, Client>();
+    cached.forEach(c => {
+      if (c && (c.id || c.nombre)) {
+        clientsMap.set((c.nombre || c.id).trim().toLowerCase(), c);
+      }
+    });
+
+    // 2. Fetch from Firestore if db is available
+    if (db) {
+      try {
+        const snap = await getDocs(collection(db, 'clients'));
+        snap.forEach(docSnap => {
+          const d = docSnap.data();
+          const item: Client = {
+            id: docSnap.id,
+            nombre: d.nombre || '',
+            email: d.email || '',
+            telefono: d.telefono || '',
+            direccion: d.direccion || '',
+            createdBy: d.createdBy || 'admin',
+            createdAt: d.createdAt?.toDate ? d.createdAt.toDate().toISOString() : (d.createdAt || new Date().toISOString())
+          };
+          if (item.nombre) {
+            clientsMap.set(item.nombre.trim().toLowerCase(), item);
+          }
+        });
+      } catch (err: any) {
+        console.warn('Firestore getClients notice (using cache):', err?.message || err);
+      }
+    }
+
+    // 3. Fallback to Supabase (table or cloud registry)
+    try {
+      const sbClients = await supabaseService.getClients();
+      if (Array.isArray(sbClients) && sbClients.length > 0) {
+        sbClients.forEach(c => {
+          if (c && (c.id || c.nombre)) {
+            const key = (c.nombre || c.id).trim().toLowerCase();
+            const existing = clientsMap.get(key);
+            if (!existing) {
+              clientsMap.set(key, c);
+            } else {
+              clientsMap.set(key, { ...c, ...existing });
+            }
+          }
+        });
+      }
+    } catch (e) {}
+
+    // 4. Auto-discover known clients from quotes
+    try {
+      const quotes = getLocal<Quote[]>('quotes', []);
+      quotes.forEach(q => {
+        if (q.clientNombre && q.clientNombre.trim() && q.clientNombre.toLowerCase() !== 'consumidor final' && q.clientNombre.toLowerCase() !== 'sys_clients') {
+          const name = q.clientNombre.trim();
+          const key = name.toLowerCase();
+          const existing = clientsMap.get(key);
+          if (!existing) {
+            const id = q.clientId || generateId('cli');
+            clientsMap.set(key, {
+              id,
+              nombre: name,
+              telefono: q.clientTelefono || '',
+              email: q.clientEmail || '',
+              direccion: '',
+              createdAt: q.fecha || new Date().toISOString(),
+              createdBy: q.createdBy || 'admin'
+            });
+          } else {
+            if (!existing.telefono && q.clientTelefono) existing.telefono = q.clientTelefono;
+            if (!existing.email && q.clientEmail) existing.email = q.clientEmail;
+          }
+        }
+      });
+    } catch (e) {}
+
+    const list = Array.from(clientsMap.values()).sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    setLocal('clients', list);
+    return list;
+  },
+
+  importClientsFromVercel: async (rawInput: any) => {
+    return supabaseService.importClientsFromVercel(rawInput);
   },
 
   subscribeToClients: (callback: (clients: Client[]) => void) => {
-    return supabaseService.subscribeToClients(callback);
+    let unsubscribed = false;
+    const emit = async () => {
+      if (unsubscribed) return;
+      const c = await inventoryService.getClients();
+      if (!unsubscribed) callback(c);
+    };
+    emit();
+
+    const handler = () => emit();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('clients_updated', handler);
+      window.addEventListener('storage', handler);
+    }
+
+    return () => {
+      unsubscribed = true;
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('clients_updated', handler);
+        window.removeEventListener('storage', handler);
+      }
+    };
   },
 
-  addClient: async (client: Omit<Client, 'id' | 'createdAt' | 'createdBy'>) => {
-    return await supabaseService.addClient(client);
-  },
+  addClient: async (client: Omit<Client, 'id' | 'createdAt' | 'createdBy'>): Promise<string> => {
+    const id = generateId('cli');
+    const now = new Date().toISOString();
+    const item: Client = { ...client, id, createdAt: now, createdBy: auth.currentUser?.uid || 'admin' };
+    
+    // Save to local cache immediately
+    const cached = getLocal<Client[]>('clients', []);
+    const updated = [item, ...cached.filter(c => c.id !== id && c.nombre.toLowerCase() !== item.nombre.toLowerCase())];
+    setLocal('clients', updated);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('clients_updated'));
+    }
+    supabaseService.syncClientsToCloud(updated).catch(() => {});
 
-  updateClient: async (id: string, client: Partial<Client>) => {
-    await supabaseService.updateClient(id, client);
-  },
+    // Persist to Firestore
+    if (db) {
+      try {
+        await setDoc(doc(db, 'clients', id), {
+          nombre: item.nombre,
+          email: item.email || '',
+          telefono: item.telefono || '',
+          direccion: item.direccion || '',
+          createdBy: item.createdBy,
+          createdAt: now
+        });
+      } catch (e) {
+        console.warn('Firestore addClient notice:', e);
+      }
+    }
 
-  deleteClient: async (id: string) => {
-    await supabaseService.deleteClient(id);
-  },
-
-  // --- SUPPLIERS ---
-  getSuppliers: async () => {
-    return await supabaseService.getSuppliers();
-  },
-
-  subscribeToSuppliers: (callback: (suppliers: Supplier[]) => void) => {
-    return supabaseService.subscribeToSuppliers(callback);
-  },
-
-  addSupplier: async (supplier: Omit<Supplier, 'id' | 'createdAt' | 'createdBy'>) => {
-    const id = generateId('sup');
-    const item: Supplier = { ...supplier, id, createdAt: new Date().toISOString(), createdBy: 'admin' };
-    const cached = getLocal<Supplier[]>('suppliers', []);
-    setLocal('suppliers', [item, ...cached]);
+    // Also attempt Supabase
     try {
-      await supabase.from('suppliers').insert([item]);
+      await supabase.from('clients').insert([item]);
     } catch (e) {}
-    window.dispatchEvent(new Event('suppliers_updated'));
+
     return id;
   },
 
-  updateSupplier: async (id: string, supplier: Partial<Supplier>) => {
+  updateClient: async (id: string, clientData: Partial<Client>): Promise<void> => {
+    const cached = getLocal<Client[]>('clients', []);
+    const updated = cached.map(c => c.id === id ? { ...c, ...clientData } : c);
+    setLocal('clients', updated);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('clients_updated'));
+    }
+    supabaseService.syncClientsToCloud(updated).catch(() => {});
+
+    if (db) {
+      try {
+        await updateDoc(doc(db, 'clients', id), clientData);
+      } catch (e) {
+        console.warn('Firestore updateClient notice:', e);
+      }
+    }
+
+    try {
+      await supabase.from('clients').update(clientData).eq('id', id);
+    } catch (e) {}
+  },
+
+  deleteClient: async (id: string): Promise<void> => {
+    const cached = getLocal<Client[]>('clients', []);
+    const updated = cached.filter(c => c.id !== id);
+    setLocal('clients', updated);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('clients_updated'));
+    }
+    supabaseService.syncClientsToCloud(updated).catch(() => {});
+
+    if (db) {
+      try {
+        await deleteDoc(doc(db, 'clients', id));
+      } catch (e) {
+        console.warn('Firestore deleteClient notice:', e);
+      }
+    }
+
+    try {
+      await supabase.from('clients').delete().eq('id', id);
+    } catch (e) {}
+  },
+
+  // --- SUPPLIERS ---
+  getSuppliers: async (): Promise<Supplier[]> => {
+    const cached = getLocal<Supplier[]>('suppliers', []);
+    const supMap = new Map<string, Supplier>();
+    cached.forEach(s => {
+      if (s && (s.id || s.nombre)) supMap.set(s.id || s.nombre, s);
+    });
+
+    if (db) {
+      try {
+        const snap = await getDocs(collection(db, 'suppliers'));
+        snap.forEach(docSnap => {
+          const d = docSnap.data();
+          const item: Supplier = {
+            id: docSnap.id,
+            nombre: d.nombre || '',
+            contacto: d.contacto || '',
+            email: d.email || '',
+            telefono: d.telefono || '',
+            createdBy: d.createdBy || 'admin',
+            createdAt: d.createdAt?.toDate ? d.createdAt.toDate().toISOString() : (d.createdAt || new Date().toISOString())
+          };
+          supMap.set(docSnap.id, item);
+        });
+      } catch (e) {}
+    }
+
+    try {
+      const sbSup = await supabaseService.getSuppliers();
+      if (Array.isArray(sbSup) && sbSup.length > 0) {
+        sbSup.forEach(s => {
+          if (s && (s.id || s.nombre)) supMap.set(s.id || s.nombre, s);
+        });
+      }
+    } catch (e) {}
+
+    const list = Array.from(supMap.values()).sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    setLocal('suppliers', list);
+    return list;
+  },
+
+  subscribeToSuppliers: (callback: (suppliers: Supplier[]) => void) => {
+    let unsubscribed = false;
+    const emit = async () => {
+      if (unsubscribed) return;
+      const s = await inventoryService.getSuppliers();
+      if (!unsubscribed) callback(s);
+    };
+    emit();
+
+    const handler = () => emit();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('suppliers_updated', handler);
+      window.addEventListener('storage', handler);
+    }
+
+    return () => {
+      unsubscribed = true;
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('suppliers_updated', handler);
+        window.removeEventListener('storage', handler);
+      }
+    };
+  },
+
+  addSupplier: async (supplier: Omit<Supplier, 'id' | 'createdAt' | 'createdBy'>): Promise<string> => {
+    const id = generateId('sup');
+    const now = new Date().toISOString();
+    const item: Supplier = { ...supplier, id, createdAt: now, createdBy: auth.currentUser?.uid || 'admin' };
+    const cached = getLocal<Supplier[]>('suppliers', []);
+    setLocal('suppliers', [item, ...cached.filter(s => s.id !== id)]);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('suppliers_updated'));
+    }
+
+    if (db) {
+      try {
+        await setDoc(doc(db, 'suppliers', id), {
+          nombre: item.nombre,
+          contacto: item.contacto || '',
+          email: item.email || '',
+          telefono: item.telefono || '',
+          createdBy: item.createdBy,
+          createdAt: now
+        });
+      } catch (e) {}
+    }
+
+    try {
+      await supabase.from('suppliers').insert([item]);
+    } catch (e) {}
+
+    return id;
+  },
+
+  updateSupplier: async (id: string, supplier: Partial<Supplier>): Promise<void> => {
     const cached = getLocal<Supplier[]>('suppliers', []);
     setLocal('suppliers', cached.map(s => s.id === id ? { ...s, ...supplier } : s));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('suppliers_updated'));
+    }
+
+    if (db) {
+      try {
+        await updateDoc(doc(db, 'suppliers', id), supplier);
+      } catch (e) {}
+    }
+
     try {
       await supabase.from('suppliers').update(supplier).eq('id', id);
     } catch (e) {}
-    window.dispatchEvent(new Event('suppliers_updated'));
   },
 
-  deleteSupplier: async (id: string) => {
+  deleteSupplier: async (id: string): Promise<void> => {
     const cached = getLocal<Supplier[]>('suppliers', []);
     setLocal('suppliers', cached.filter(s => s.id !== id));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('suppliers_updated'));
+    }
+
+    if (db) {
+      try {
+        await deleteDoc(doc(db, 'suppliers', id));
+      } catch (e) {}
+    }
+
     try {
       await supabase.from('suppliers').delete().eq('id', id);
     } catch (e) {}
-    window.dispatchEvent(new Event('suppliers_updated'));
   },
 
   // --- NOTIFICATIONS ---
@@ -1064,7 +1331,27 @@ export const inventoryService = {
     const cacheKey = `cached_quotes_${userId}`;
     const allQuotesMap = new Map<string, Quote>();
     
-    const candidateKeys = [cacheKey, 'cached_quotes_user_offline', 'cached_quotes_default', 'quotes'];
+    // Scan all candidate keys plus any additional quote cache keys
+    const candidateKeys = new Set<string>([
+      cacheKey, 
+      'cached_quotes_user_offline', 
+      'cached_quotes_default', 
+      'cached_quotes_anon',
+      'quotes',
+      'sb_cache_quotes'
+    ]);
+
+    try {
+      if (typeof localStorage !== 'undefined') {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && (k.startsWith('cached_quotes_') || k === 'quotes' || k.startsWith('sb_cache_quotes'))) {
+            candidateKeys.add(k);
+          }
+        }
+      }
+    } catch (e) {}
+
     for (const key of candidateKeys) {
       try {
         const cached = localStorage.getItem(key);
@@ -1072,8 +1359,21 @@ export const inventoryService = {
           const parsed = JSON.parse(cached);
           if (Array.isArray(parsed)) {
             parsed.forEach(q => {
-              if (q && q.id && !isQuoteDeleted(q.id, q.numero)) {
-                allQuotesMap.set(q.id, q);
+              if (q && (q.id || q.numero)) {
+                if (q.id?.startsWith('_app_') || q.estado === 'sistema' || q.clientNombre === 'SYS_CLIENTS') return;
+                // Concreted / accepted quotes must never be discarded!
+                const isApprovedOrAccepted = q.estado === 'aceptada' || q.estado === 'aprobado';
+                if (isApprovedOrAccepted || !isQuoteDeleted(q.id, q.numero, q.estado)) {
+                  const keyId = q.id || q.numero;
+                  if (!allQuotesMap.has(keyId)) {
+                    allQuotesMap.set(keyId, q);
+                  } else {
+                    const existing = allQuotesMap.get(keyId)!;
+                    if (isApprovedOrAccepted || existing.estado === 'aceptada') {
+                      existing.estado = 'aceptada';
+                    }
+                  }
+                }
               }
             });
           }
@@ -1085,15 +1385,20 @@ export const inventoryService = {
       const sbQuotes = await supabaseService.getQuotes();
       if (Array.isArray(sbQuotes) && sbQuotes.length > 0) {
         sbQuotes.forEach(q => {
-          if (q && q.id) {
-            const isAccepted = q.estado === 'aceptada';
-            if (isAccepted) {
-              unmarkQuoteDeleted(q.id, q.numero);
-            }
-            if (isAccepted || !isQuoteDeleted(q.id, q.numero)) {
-              allQuotesMap.set(q.id, q);
+          if (q && (q.id || q.numero)) {
+            unmarkQuoteDeleted(q.id, q.numero);
+            const keyId = q.id || q.numero;
+            if (!allQuotesMap.has(keyId)) {
+              allQuotesMap.set(keyId, q);
             } else {
-              supabaseService.deleteQuote(q.id, q.numero).catch(() => {});
+              const existing = allQuotesMap.get(keyId)!;
+              if (q.estado === 'aceptada' || existing.estado === 'aceptada') {
+                existing.estado = 'aceptada';
+                if (q.saleId || (q as any).sale_id) {
+                  existing.saleId = q.saleId || (q as any).sale_id;
+                }
+              }
+              allQuotesMap.set(keyId, { ...q, ...existing, estado: (q.estado === 'aceptada' || existing.estado === 'aceptada') ? 'aceptada' : (existing.estado || q.estado) });
             }
           }
         });
@@ -1138,8 +1443,9 @@ export const inventoryService = {
     });
 
     try {
-      localStorage.setItem(cacheKey, JSON.stringify(merged));
-      localStorage.setItem('cached_quotes_default', JSON.stringify(merged));
+      for (const k of candidateKeys) {
+        localStorage.setItem(k, JSON.stringify(merged));
+      }
       setLocal('quotes', merged);
     } catch (e) {}
 
@@ -1163,9 +1469,22 @@ export const inventoryService = {
       if (!isUnsubscribed) emitCurrent();
     });
 
+    const localHandler = () => {
+      if (!isUnsubscribed) emitCurrent();
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('quotes_updated', localHandler);
+      window.addEventListener('storage', localHandler);
+    }
+
     return () => {
       isUnsubscribed = true;
       if (unsubSupabase) unsubSupabase();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('quotes_updated', localHandler);
+        window.removeEventListener('storage', localHandler);
+      }
     };
   },
 
@@ -1190,7 +1509,7 @@ export const inventoryService = {
     };
 
     const saveToCaches = (quote: Quote) => {
-      const keys = [cacheKey, 'cached_quotes_user_offline', 'cached_quotes_default', 'quotes', 'sb_cache_quotes'];
+      const keys = [cacheKey, 'cached_quotes_user_offline', 'cached_quotes_default', 'cached_quotes_anon', 'quotes', 'sb_cache_quotes'];
       for (const k of keys) {
         try {
           const cached = localStorage.getItem(k);
@@ -1209,6 +1528,11 @@ export const inventoryService = {
 
     unmarkQuoteDeleted(quoteId, numero);
     saveToCaches(newQuote);
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('quotes_updated', { detail: newQuote }));
+    }
+
     return newQuote;
   },
 
@@ -1227,6 +1551,10 @@ export const inventoryService = {
       } catch (e) {}
     }
 
+    if (updates.estado === 'aceptada' || (updates.estado as any) === 'aprobado') {
+      unmarkQuoteDeleted(id, resolvedNumero);
+    }
+
     try {
       if ('updateQuote' in supabaseService) {
         await (supabaseService as any).updateQuote(id, updates, resolvedNumero);
@@ -1236,7 +1564,7 @@ export const inventoryService = {
     const userId = auth.currentUser?.uid || 'user_offline';
     const cacheKey = `cached_quotes_${userId}`;
 
-    const keys = [cacheKey, 'cached_quotes_user_offline', 'cached_quotes_default', 'quotes', 'sb_cache_quotes'];
+    const keys = [cacheKey, 'cached_quotes_user_offline', 'cached_quotes_default', 'cached_quotes_anon', 'quotes', 'sb_cache_quotes'];
     for (const k of keys) {
       try {
         const cached = localStorage.getItem(k);
@@ -1262,6 +1590,10 @@ export const inventoryService = {
       }
     } catch (e) {
       console.warn('Direct Supabase quote update warning:', e);
+    }
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('quotes_updated', { detail: { id, updates } }));
     }
   },
 
@@ -1396,6 +1728,10 @@ export const inventoryService = {
       }
     } catch (e) {
       console.warn('Supabase quote state update warning:', e);
+    }
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('quotes_updated', { detail: { id: quote.id, estado: 'aceptada', saleId: baseTxId } }));
     }
 
     return (registered && registered.length > 0 ? registered : salesToRegister) as Sale[];
@@ -1608,12 +1944,14 @@ export const inventoryService = {
     const warehouses: Warehouse[] = getLocal<Warehouse[]>('warehouses', []);
     const quotes: Quote[] = filterOutDeletedQuotes(getLocal<Quote[]>('quotes', []));
     const sales: Sale[] = getLocal<Sale[]>('sales', []);
+    const clients: Client[] = getLocal<Client[]>('clients', []);
 
     return await supabaseService.migrateDataToSupabase({
       products,
       warehouses,
       quotes,
-      sales
+      sales,
+      clients
     });
   }
 };

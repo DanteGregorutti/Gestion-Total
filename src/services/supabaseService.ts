@@ -618,6 +618,32 @@ export const supabaseService = {
   // --- QUOTES / PRESUPUESTOS ---
   getQuotes: async (): Promise<Quote[]> => {
     try {
+      let localQuotes = filterOutDeletedQuotes(getLocal<Quote[]>('quotes', []));
+      if (!localQuotes || localQuotes.length === 0) {
+        try {
+          const altKeys = ['cached_quotes_user_offline', 'cached_quotes_default', 'cached_quotes_anon', 'sb_cache_quotes'];
+          for (const k of altKeys) {
+            const raw = localStorage.getItem(k);
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                localQuotes = filterOutDeletedQuotes(parsed);
+                break;
+              }
+            }
+          }
+        } catch (e) {}
+      }
+
+      const dedupedQuotesMap = new Map<string, Quote>();
+
+      // 1. Seed with local cache first to ensure offline/recent quotes are never wiped out
+      for (const lq of localQuotes) {
+        if (!lq || lq.id?.startsWith('_app_') || (lq.estado as string) === 'sistema' || lq.clientNombre === 'SYS_CLIENTS') continue;
+        const key = (lq.numero?.trim() || lq.id?.trim() || '').toLowerCase();
+        if (key) dedupedQuotesMap.set(key, { ...lq });
+      }
+
       const { data, error } = await supabase
         .from('quotes')
         .select('*')
@@ -625,39 +651,39 @@ export const supabaseService = {
 
       if (error) {
         console.warn('Supabase quotes warning (using cache):', error.message);
-        return filterOutDeletedQuotes(getLocal<Quote[]>('quotes', []));
+        return Array.from(dedupedQuotesMap.values());
       }
 
+      // 2. Merge remote quotes from Supabase
       const validRows = filterOutDeletedQuotes(data || []);
-      const quotes = validRows.map((q: any) => {
-        let shipping = Number(q.costoEnvio || q.costo_envio || 0);
-        if (!shipping && q.condiciones) {
+      for (const row of validRows) {
+        if (!row || row.id?.startsWith('_app_') || (row.estado as string) === 'sistema' || row.clientNombre === 'SYS_CLIENTS') continue;
+        let shipping = Number(row.costoEnvio || row.costo_envio || 0);
+        if (!shipping && row.condiciones) {
           try {
-            const parsed = typeof q.condiciones === 'string' ? JSON.parse(q.condiciones) : q.condiciones;
+            const parsed = typeof row.condiciones === 'string' ? JSON.parse(row.condiciones) : row.condiciones;
             if (parsed && typeof parsed.costoEnvio === 'number') {
               shipping = parsed.costoEnvio;
             }
           } catch (e) {}
         }
-        return {
-          ...q,
-          items: q.items || [],
-          subtotal: Number(q.subtotal) || 0,
-          total: Number(q.total) || 0,
-          descuento: Number(q.descuento) || 0,
+        const q: Quote = {
+          ...row,
+          items: Array.isArray(row.items) ? row.items : [],
+          subtotal: Number(row.subtotal) || 0,
+          total: Number(row.total) || 0,
+          descuento: Number(row.descuento) || 0,
           costoEnvio: shipping
         };
-      }) as Quote[];
 
-      // Deduplicate so that if any duplicate is accepted, it stays accepted
-      const dedupedQuotesMap = new Map<string, Quote>();
-      for (const q of quotes) {
         const key = (q.numero?.trim() || q.id?.trim() || '').toLowerCase();
         if (!key) continue;
+
         if (!dedupedQuotesMap.has(key)) {
-          dedupedQuotesMap.set(key, { ...q });
+          dedupedQuotesMap.set(key, q);
         } else {
           const existing = dedupedQuotesMap.get(key)!;
+          // CRITICAL: If either copy is accepted, it stays accepted forever
           if (q.estado === 'aceptada' || existing.estado === 'aceptada') {
             existing.estado = 'aceptada';
             if (q.saleId || (q as any).sale_id) existing.saleId = q.saleId || (q as any).sale_id;
@@ -665,11 +691,29 @@ export const supabaseService = {
           if (existing.id?.startsWith('local_') && !q.id?.startsWith('local_')) {
             existing.id = q.id;
           }
+          if ((!existing.items || existing.items.length === 0) && q.items?.length) {
+            existing.items = q.items;
+          }
         }
       }
-      const dedupedList = Array.from(dedupedQuotesMap.values());
+
+      const dedupedList = Array.from(dedupedQuotesMap.values()).sort((a, b) => {
+        const dateA = new Date(a.fecha || 0).getTime();
+        const dateB = new Date(b.fecha || 0).getTime();
+        return dateB - dateA;
+      });
 
       setLocal('quotes', dedupedList);
+
+      // 3. Auto-heal: if any local quote wasn't in Supabase yet, upsert it
+      const remoteIds = new Set((validRows || []).map((r: any) => (r.id || '').toLowerCase()));
+      const remoteNums = new Set((validRows || []).map((r: any) => (r.numero || '').toLowerCase()));
+      for (const item of dedupedList) {
+        if (!remoteIds.has(item.id.toLowerCase()) && (!item.numero || !remoteNums.has(item.numero.toLowerCase()))) {
+          supabaseService.createQuote(item).catch(() => {});
+        }
+      }
+
       return dedupedList;
     } catch {
       return filterOutDeletedQuotes(getLocal<Quote[]>('quotes', []));
@@ -689,7 +733,7 @@ export const supabaseService = {
       ...quoteData,
       id,
       numero,
-      fecha: now,
+      fecha: quoteData.fecha || now,
       subtotal: Number(quoteData.subtotal || quoteData.total || 0),
       total: Number(quoteData.total || 0),
       descuento: Number(quoteData.descuento || 0),
@@ -701,11 +745,11 @@ export const supabaseService = {
       createdBy: quoteData.createdBy || 'admin'
     };
 
-    // Cache locally
+    // Cache locally immediately across all arrays
     const cached = filterOutDeletedQuotes(getLocal<Quote[]>('quotes', []));
     setLocal('quotes', [newQuote, ...cached.filter(q => q.id !== id && q.numero !== numero)]);
 
-    // Persist to Supabase
+    // Persist to Supabase with upsert to prevent duplicates or constraint failures
     try {
       const payload: any = {
         id: newQuote.id,
@@ -718,34 +762,22 @@ export const supabaseService = {
         subtotal: newQuote.subtotal,
         descuento: newQuote.descuento,
         total: newQuote.total,
-        fecha: now,
+        fecha: newQuote.fecha,
         validezDias: newQuote.validezDias,
         validezFecha: newQuote.validezFecha || null,
         estado: newQuote.estado,
         notas: newQuote.notas || null,
         condiciones: newQuote.condiciones || (costoEnvio > 0 ? JSON.stringify({ costoEnvio }) : null),
-        createdBy: newQuote.createdBy
+        createdBy: newQuote.createdBy,
+        saleId: newQuote.saleId || null
       };
 
-      if (costoEnvio > 0) {
-        payload.costoEnvio = costoEnvio;
-      }
-
-      let { error } = await supabase.from('quotes').insert([payload]);
-
-      // Graceful fallback if costoEnvio column does not exist on Supabase SQL yet
-      if (error && (error.message?.includes('costoEnvio') || error.message?.includes('column'))) {
-        delete payload.costoEnvio;
-        payload.condiciones = JSON.stringify({ costoEnvio, originalCondiciones: newQuote.condiciones || null });
-        const retry = await supabase.from('quotes').insert([payload]);
-        error = retry.error;
-      }
-
+      const { error } = await supabase.from('quotes').upsert([payload], { onConflict: 'id' });
       if (error) {
-        console.warn('Supabase quote insert error:', error.message);
+        console.warn('Supabase quote upsert warning:', error.message);
       }
     } catch (e) {
-      console.warn('Supabase quote insert network exception:', e);
+      console.warn('Supabase quote upsert network exception:', e);
     }
 
     return newQuote;
@@ -774,6 +806,9 @@ export const supabaseService = {
   },
 
   updateQuote: async (id: string, updates: Partial<Quote>, numero?: string): Promise<void> => {
+    if (updates.estado === 'aceptada' || (updates.estado as any) === 'aprobado') {
+      unmarkQuoteDeleted(id, numero);
+    }
     const cached = getLocal<Quote[]>('quotes', []);
     setLocal('quotes', cached.map(q => (q.id === id || (numero && q.numero === numero)) ? { ...q, ...updates } : q));
 
@@ -824,15 +859,127 @@ export const supabaseService = {
   },
 
   // --- CLIENTS ---
+  syncClientsToCloud: async (clients: Client[]): Promise<void> => {
+    if (!Array.isArray(clients)) return;
+    try {
+      await supabase.from('quotes').upsert([{
+        id: '_app_clients_registry',
+        numero: 'SYS-CLIENTS-REGISTRY',
+        clientNombre: 'SYS_CLIENTS',
+        items: clients,
+        total: clients.length,
+        estado: 'sistema',
+        fecha: new Date().toISOString()
+      }]);
+    } catch (e) {
+      console.warn('Sync clients to cloud warning:', e);
+    }
+  },
+
   getClients: async (): Promise<Client[]> => {
+    const clientsMap = new Map<string, Client>();
+
+    // 1. Initial local cache
+    const cached = getLocal<Client[]>('clients', []);
+    if (Array.isArray(cached)) {
+      cached.forEach(c => {
+        if (c && (c.id || c.nombre)) {
+          clientsMap.set((c.nombre || c.id).trim().toLowerCase(), c);
+        }
+      });
+    }
+
+    // 2. Try Supabase dedicated table if it exists
     try {
       const { data, error } = await supabase.from('clients').select('*');
-      if (error) return getLocal<Client[]>('clients', []);
-      setLocal('clients', data || []);
-      return data || [];
-    } catch {
-      return getLocal<Client[]>('clients', []);
+      if (!error && Array.isArray(data) && data.length > 0) {
+        data.forEach(c => {
+          if (c && (c.id || c.nombre)) {
+            clientsMap.set((c.nombre || c.id).trim().toLowerCase(), c);
+          }
+        });
+      }
+    } catch (e) {}
+
+    // 3. Fallback: Cloud registry in Supabase (_app_clients_registry)
+    try {
+      const { data: reg, error: regErr } = await supabase
+        .from('quotes')
+        .select('items')
+        .eq('id', '_app_clients_registry')
+        .single();
+      if (!regErr && reg && Array.isArray(reg.items)) {
+        reg.items.forEach((c: Client) => {
+          if (c && (c.id || c.nombre)) {
+            const key = (c.nombre || c.id).trim().toLowerCase();
+            const existing = clientsMap.get(key);
+            if (!existing) {
+              clientsMap.set(key, c);
+            } else {
+              clientsMap.set(key, { ...c, ...existing });
+            }
+          }
+        });
+      }
+    } catch (e) {}
+
+    // 4. Auto-discover known clients from Supabase quotes and sales
+    try {
+      const { data: quotes } = await supabase.from('quotes').select('id, clientId, clientNombre, clientTelefono, clientEmail, fecha');
+      (quotes || []).forEach(q => {
+        if (!q.clientNombre || q.id === '_app_clients_registry' || q.clientNombre === 'SYS_CLIENTS') return;
+        const name = q.clientNombre.trim();
+        if (!name || name.toLowerCase() === 'consumidor final' || name.toLowerCase() === 'system_sync') return;
+        const key = name.toLowerCase();
+        const existing = clientsMap.get(key);
+        if (!existing) {
+          clientsMap.set(key, {
+            id: q.clientId || ('cli_' + Math.random().toString(36).substring(2, 9)),
+            nombre: name,
+            telefono: q.clientTelefono || '',
+            email: q.clientEmail || '',
+            direccion: '',
+            createdAt: q.fecha || new Date().toISOString(),
+            createdBy: 'admin'
+          });
+        } else {
+          if (!existing.telefono && q.clientTelefono) existing.telefono = q.clientTelefono;
+          if (!existing.email && q.clientEmail) existing.email = q.clientEmail;
+          if ((!existing.id || existing.id.startsWith('cli_')) && q.clientId) existing.id = q.clientId;
+        }
+      });
+    } catch (e) {}
+
+    try {
+      const { data: sales } = await supabase.from('sales').select('clientId, clientNombre, fecha');
+      (sales || []).forEach(s => {
+        if (!s.clientNombre) return;
+        const name = s.clientNombre.trim();
+        if (!name || name.toLowerCase() === 'consumidor final') return;
+        const key = name.toLowerCase();
+        if (!clientsMap.has(key)) {
+          clientsMap.set(key, {
+            id: s.clientId || ('cli_' + Math.random().toString(36).substring(2, 9)),
+            nombre: name,
+            telefono: '',
+            email: '',
+            direccion: '',
+            createdAt: s.fecha || new Date().toISOString(),
+            createdBy: 'admin'
+          });
+        }
+      });
+    } catch (e) {}
+
+    const list = Array.from(clientsMap.values()).sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    setLocal('clients', list);
+
+    // Keep cloud registry up to date
+    if (list.length > 0) {
+      supabaseService.syncClientsToCloud(list).catch(() => {});
     }
+
+    return list;
   },
 
   addClient: async (client: Omit<Client, 'id' | 'createdAt' | 'createdBy'>): Promise<string> => {
@@ -841,34 +988,103 @@ export const supabaseService = {
     const item: Client = { ...client, id, createdAt: now, createdBy: 'admin' };
 
     const cached = getLocal<Client[]>('clients', []);
-    setLocal('clients', [item, ...cached]);
+    const updated = [item, ...cached.filter(c => c.id !== id && c.nombre.toLowerCase() !== item.nombre.toLowerCase())];
+    setLocal('clients', updated);
+    window.dispatchEvent(new Event('clients_updated'));
 
     try {
       await supabase.from('clients').insert([item]);
-    } catch (e) {
-      console.warn(e);
-    }
+    } catch (e) {}
+
+    supabaseService.syncClientsToCloud(updated).catch(() => {});
+
     return id;
   },
 
   updateClient: async (id: string, client: Partial<Client>): Promise<void> => {
     const cached = getLocal<Client[]>('clients', []);
-    setLocal('clients', cached.map(c => c.id === id ? { ...c, ...client } : c));
+    const updated = cached.map(c => c.id === id ? { ...c, ...client } : c);
+    setLocal('clients', updated);
+    window.dispatchEvent(new Event('clients_updated'));
+
     try {
       await supabase.from('clients').update(client).eq('id', id);
-    } catch (e) {
-      console.warn(e);
-    }
+    } catch (e) {}
+
+    supabaseService.syncClientsToCloud(updated).catch(() => {});
   },
 
   deleteClient: async (id: string): Promise<void> => {
     const cached = getLocal<Client[]>('clients', []);
-    setLocal('clients', cached.filter(c => c.id !== id));
+    const updated = cached.filter(c => c.id !== id);
+    setLocal('clients', updated);
+    window.dispatchEvent(new Event('clients_updated'));
+
     try {
       await supabase.from('clients').delete().eq('id', id);
-    } catch (e) {
-      console.warn(e);
+    } catch (e) {}
+
+    supabaseService.syncClientsToCloud(updated).catch(() => {});
+  },
+
+  importClientsFromVercel: async (rawInput: any): Promise<{ added: number; total: number }> => {
+    let clientsToImport: any[] = [];
+    if (typeof rawInput === 'string') {
+      try {
+        const parsed = JSON.parse(rawInput);
+        clientsToImport = Array.isArray(parsed) ? parsed : (parsed.clients || []);
+      } catch (e) {
+        throw new Error('El formato no es un JSON válido.');
+      }
+    } else if (Array.isArray(rawInput)) {
+      clientsToImport = rawInput;
+    } else if (rawInput && Array.isArray(rawInput.clients)) {
+      clientsToImport = rawInput.clients;
     }
+
+    if (!Array.isArray(clientsToImport) || clientsToImport.length === 0) {
+      throw new Error('No se detectaron clientes en los datos provistos.');
+    }
+
+    const currentClients = getLocal<Client[]>('clients', []);
+    const map = new Map<string, Client>();
+    currentClients.forEach(c => {
+      if (c && (c.id || c.nombre)) {
+        map.set((c.nombre || c.id).trim().toLowerCase(), c);
+      }
+    });
+
+    let addedCount = 0;
+    clientsToImport.forEach(item => {
+      if (!item || !item.nombre) return;
+      const key = item.nombre.trim().toLowerCase();
+      if (!map.has(key)) {
+        const newClient: Client = {
+          id: item.id || ('cli_' + Math.random().toString(36).substring(2, 9)),
+          nombre: item.nombre.trim(),
+          telefono: item.telefono || '',
+          email: item.email || '',
+          direccion: item.direccion || '',
+          createdAt: item.createdAt || new Date().toISOString(),
+          createdBy: item.createdBy || 'admin'
+        };
+        map.set(key, newClient);
+        addedCount++;
+      } else {
+        const curr = map.get(key)!;
+        if (!curr.telefono && item.telefono) curr.telefono = item.telefono;
+        if (!curr.email && item.email) curr.email = item.email;
+        if (!curr.direccion && item.direccion) curr.direccion = item.direccion;
+      }
+    });
+
+    const mergedList = Array.from(map.values()).sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    setLocal('clients', mergedList);
+    window.dispatchEvent(new Event('clients_updated'));
+
+    await supabaseService.syncClientsToCloud(mergedList);
+
+    return { added: addedCount, total: mergedList.length };
   },
 
   // --- SUPPLIERS ---
@@ -1097,7 +1313,8 @@ export const supabaseService = {
     quotes?: Quote[];
     warehouses?: Warehouse[];
     sales?: Sale[];
-  }): Promise<{ productsMigrated: number; quotesMigrated: number; warehousesMigrated: number; salesMigrated: number }> => {
+    clients?: Client[];
+  }): Promise<{ productsMigrated: number; quotesMigrated: number; warehousesMigrated: number; salesMigrated: number; clientsMigrated?: number }> => {
     let productsMigrated = 0;
     let quotesMigrated = 0;
     let warehousesMigrated = 0;
@@ -1215,6 +1432,15 @@ export const supabaseService = {
       setLocal('sales', sanitizedSales);
     }
 
-    return { productsMigrated, quotesMigrated, warehousesMigrated, salesMigrated };
+    // 5. Clients
+    let clientsMigrated = 0;
+    if (data.clients && data.clients.length > 0) {
+      try {
+        await supabaseService.syncClientsToCloud(data.clients);
+        clientsMigrated = data.clients.length;
+      } catch (e) {}
+    }
+
+    return { productsMigrated, quotesMigrated, warehousesMigrated, salesMigrated, clientsMigrated };
   }
 };

@@ -245,9 +245,16 @@ export default function WorkOrders() {
     if (confirm(`¿Aprobar el presupuesto ${quote.numero} y crear una Orden de Trabajo activa en el taller?`)) {
       try {
         setRepairQuotes(prev => prev.map(q => q.id === quote.id ? { ...q, estado: 'aprobado' } : q));
-        await workOrderService.convertRepairQuoteToWorkOrder(quote);
-        toast.success(`¡Orden de Trabajo creada con éxito a partir del presupuesto!`);
-        setActiveTab('ordenes');
+        const createdOrder = await workOrderService.convertRepairQuoteToWorkOrder(quote);
+        toast.success(`¡Presupuesto ${quote.numero} aprobado con éxito! Orden ${createdOrder.numero} creada.`);
+        // Guarantee local state retains approved status
+        setRepairQuotes(prev => {
+          const match = prev.some(q => q.id === quote.id);
+          if (match) {
+            return prev.map(q => q.id === quote.id ? { ...q, estado: 'aprobado' } : q);
+          }
+          return [{ ...quote, estado: 'aprobado' }, ...prev];
+        });
       } catch (e) {
         console.error('Error converting quote to order:', e);
         toast.error('Hubo un error al convertir el presupuesto a orden.');

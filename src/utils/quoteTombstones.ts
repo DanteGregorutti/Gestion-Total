@@ -90,8 +90,10 @@ export function unmarkQuoteDeleted(id?: string, numero?: string): void {
 
 /**
  * Check if a sales quote has been deleted.
+ * Concreted / accepted quotes must never be treated as deleted.
  */
-export function isQuoteDeleted(id?: string, numero?: string): boolean {
+export function isQuoteDeleted(id?: string, numero?: string, estado?: string): boolean {
+  if (estado === 'aceptada' || estado === 'aprobado') return false;
   if (!id && !numero) return false;
   const tombstones = getDeletedQuoteTombstones();
   if (tombstones.length === 0) return false;
@@ -263,7 +265,8 @@ export function unmarkRepairQuoteDeleted(id?: string, numero?: string): void {
   } catch (e) {}
 }
 
-export function isRepairQuoteDeleted(id?: string, numero?: string): boolean {
+export function isRepairQuoteDeleted(id?: string, numero?: string, estado?: string): boolean {
+  if (estado === 'aprobado' || estado === 'aceptada') return false;
   if (!id && !numero) return false;
   const tombstones = getDeletedRepairQuoteTombstones();
   if (tombstones.length === 0) return false;

@@ -64,6 +64,8 @@ function AppContent() {
         <Route path="/ordenes" element={<WorkOrders />} />
         <Route path="/inventario" element={<Inventory />} />
         <Route path="/ventas" element={<Sales />} />
+        <Route path="/cotizaciones" element={<Sales initialTab="cotizaciones" />} />
+        <Route path="/presupuestos" element={<Sales initialTab="cotizaciones" />} />
         <Route path="/compras" element={<Purchases />} />
         <Route path="/clientes" element={<Clients />} />
         <Route path="/proveedores" element={<Suppliers />} />

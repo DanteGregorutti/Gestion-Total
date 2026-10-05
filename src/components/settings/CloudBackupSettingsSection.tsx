@@ -26,12 +26,14 @@ import { SUPABASE_URL } from '../../supabase';
 import { SUPABASE_SCHEMA_SQL } from '../../data/supabaseSchemaSql';
 import { toast } from 'sonner';
 import { useSettings } from '../../contexts/SettingsContext';
+import TotalVercelSyncModal from '../TotalVercelSyncModal';
 
 export function CloudBackupSettingsSection() {
   const { t } = useSettings();
   const [copiedSql, setCopiedSql] = useState(false);
   const [showSqlPreview, setShowSqlPreview] = useState(false);
   const [isSyncingSupabase, setIsSyncingSupabase] = useState(false);
+  const [isVercelModalOpen, setIsVercelModalOpen] = useState(false);
 
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
@@ -67,7 +69,7 @@ export function CloudBackupSettingsSection() {
     setIsSyncingSupabase(true);
     try {
       const res = await inventoryService.syncAllToSupabase();
-      toast.success(`¡Sincronización completa! Se subieron ${res.productsMigrated} productos, ${res.quotesMigrated} cotizaciones y ${res.warehousesMigrated} almacenes a Supabase.`);
+      toast.success(`¡Sincronización completa! Se subieron ${res.productsMigrated} productos, ${res.quotesMigrated} cotizaciones, ${res.clientsMigrated || 0} clientes y ${res.warehousesMigrated} almacenes a Supabase.`);
     } catch (err: any) {
       toast.error('Error al sincronizar datos a Supabase: ' + (err?.message || 'Error desconocido'));
     } finally {
@@ -340,9 +342,52 @@ export function CloudBackupSettingsSection() {
         )}
       </div>
 
+      {/* Vercel Data Migration Card */}
+      <div className="bg-white dark:bg-gray-800 rounded-3xl p-6 sm:p-8 shadow-sm border border-amber-200 dark:border-amber-900/40 space-y-4">
+        <div className="flex items-center gap-3.5">
+          <div className="p-3 bg-amber-50 dark:bg-amber-900/30 rounded-2xl text-amber-600 dark:text-amber-400">
+            <Cloud size={24} />
+          </div>
+          <div>
+            <h3 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+              <span>Sincronización con Vercel</span>
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300">
+                1 Clic
+              </span>
+            </h3>
+            <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">
+              Trae clientes, órdenes o respaldos guardados en el navegador de tu dominio en Vercel
+            </p>
+          </div>
+        </div>
+
+        <div className="p-4 rounded-2xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200/70 dark:border-amber-900/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="text-xs text-gray-600 dark:text-gray-400 space-y-1">
+            <div className="font-bold text-gray-900 dark:text-white">
+              ¿Por qué no se comparten automáticamente los datos de Vercel?
+            </div>
+            <p>
+              Por la seguridad de los navegadores (Same-Origin), cada dominio tiene su almacenamiento aislado. Usa este asistente para importar tus clientes a la nube compartida en 1 segundo.
+            </p>
+          </div>
+          <Button
+            onClick={() => setIsVercelModalOpen(true)}
+            className="bg-amber-600 hover:bg-amber-700 text-white font-bold px-4 py-2.5 rounded-xl shadow-md shadow-amber-600/20 text-xs shrink-0"
+          >
+            <Cloud size={15} className="mr-1.5" />
+            Asistente de Vercel
+          </Button>
+        </div>
+      </div>
+
       <TelegramBotModal 
         isOpen={isTelegramModalOpen}
         onClose={() => setIsTelegramModalOpen(false)}
+      />
+
+      <TotalVercelSyncModal
+        isOpen={isVercelModalOpen}
+        onClose={() => setIsVercelModalOpen(false)}
       />
     </div>
   );

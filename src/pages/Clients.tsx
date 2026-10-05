@@ -38,7 +38,8 @@ import {
   ArrowRight,
   UserPlus,
   CheckSquare,
-  Square
+  Square,
+  CloudDownload
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui';
@@ -49,6 +50,7 @@ import { cashShiftService } from '../services/cashShiftService';
 import { useSettings } from '../contexts/SettingsContext';
 import Modal from '../components/Modal';
 import ConfirmationModal from '../components/ConfirmationModal';
+import TotalVercelSyncModal from '../components/TotalVercelSyncModal';
 import { toast } from 'sonner';
 import { cn } from '../utils/cn';
 
@@ -94,6 +96,9 @@ export default function Clients() {
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [shareTargetClient, setShareTargetClient] = useState<Client | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
+
+  // Vercel sync modal
+  const [isVercelSyncModalOpen, setIsVercelSyncModalOpen] = useState(false);
 
   // Assign unassigned sales state
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
@@ -614,6 +619,15 @@ export default function Clients() {
           </Button>
 
           <Button
+            onClick={() => setIsVercelSyncModalOpen(true)}
+            variant="outline"
+            className="rounded-xl border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 font-bold hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-all text-xs sm:text-sm shadow-sm"
+          >
+            <CloudDownload className="w-4 h-4 mr-1.5 text-amber-600 dark:text-amber-400" />
+            <span>Traer de Vercel</span>
+          </Button>
+
+          <Button
             onClick={() => { resetForm(); setIsModalOpen(true); }}
             className="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-lg shadow-indigo-500/25 transition-all active:scale-95 text-xs sm:text-sm"
           >
@@ -699,6 +713,33 @@ export default function Clients() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Banner Sincronización con Vercel */}
+      <div className="bg-gradient-to-r from-amber-50 via-amber-50/70 to-indigo-50/40 dark:from-amber-950/30 dark:via-amber-950/20 dark:to-indigo-950/20 p-4 rounded-3xl border border-amber-200 dark:border-amber-800/60 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+            <CloudDownload size={20} />
+          </div>
+          <div>
+            <h4 className="text-xs sm:text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
+              <span>Sincronización con Vercel & Nube</span>
+              <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-200/70 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200">
+                1 Clic
+              </span>
+            </h4>
+            <p className="text-[11px] sm:text-xs text-gray-600 dark:text-gray-400 mt-0.5">
+              ¿Tenías clientes guardados en tu versión de Vercel? Impórtalos directamente aquí con 1 comando rápido para guardarlos en la nube permanente.
+            </p>
+          </div>
+        </div>
+        <Button
+          onClick={() => setIsVercelSyncModalOpen(true)}
+          className="rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shrink-0 shadow-md shadow-amber-600/20"
+        >
+          <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+          <span>Traer Clientes de Vercel</span>
+        </Button>
       </div>
 
       {/* Banner de Ventas Sin Nombre pendientes */}
@@ -2358,6 +2399,13 @@ export default function Clients() {
         onConfirm={handleDelete}
         title="Eliminar Cliente"
         message={`¿Estás seguro de que deseas eliminar al cliente "${selectedClient?.nombre}"? Esta acción no se puede deshacer.`}
+      />
+
+      {/* TOTAL VERCEL SYNC MODAL */}
+      <TotalVercelSyncModal
+        isOpen={isVercelSyncModalOpen}
+        onClose={() => setIsVercelSyncModalOpen(false)}
+        onSyncSuccess={loadData}
       />
     </div>
   );

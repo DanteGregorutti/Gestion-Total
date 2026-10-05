@@ -159,19 +159,22 @@ export function QuotesView({
 
         <div className="bg-white dark:bg-gray-900 p-6 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm">
           <div className="flex items-center justify-between mb-3">
-            <div className="p-2 bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 rounded-xl">
+            <div className="p-2 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-xl">
               <FileText size={20} />
             </div>
-            <span className="text-xs font-bold text-gray-400">
-              {quotes.length} emitidas en total
+            <span className="text-xs font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-lg">
+              {pendingQuotes.length} pendiente(s)
             </span>
           </div>
           <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">
-            Cotizaciones Activas
+            Total Cotizaciones
           </p>
           <h3 className="text-2xl font-black text-gray-900 dark:text-white mt-1">
-            {pendingQuotes.length}
+            {quotes.length}
           </h3>
+          <p className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium mt-0.5">
+            {acceptedQuotes.length} concretada(s) en venta
+          </p>
         </div>
 
         <div className="bg-white dark:bg-gray-900 p-6 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm">

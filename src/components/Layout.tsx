@@ -29,7 +29,8 @@ import {
   Sparkles,
   Store,
   ChevronRight,
-  Plus
+  Plus,
+  Cloud
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../utils/cn';
@@ -39,6 +40,7 @@ import { NotificationCenter } from './NotificationCenter';
 import { ChatAI } from './ChatAI';
 import { TelegramBotModal } from './telegram/TelegramBotModal';
 import { CompanyBrandingModal } from './CompanyBrandingModal';
+import TotalVercelSyncModal from './TotalVercelSyncModal';
 import { telegramBot } from '../services/telegramBotManager';
 import { APP_VERSION } from '../config/version';
 
@@ -55,6 +57,7 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
   const [isTelegramModalOpen, setIsTelegramModalOpen] = React.useState(false);
   const [isBrandingModalOpen, setIsBrandingModalOpen] = React.useState(false);
+  const [isTotalVercelSyncModalOpen, setIsTotalVercelSyncModalOpen] = React.useState(false);
   const navigate = useNavigate();
 
   const storeName = companyProfile?.name || 'PulseStore';
@@ -65,7 +68,8 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
     { key: 'dashboard', name: t('dashboard'), path: '/', icon: LayoutDashboard },
     { key: 'workshop', name: 'Taller & Servicios', path: '/taller', icon: Wrench },
     { key: 'inventory', name: t('inventory'), path: '/inventario', icon: Package },
-    { key: 'sales', name: 'Ventas & Cotizar', path: '/ventas', icon: TrendingUp },
+    { key: 'sales', name: 'Ventas Realizadas', path: '/ventas', icon: TrendingUp },
+    { key: 'quotes', name: 'Cotizaciones', path: '/cotizaciones', icon: FileText },
     { key: 'purchases', name: t('purchases'), path: '/compras', icon: ShoppingCart },
   ];
 
@@ -317,6 +321,15 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
                 {(isSidebarOpen || isMobileMenuOpen) && <span className="truncate">{item.name}</span>}
               </NavLink>
             ))}
+
+            <button
+              onClick={() => { setIsTotalVercelSyncModalOpen(true); closeMobileMenu(); }}
+              className="w-full flex items-center p-2.5 rounded-xl transition-all duration-200 group text-xs sm:text-sm font-bold text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 mt-1"
+              title="Sincronización Total con Vercel"
+            >
+              <Cloud className={cn("w-4 h-4 sm:w-5 sm:h-5 shrink-0 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform", (isSidebarOpen || isMobileMenuOpen) && "mr-3")} />
+              {(isSidebarOpen || isMobileMenuOpen) && <span className="truncate">Sincronizar Vercel</span>}
+            </button>
           </div>
         </nav>
 
@@ -429,6 +442,17 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
               <span className="hidden sm:inline">BOT TELEGRAM</span>
             </button>
 
+            {/* General Vercel Sync Button */}
+            <button
+              onClick={() => setIsTotalVercelSyncModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-black rounded-xl transition-all border shadow-xs active:scale-95 bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-700/60 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/50 shadow-amber-500/10"
+              title="Sincronización Total con Vercel (Clientes, Cotizaciones, Ventas, Taller)"
+            >
+              <Cloud size={15} className="text-amber-600 dark:text-amber-400" />
+              <span className="hidden md:inline">SINCRONIZAR VERCEL</span>
+              <span className="md:hidden">VERCEL</span>
+            </button>
+
             <button
               onClick={() => setMobileCompactMode(!mobileCompactMode)}
               className={cn(
@@ -470,6 +494,15 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
       <TelegramBotModal 
         isOpen={isTelegramModalOpen}
         onClose={() => setIsTelegramModalOpen(false)}
+      />
+
+      {/* GENERAL TOTAL VERCEL SYNC MODAL */}
+      <TotalVercelSyncModal
+        isOpen={isTotalVercelSyncModalOpen}
+        onClose={() => setIsTotalVercelSyncModalOpen(false)}
+        onSyncSuccess={() => {
+          window.location.reload();
+        }}
       />
 
       <ChatAI />

@@ -30,7 +30,7 @@ import {
   UserCheck,
   Sparkles
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { Button, Input, RefreshButton } from '../components/ui';
 import Modal from '../components/Modal';
 import ConfirmationModal from '../components/ConfirmationModal';
@@ -46,10 +46,12 @@ import { ReceiptModal } from '../components/ReceiptModal';
 import { NewQuoteModal } from '../components/NewQuoteModal';
 import { QuotesView } from '../components/QuotesView';
 
-export default function Sales() {
+export default function Sales({ initialTab }: { initialTab?: 'ventas' | 'cotizaciones' } = {}) {
   const { t, loading: settingsLoading, mobileCompactMode } = useSettings();
   const { products, refreshProducts: refreshAllProducts } = useProducts();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
   const [sales, setSales] = React.useState<Sale[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
   const [isAddModalOpen, setIsAddModalOpen] = React.useState(false);
@@ -118,7 +120,35 @@ export default function Sales() {
   const [saleTotalOverride, setSaleTotalOverride] = React.useState<number | null>(null);
 
   // Quotes & Non-Fiscal Receipts State
-  const [activeTab, setActiveTab] = React.useState<'ventas' | 'cotizaciones'>('ventas');
+  const getInitialActiveTab = (): 'ventas' | 'cotizaciones' => {
+    if (initialTab) return initialTab;
+    if (location.pathname.includes('/cotizaciones') || location.pathname.includes('/presupuestos')) return 'cotizaciones';
+    const param = searchParams.get('tab');
+    if (param === 'cotizaciones') return 'cotizaciones';
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem('sales_active_tab');
+      if (saved === 'cotizaciones' || saved === 'ventas') return saved as 'ventas' | 'cotizaciones';
+    }
+    return 'ventas';
+  };
+
+  const [activeTab, setActiveTabState] = React.useState<'ventas' | 'cotizaciones'>(getInitialActiveTab);
+
+  const setActiveTab = (tab: 'ventas' | 'cotizaciones') => {
+    setActiveTabState(tab);
+    try {
+      localStorage.setItem('sales_active_tab', tab);
+    } catch (e) {}
+  };
+
+  React.useEffect(() => {
+    if (initialTab && initialTab !== activeTab) {
+      setActiveTab(initialTab);
+    } else if (location.pathname.includes('/cotizaciones') || location.pathname.includes('/presupuestos')) {
+      setActiveTab('cotizaciones');
+    }
+  }, [initialTab, location.pathname]);
+
   const [quotes, setQuotes] = React.useState<Quote[]>([]);
   const [quoteStatusFilter, setQuoteStatusFilter] = React.useState<'todas' | 'pendiente' | 'aceptada' | 'rechazada'>('todas');
   const [quoteSearchTerm, setQuoteSearchTerm] = React.useState('');
@@ -279,12 +309,23 @@ export default function Sales() {
   const handleConvertToSale = async (quote: Quote) => {
     if (convertingQuoteId) return;
     setConvertingQuoteId(quote.id);
+    
+    // Ensure user remains on cotizaciones tab and sees all quotes
+    setActiveTab('cotizaciones');
+    setQuoteStatusFilter('todas');
+
     // Mark immediately as accepted so it transitions smoothly to Concretadas without disappearing
-    setQuotes(prev => prev.map(q => 
-      (q.id === quote.id || (quote.numero && q.numero === quote.numero))
-        ? { ...q, estado: 'aceptada' }
-        : q
-    ));
+    setQuotes(prev => {
+      const match = prev.some(q => q.id === quote.id || (quote.numero && q.numero === quote.numero));
+      if (match) {
+        return prev.map(q => 
+          (q.id === quote.id || (quote.numero && q.numero === quote.numero))
+            ? { ...q, estado: 'aceptada' }
+            : q
+        );
+      }
+      return [{ ...quote, estado: 'aceptada' }, ...prev];
+    });
     if (selectedReceiptQuote?.id === quote.id || selectedReceiptQuote?.numero === quote.numero) {
       setSelectedReceiptQuote(prev => prev ? { ...prev, estado: 'aceptada' } : null);
     }
@@ -295,18 +336,23 @@ export default function Sales() {
       }
       toast.success(`¡Cotización ${quote.numero || ''} concretada con éxito! Venta registrada.`);
       await refreshData();
-      // Guarantee local state retains accepted status
-      setQuotes(prev => prev.map(q => 
-        (q.id === quote.id || (quote.numero && q.numero === quote.numero))
-          ? { ...q, estado: 'aceptada' }
-          : q
-      ));
+      
+      // Guarantee local state retains accepted status and stays on cotizaciones
+      setActiveTab('cotizaciones');
+      setQuoteStatusFilter('todas');
+      setQuotes(prev => {
+        const match = prev.some(q => q.id === quote.id || (quote.numero && q.numero === quote.numero));
+        if (match) {
+          return prev.map(q => 
+            (q.id === quote.id || (quote.numero && q.numero === quote.numero))
+              ? { ...q, estado: 'aceptada' }
+              : q
+          );
+        }
+        return [{ ...quote, estado: 'aceptada' }, ...prev];
+      });
       if (selectedReceiptQuote?.id === quote.id || selectedReceiptQuote?.numero === quote.numero) {
         setSelectedReceiptQuote(prev => prev ? { ...prev, estado: 'aceptada' } : null);
-      }
-      // If user was on the "Pendientes" tab, switch to "Todas" so they see the quote marked Concretada immediately
-      if (quoteStatusFilter === 'pendiente') {
-        setQuoteStatusFilter('todas');
       }
     } catch (error) {
       console.error('Error al convertir cotización:', error);
@@ -765,6 +811,9 @@ export default function Sales() {
           >
             <FileText size={16} className={activeTab === 'cotizaciones' ? 'text-emerald-600 dark:text-emerald-400' : ''} />
             <span>Cotizaciones & Presupuestos</span>
+            <span className="px-2 py-0.5 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-full text-xs font-black">
+              {quotes.length}
+            </span>
             {quotes.filter(q => q.estado === 'pendiente').length > 0 && (
               <span className="px-2 py-0.5 bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300 rounded-full text-xs font-black">
                 {quotes.filter(q => q.estado === 'pendiente').length} pend.
